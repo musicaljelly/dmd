@@ -27,13 +27,7 @@
     <ClCompile Include="..\eh.c">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="..\glue.c">
-      <Filter>src</Filter>
-    </ClCompile>
     <ClCompile Include="..\iasm.c">
-      <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="..\msc.c">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="..\s2ir.c">
@@ -43,9 +37,6 @@
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="..\tocvdebug.c">
-      <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="..\toir.c">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="..\toobj.c">
@@ -336,9 +327,6 @@
       <Filter>src\backend</Filter>
     </ClInclude>
     <ClInclude Include="..\backend\cc.h">
-      <Filter>src\backend</Filter>
-    </ClInclude>
-    <ClInclude Include="..\backend\cdef.h">
       <Filter>src\backend</Filter>
     </ClInclude>
     <ClInclude Include="..\backend\cgcv.h">

@@ -440,10 +440,15 @@
     <File path="..\backend\cc.d" />
     <File path="..\backend\cdef.d" />
     <File path="..\backend\cgcv.d" />
+    <File path="..\backend\code.d" />
+    <File path="..\dmsc.d" />
     <File path="..\backend\dt.d" />
     <File path="..\backend\el.d" />
     <File path="..\backend\global.d" />
+    <File path="..\backend\obj.d" />
     <File path="..\backend\oper.d" />
+    <File path="..\backend\outbuf.d" />
+    <File path="..\backend\rtlsym.d" />
     <File path="..\backend\ty.d" />
     <File path="..\backend\type.d" />
    </Folder>
@@ -505,6 +510,7 @@
    <File path="..\expression.d" />
    <File path="..\func.d" />
    <File path="..\globals.d" />
+   <File path="..\glue.d" />
    <File path="..\gluelayer.d" />
    <File path="..\hdrgen.d" />
    <File path="..\identifier.d" />
@@ -531,6 +537,7 @@
    <File path="..\osmodel.mak" />
    <File path="..\parse.d" />
    <File path="..\posix.mak" />
+   <File path="..\safe.d" />
    <File path="..\sapply.d" />
    <File path="..\scanmscoff.d" />
    <File path="..\scanomf.d" />
@@ -542,6 +549,7 @@
    <File path="..\tocsym.d" />
    <File path="..\toctype.d" />
    <File path="..\todt.d" />
+   <File path="..\toir.d" />
    <File path="..\tokens.d" />
    <File path="..\traits.d" />
    <File path="..\typinf.d" />
