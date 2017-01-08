@@ -30,6 +30,11 @@ Makefile
 src/magicport/magicport
 src/SYSCONFDIR.imp
 
+# !!!
+src/vcbuild/generated
+src/vcbuild/dmd.VC.db
+# !!!
+
 # Visual Studio files
 *.exe
 *.pdb
