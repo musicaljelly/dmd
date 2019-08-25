@@ -49,6 +49,8 @@ Before submitting a PR there are some things you can check which will hopefully 
 
 - Ensure newly introduced symbols are documented and that updates to existing symbols are reflected in the documentation.
 
+- Add a link to the PR to the bugzilla entry.
+
 - If your pull request affects the language specifications in any way (i.e. changing the grammar, deprecating a feature or adding a new one),
   a pull request to [the website](https://github.com/dlang/dlang.org) should be submitted in parallel.
 
@@ -58,6 +60,11 @@ Before submitting a PR there are some things you can check which will hopefully 
   - Descriptive commit messages ease review and catching bugs
   - Keep pull requests focused on one single topic or bug.  For example, if your fix requires a refactoring, then the refactoring should be submitted as a separate pull request.
 
+### Find bugs to work on
+
+For first-time contributers, we suggest to look for issues categorized as [trivial](https://issues.dlang.org/buglist.cgi?component=dmd&keywords=trivial&product=D). You may continue with issues categorized [bootcamp](https://issues.dlang.org/buglist.cgi?component=dmd&keywords=bootcamp&product=D).
+
+If you want a hassle-free contribution look for issues categorized as [preapproved](https://issues.dlang.org/buglist.cgi?component=dmd&keywords=preapproved&product=D).
 
 ## dmd-internals mailing list
 

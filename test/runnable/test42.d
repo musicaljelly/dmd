@@ -698,7 +698,7 @@ void test46()
 
 void test47()
 {
-    enum { _P_WAIT, _P_NOWAIT, _P_OVERLAY };
+    enum { _P_WAIT, _P_NOWAIT, _P_OVERLAY }
 
     alias _P_WAIT P_WAIT;
     alias _P_NOWAIT P_NOWAIT;
@@ -3595,9 +3595,9 @@ void test220()
   mixin T220!(int);
 
   // all print 8
-  writeln(T220!(int).C.classinfo.init.length);
-  writeln(C.classinfo.init.length);
-  writeln(D220.classinfo.init.length);
+  writeln(T220!(int).C.classinfo.initializer.length);
+  writeln(C.classinfo.initializer.length);
+  writeln(D220.classinfo.initializer.length);
 
   auto c = new C; // segfault in _d_newclass
 }
@@ -5562,22 +5562,25 @@ void testdbl_to_ulong()
     //writeln(u);
     assert(u == 12345);
 
-    real adjust = 1.0L/real.epsilon;
-    u = d2ulong(adjust);
-    //writefln("%s %s", adjust, u);
-    static if(real.mant_dig == 64)
-        assert(u == 9223372036854775808UL);
-    else static if(real.mant_dig == 53)
-        assert(u == 4503599627370496UL);
-    else
-        static assert(false, "Test not implemented for this architecture");
+    static if (real.mant_dig <= 64)
+    {
+        real adjust = 1.0L/real.epsilon;
+        u = d2ulong(adjust);
+        //writefln("%s %s", adjust, u);
+        static if(real.mant_dig == 64)
+            assert(u == 9223372036854775808UL);
+        else static if(real.mant_dig == 53)
+            assert(u == 4503599627370496UL);
+        else
+            static assert(false, "Test not implemented for this architecture");
 
-    auto v = d2ulong(adjust * 1.1);
-    //writefln("%s %s %s", adjust, v, u + u/10);
+        auto v = d2ulong(adjust * 1.1);
+        //writefln("%s %s %s", adjust, v, u + u/10);
 
-    // The following can vary in the last bits with different optimization settings,
-    // i.e. the conversion from real to double may not happen.
-    //assert(v == 10145709240540254208UL);
+        // The following can vary in the last bits with different optimization settings,
+        // i.e. the conversion from real to double may not happen.
+        //assert(v == 10145709240540254208UL);
+    }
 }
 
 /***************************************************/
@@ -5821,10 +5824,15 @@ void test4414() {
     assert(x == 7);
   }
   {
-    auto x = bytes4414()[0..4];
+    auto u = bytes4414();
+    auto x = u[0..4];
     if (x[0] != 7 || x[1] != 8 || x[2] != 9 || x[3] != 10)
         assert(0);
   }
+  assert(bytes4414()[0] == 7);
+  assert(bytes4414()[1] == 8);
+  assert(bytes4414()[2] == 9);
+  assert(bytes4414()[3] == 10);
 }
 
 /***************************************************/
@@ -6084,6 +6092,37 @@ void test16530()
     import std.stdio;
     if (entropy2([1.0, 0, 0]) != 0.0)
        assert(0);
+}
+
+/***************************************************/
+
+void test252()
+{
+    __gshared int x = 7;
+    __gshared long y = 217;
+    if ((-1 - x) != ~x)
+        assert(0);
+    if ((-1 - y) != ~y)
+        assert(0);
+}
+
+/***************************************************/
+// https://issues.dlang.org/show_bug.cgi?id=7997
+
+void test7997()
+{
+    __gshared int[0] foos;
+    foreach (f; foos) {}
+}
+
+/***************************************************/
+// https://issues.dlang.org/show_bug.cgi?id=5332
+
+int[0] arr5332;
+
+void test5332()
+{
+    auto a = arr5332;
 }
 
 /***************************************************/
@@ -6385,6 +6424,9 @@ int main()
     test14510();
     test16027();
     test16530();
+    test252();
+    test7997();
+    test5332();
 
     writefln("Success");
     return 0;

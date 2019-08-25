@@ -390,7 +390,7 @@ void test13()
 
     auto k = __traits(classInstanceSize, C);
     writeln(k);
-    assert(k == C.classinfo.init.length);
+    assert(k == C.classinfo.initializer.length);
 }
 
 /********************************************************/
@@ -1514,6 +1514,32 @@ void test12237()
 
 /********************************************************/
 
+void async(ARGS...)(ARGS)
+{
+        static void compute(ARGS)
+        {
+        }
+
+        auto x = __traits(getParameterStorageClasses, compute, 1);
+}
+
+alias test17495 = async!(int, int);
+
+/********************************************************/
+// 15094
+
+void test15094()
+{
+    static struct Foo { int i; }
+    static struct Bar { Foo foo; }
+
+    Bar bar;
+    auto n = __traits(getMember, bar.foo, "i");
+    assert(n == bar.foo.i);
+}
+
+/********************************************************/
+
 int main()
 {
     test1();
@@ -1553,6 +1579,7 @@ int main()
     test_getFunctionAttributes();
     test_isOverrideFunction();
     test12237();
+    test15094();
 
     writeln("Success");
     return 0;

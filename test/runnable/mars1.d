@@ -1,5 +1,6 @@
 /*
-REQUIRED_ARGS: -mcpu=native
+REQUIRED_ARGS: -mcpu=native -transition=16997 -transition=intpromote
+PERMUTE_ARGS: -O -inline
 */
 
 import core.stdc.stdio;
@@ -1545,6 +1546,196 @@ void test16102()
 
 ////////////////////////////////////////////////////////////////////////
 
+
+/* Test the pattern:
+ *   replace ((i / C1) / C2) with (i / (C1 * C2))
+ * when e1 is 0 or 1 and (i2-i1) is a power of 2.
+ */
+
+void divdiv(T, T C1, T C2)(T i)
+{
+    auto a = (i / C1) / C2;
+    auto b = i / (C1 * C2);
+    if (a != b) assert(0);
+}
+
+void testdivdiv()
+{
+    divdiv!(int,10,20)(30);
+    divdiv!(uint,10,20)(30);
+    divdiv!(long,10,20)(30);
+    divdiv!(ulong,10,20)(30);
+
+    divdiv!(int,-10,20)(30);
+    divdiv!(long,-10,20)(30);
+
+    divdiv!(int,-10,-20)(-30);
+    divdiv!(long,-10,-20)(-30);
+}
+
+////////////////////////////////////////////////////////////////////////
+
+void test5a(ulong x, ulong y)
+{
+    int a;
+    if (x >> 32)
+        a = 1;
+    else
+        a = 2;
+    assert(a == 1);
+
+    if (y >> 32)
+        a = 1;
+    else
+        a = 2;
+    assert(a == 2);
+}
+
+void test5()
+{
+    test5a(uint.max + 1L, uint.max);
+}
+
+////////////////////////////////////////////////////////////////////////
+
+/* Test the pattern:
+ *   replace (e ? i1 : i2) with (i1 + e * (i2 - i1))
+ * when e1 is 0 or 1 and (i2-i1) is a power of 2.
+ */
+
+int foo61(int i)
+{
+    return (i % 2 != 0) ? 4 : 2;
+}
+
+int foo62(int i)
+{
+    return (i % 2 != 0) ? 2 : 4;
+}
+
+bool bar6(bool b) { return b; }
+
+int foo63(bool b)
+{
+    return bar6(b) ? 16 : 8;
+}
+
+int foo64(bool b)
+{
+    return bar6(b) ? 8 : 16;
+}
+
+void test6()
+{
+    if (foo61(0) != 2) assert(0);
+    if (foo61(1) != 4) assert(0);
+    if (foo62(0) != 4) assert(0);
+    if (foo62(1) != 2) assert(0);
+    if (foo63(0) != 8) assert(0);
+    if (foo63(1) != 16) assert(0);
+    if (foo64(0) != 16) assert(0);
+    if (foo64(1) != 8) assert(0);
+}
+
+////////////////////////////////////////////////////////////////////////
+
+int dataflow(int b) {
+  int ret;
+
+  if (b==4)
+    ret = 3;
+  else
+    ret = 5;
+
+  if (ret == 4)
+    return 0;
+  else
+    return 1;
+}
+
+void testeqeqranges()
+{
+    int i = dataflow(4);
+    if (i != 1)
+        assert(0);
+}
+
+////////////////////////////////////////////////////////////////////////
+
+void testdivcmp()
+{
+    // https://github.com/dlang/dmd/pull/7128
+    static bool foo(uint a, uint b)
+    {
+        return cast(bool)(a / b); // convert / to >=
+    }
+
+    assert(!foo(3, 4));
+    assert(foo(4, 4));
+    assert(foo(5, 4));
+}
+
+////////////////////////////////////////////////////////////////////////
+
+// https://issues.dlang.org/show_bug.cgi?id=16997
+
+void test16997()
+{
+    /* Exhaustively test all signed and unsigned byte promotions for
+     * - + and ~
+     */
+    for (int i = 0; i < 256; ++i)
+    {
+        ubyte c = cast(ubyte)i;
+
+        int i1 = cast(int)(~c);
+        int i2 = cast(int)(~cast(int)c);
+
+        //printf("%d, %d\n", i1, i2);
+        assert(i1 == i2);
+
+        i1 = cast(int)(+c);
+        i2 = cast(int)(+cast(int)c);
+        assert(i1 == i2);
+
+        i1 = cast(int)(-c);
+        i2 = cast(int)(-cast(int)c);
+        assert(i1 == i2);
+    }
+
+    for (int i = 0; i < 256; ++i)
+    {
+        byte c = cast(byte)i;
+
+        int i1 = cast(int)(~c);
+        int i2 = cast(int)(~cast(int)c);
+
+        //printf("%d, %d\n", i1, i2);
+        assert(i1 == i2);
+
+        i1 = cast(int)(+c);
+        i2 = cast(int)(+cast(int)c);
+        assert(i1 == i2);
+
+        i1 = cast(int)(-c);
+        i2 = cast(int)(-cast(int)c);
+        assert(i1 == i2);
+    }
+}
+
+////////////////////////////////////////////////////////////////////////
+
+void test18315() // https://issues.dlang.org/show_bug.cgi?id=18315
+{
+    int i = int.min;
+    bool b = i > 0;
+    assert(!b);
+    b = 0 < i;
+    assert(!b);
+}
+
+////////////////////////////////////////////////////////////////////////
+
 int main()
 {
     testgoto();
@@ -1599,6 +1790,13 @@ int main()
     test13474();
     test16699();
     test16102();
+    testdivdiv();
+    test5();
+    test6();
+    testeqeqranges();
+    testdivcmp();
+    test16997();
+    test18315();
     printf("Success\n");
     return 0;
 }

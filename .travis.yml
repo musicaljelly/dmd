@@ -4,7 +4,9 @@ d:
   - gdc
   - ldc
 
-script: ./travis.sh
+script:
+  - deactivate # deactivate d compiler
+  - ./travis.sh
 
 sudo: false
 addons:
@@ -20,9 +22,6 @@ env:
 
 matrix:
   include:
-    - os: osx
-      d: dmd
-      env: MODEL=32
     - os: osx
       d: dmd
       env: MODEL=64

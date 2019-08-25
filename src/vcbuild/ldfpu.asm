@@ -1,5 +1,5 @@
 ;; Compiler implementation of the D programming language
-;; Copyright (c) 1999-2016 by Digital Mars
+;; Copyright (c) 1999-2016 by The D Language Foundation
 ;; All Rights Reserved
 ;; written by Rainer Schuetze
 ;; http://www.digitalmars.com
@@ -182,7 +182,7 @@ FM1:    ; We don't use fprem1 because for some inexplicable
         sahf                            ; transfer to flags
         jp      FM1                     ; continue till ST < ST1
         fstp    ST(1)                   ; leave remainder on stack
-        fstp    tbyte ptr [ecx]
+        fstp    tbyte ptr [rcx]
 	pop rax
 	mov rax,rcx
 	ret
