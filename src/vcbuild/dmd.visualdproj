@@ -1,6 +1,6 @@
 <DProject>
  <ProjectGuid>{FD789BD7-AB7E-4264-B146-8139DDE9F0BF}</ProjectGuid>
- <Config name="Debug" platform="Win32">
+ <Config platform="Win32" name="Debug">
   <obj>0</obj>
   <link>0</link>
   <lib>0</lib>
@@ -15,6 +15,7 @@
   <vtls>0</vtls>
   <vgc>0</vgc>
   <symdebug>1</symdebug>
+  <symdebugref>1</symdebugref>
   <optimize>0</optimize>
   <cpu>0</cpu>
   <isX86_64>0</isX86_64>
@@ -31,7 +32,7 @@
   <useIn>0</useIn>
   <useOut>0</useOut>
   <useArrayBounds>0</useArrayBounds>
-  <noboundscheck>0</noboundscheck>
+  <boundscheck>0</boundscheck>
   <useSwitchError>0</useSwitchError>
   <useUnitTests>0</useUnitTests>
   <useInline>0</useInline>
@@ -44,14 +45,27 @@
   <pic>0</pic>
   <cov>0</cov>
   <nofloat>0</nofloat>
-  <Dversion>2</Dversion>
   <ignoreUnsupportedPragmas>0</ignoreUnsupportedPragmas>
   <allinst>0</allinst>
   <stackStomp>0</stackStomp>
+  <betterC>0</betterC>
+  <dip25>0</dip25>
+  <dip1000>0</dip1000>
+  <dip1008>0</dip1008>
+  <transition_field>0</transition_field>
+  <revert_import>0</revert_import>
+  <preview_dtorfields>0</preview_dtorfields>
+  <transition_checkimports>0</transition_checkimports>
+  <transition_complex>0</transition_complex>
+  <preview_intpromote>0</preview_intpromote>
+  <preview_fixAliasThis>0</preview_fixAliasThis>
+  <preview_markdown>0</preview_markdown>
+  <transition_vmarkdown>0</transition_vmarkdown>
   <compiler>0</compiler>
   <otherDMD>0</otherDMD>
   <cccmd>$(CC) -c</cccmd>
   <ccTransOpt>1</ccTransOpt>
+  <addDepImp>0</addDepImp>
   <program>c:\l\d\dmd2\windows\bin\dmd.exe</program>
   <imppath>..</imppath>
   <fileImppath>$(OutDir) ..\..\res</fileImppath>
@@ -76,6 +90,7 @@
   <dump_source>0</dump_source>
   <mapverbosity>0</mapverbosity>
   <createImplib>0</createImplib>
+  <debuglib>0</debuglib>
   <defaultlibname />
   <debuglibname />
   <moduleDepsFile />
@@ -83,10 +98,11 @@
   <runargs />
   <runCv2pdb>1</runCv2pdb>
   <pathCv2pdb>$(VisualDInstallDir)cv2pdb\cv2pdb.exe</pathCv2pdb>
-  <cv2pdbPre2043>0</cv2pdbPre2043>
   <cv2pdbNoDemangle>0</cv2pdbNoDemangle>
   <cv2pdbEnumType>0</cv2pdbEnumType>
   <cv2pdbOptions />
+  <enableMixin>0</enableMixin>
+  <mixinPath>$(IntDir)\$(SafeProjectName).mixin</mixinPath>
   <objfiles />
   <linkswitches />
   <libfiles />
@@ -94,6 +110,9 @@
   <deffile />
   <resfile />
   <exefile>$(OutDir)\$(ProjectName).exe</exefile>
+  <pdbfile>$(IntDir)\$(SafeProjectName).pdb</pdbfile>
+  <impfile>$(IntDir)\$(SafeProjectName).lib</impfile>
+  <mapfile>$(IntDir)\$(SafeProjectName).map</mapfile>
   <useStdLibPath>1</useStdLibPath>
   <cRuntime>2</cRuntime>
   <privatePhobos>0</privatePhobos>
@@ -102,7 +121,7 @@
   <postBuildCommand />
   <filesToClean>*.obj;*.cmd;*.build;*.json;*.dep</filesToClean>
  </Config>
- <Config name="Release" platform="Win32">
+ <Config platform="Win32" name="Release">
   <obj>0</obj>
   <link>0</link>
   <lib>0</lib>
@@ -117,6 +136,7 @@
   <vtls>0</vtls>
   <vgc>0</vgc>
   <symdebug>0</symdebug>
+  <symdebugref>1</symdebugref>
   <optimize>1</optimize>
   <cpu>0</cpu>
   <isX86_64>0</isX86_64>
@@ -133,7 +153,7 @@
   <useIn>0</useIn>
   <useOut>0</useOut>
   <useArrayBounds>0</useArrayBounds>
-  <noboundscheck>0</noboundscheck>
+  <boundscheck>0</boundscheck>
   <useSwitchError>0</useSwitchError>
   <useUnitTests>0</useUnitTests>
   <useInline>1</useInline>
@@ -146,14 +166,27 @@
   <pic>0</pic>
   <cov>0</cov>
   <nofloat>0</nofloat>
-  <Dversion>2</Dversion>
   <ignoreUnsupportedPragmas>0</ignoreUnsupportedPragmas>
   <allinst>0</allinst>
   <stackStomp>0</stackStomp>
+  <betterC>0</betterC>
+  <dip25>0</dip25>
+  <dip1000>0</dip1000>
+  <dip1008>0</dip1008>
+  <transition_field>0</transition_field>
+  <revert_import>0</revert_import>
+  <preview_dtorfields>0</preview_dtorfields>
+  <transition_checkimports>0</transition_checkimports>
+  <transition_complex>0</transition_complex>
+  <preview_intpromote>0</preview_intpromote>
+  <preview_fixAliasThis>0</preview_fixAliasThis>
+  <preview_markdown>0</preview_markdown>
+  <transition_vmarkdown>0</transition_vmarkdown>
   <compiler>0</compiler>
   <otherDMD>0</otherDMD>
   <cccmd>$(CC) -c -cpp -Isrc;src\backend;src\tk;src\root -DMARS -e -wx -DTARGET_WINDOS=1 -DDM_TARGET_CPU_X86=1</cccmd>
   <ccTransOpt>1</ccTransOpt>
+  <addDepImp>0</addDepImp>
   <program>$(DMDInstallDir)windows\bin\dmd.exe</program>
   <imppath>..</imppath>
   <fileImppath>$(OutDir) ..\..\res</fileImppath>
@@ -178,6 +211,7 @@
   <dump_source>0</dump_source>
   <mapverbosity>0</mapverbosity>
   <createImplib>0</createImplib>
+  <debuglib>0</debuglib>
   <defaultlibname />
   <debuglibname />
   <moduleDepsFile />
@@ -185,17 +219,21 @@
   <runargs />
   <runCv2pdb>0</runCv2pdb>
   <pathCv2pdb>$(VisualDInstallDir)cv2pdb\cv2pdb.exe</pathCv2pdb>
-  <cv2pdbPre2043>0</cv2pdbPre2043>
   <cv2pdbNoDemangle>0</cv2pdbNoDemangle>
   <cv2pdbEnumType>0</cv2pdbEnumType>
   <cv2pdbOptions />
+  <enableMixin>0</enableMixin>
+  <mixinPath>$(IntDir)\$(SafeProjectName).mixin</mixinPath>
   <objfiles />
   <linkswitches />
   <libfiles />
-  <libpaths />
+  <libpaths>&quot;C:\Program Files (x86)\Windows Kits\10\Lib\10.0.18362.0\um\x86&quot; C:\D\dmd2\windows\lib</libpaths>
   <deffile />
   <resfile />
   <exefile>$(OutDir)\$(ProjectName).exe</exefile>
+  <pdbfile>$(IntDir)\$(SafeProjectName).pdb</pdbfile>
+  <impfile>$(IntDir)\$(SafeProjectName).lib</impfile>
+  <mapfile>$(IntDir)\$(SafeProjectName).map</mapfile>
   <useStdLibPath>1</useStdLibPath>
   <cRuntime>1</cRuntime>
   <privatePhobos>0</privatePhobos>
@@ -204,7 +242,7 @@
   <postBuildCommand />
   <filesToClean>*.obj;*.cmd;*.build;*.json;*.dep</filesToClean>
  </Config>
- <Config name="Debug" platform="x64">
+ <Config platform="x64" name="Debug">
   <obj>0</obj>
   <link>0</link>
   <lib>0</lib>
@@ -219,6 +257,7 @@
   <vtls>0</vtls>
   <vgc>0</vgc>
   <symdebug>1</symdebug>
+  <symdebugref>1</symdebugref>
   <optimize>0</optimize>
   <cpu>0</cpu>
   <isX86_64>1</isX86_64>
@@ -235,7 +274,7 @@
   <useIn>0</useIn>
   <useOut>0</useOut>
   <useArrayBounds>0</useArrayBounds>
-  <noboundscheck>0</noboundscheck>
+  <boundscheck>0</boundscheck>
   <useSwitchError>0</useSwitchError>
   <useUnitTests>0</useUnitTests>
   <useInline>0</useInline>
@@ -248,14 +287,27 @@
   <pic>0</pic>
   <cov>0</cov>
   <nofloat>0</nofloat>
-  <Dversion>2</Dversion>
   <ignoreUnsupportedPragmas>0</ignoreUnsupportedPragmas>
   <allinst>0</allinst>
   <stackStomp>0</stackStomp>
+  <betterC>0</betterC>
+  <dip25>0</dip25>
+  <dip1000>0</dip1000>
+  <dip1008>0</dip1008>
+  <transition_field>0</transition_field>
+  <revert_import>0</revert_import>
+  <preview_dtorfields>0</preview_dtorfields>
+  <transition_checkimports>0</transition_checkimports>
+  <transition_complex>0</transition_complex>
+  <preview_intpromote>0</preview_intpromote>
+  <preview_fixAliasThis>0</preview_fixAliasThis>
+  <preview_markdown>0</preview_markdown>
+  <transition_vmarkdown>0</transition_vmarkdown>
   <compiler>0</compiler>
   <otherDMD>0</otherDMD>
   <cccmd>$(CC) -nologo -c -TP -Isrc -Isrc\backend -Isrc\tk -Isrc\root -Isrc\vcbuild -DTARGET_WINDOS=1 -FIvcbuild\warnings.h</cccmd>
   <ccTransOpt>1</ccTransOpt>
+  <addDepImp>0</addDepImp>
   <program>c:\l\d\dmd2\windows\bin\dmd.exe</program>
   <imppath>..</imppath>
   <fileImppath>$(OutDir) ..\..\res</fileImppath>
@@ -280,6 +332,7 @@
   <dump_source>0</dump_source>
   <mapverbosity>0</mapverbosity>
   <createImplib>0</createImplib>
+  <debuglib>0</debuglib>
   <defaultlibname />
   <debuglibname />
   <moduleDepsFile />
@@ -287,10 +340,11 @@
   <runargs />
   <runCv2pdb>1</runCv2pdb>
   <pathCv2pdb>$(VisualDInstallDir)cv2pdb\cv2pdb.exe</pathCv2pdb>
-  <cv2pdbPre2043>0</cv2pdbPre2043>
   <cv2pdbNoDemangle>0</cv2pdbNoDemangle>
   <cv2pdbEnumType>0</cv2pdbEnumType>
   <cv2pdbOptions />
+  <enableMixin>0</enableMixin>
+  <mixinPath>$(IntDir)\$(SafeProjectName).mixin</mixinPath>
   <objfiles />
   <linkswitches />
   <libfiles />
@@ -298,6 +352,9 @@
   <deffile />
   <resfile />
   <exefile>$(OutDir)\$(ProjectName).exe</exefile>
+  <pdbfile>$(IntDir)\$(SafeProjectName).pdb</pdbfile>
+  <impfile>$(IntDir)\$(SafeProjectName).lib</impfile>
+  <mapfile>$(IntDir)\$(SafeProjectName).map</mapfile>
   <useStdLibPath>1</useStdLibPath>
   <cRuntime>2</cRuntime>
   <privatePhobos>0</privatePhobos>
@@ -306,7 +363,7 @@
   <postBuildCommand />
   <filesToClean>*.obj;*.cmd;*.build;*.json;*.dep</filesToClean>
  </Config>
- <Config name="Release" platform="x64">
+ <Config platform="x64" name="Release">
   <obj>0</obj>
   <link>0</link>
   <lib>0</lib>
@@ -321,6 +378,7 @@
   <vtls>0</vtls>
   <vgc>0</vgc>
   <symdebug>2</symdebug>
+  <symdebugref>1</symdebugref>
   <optimize>1</optimize>
   <cpu>0</cpu>
   <isX86_64>1</isX86_64>
@@ -337,7 +395,7 @@
   <useIn>0</useIn>
   <useOut>0</useOut>
   <useArrayBounds>0</useArrayBounds>
-  <noboundscheck>0</noboundscheck>
+  <boundscheck>0</boundscheck>
   <useSwitchError>0</useSwitchError>
   <useUnitTests>0</useUnitTests>
   <useInline>1</useInline>
@@ -350,14 +408,27 @@
   <pic>0</pic>
   <cov>0</cov>
   <nofloat>0</nofloat>
-  <Dversion>2</Dversion>
   <ignoreUnsupportedPragmas>0</ignoreUnsupportedPragmas>
   <allinst>0</allinst>
   <stackStomp>0</stackStomp>
+  <betterC>0</betterC>
+  <dip25>0</dip25>
+  <dip1000>0</dip1000>
+  <dip1008>0</dip1008>
+  <transition_field>0</transition_field>
+  <revert_import>0</revert_import>
+  <preview_dtorfields>0</preview_dtorfields>
+  <transition_checkimports>0</transition_checkimports>
+  <transition_complex>0</transition_complex>
+  <preview_intpromote>0</preview_intpromote>
+  <preview_fixAliasThis>0</preview_fixAliasThis>
+  <preview_markdown>0</preview_markdown>
+  <transition_vmarkdown>0</transition_vmarkdown>
   <compiler>0</compiler>
   <otherDMD>0</otherDMD>
   <cccmd>$(CC) -nologo -c -TP -Isrc -Isrc\backend -Isrc\tk -Isrc\root -Isrc\vcbuild -DTARGET_WINDOS=1 -FIvcbuild\warnings.h</cccmd>
   <ccTransOpt>1</ccTransOpt>
+  <addDepImp>0</addDepImp>
   <program>$(DMDInstallDir)windows\bin\dmd.exe</program>
   <imppath>..</imppath>
   <fileImppath>$(OutDir) ..\..\res</fileImppath>
@@ -382,6 +453,7 @@
   <dump_source>0</dump_source>
   <mapverbosity>0</mapverbosity>
   <createImplib>0</createImplib>
+  <debuglib>0</debuglib>
   <defaultlibname />
   <debuglibname />
   <moduleDepsFile />
@@ -389,10 +461,11 @@
   <runargs />
   <runCv2pdb>0</runCv2pdb>
   <pathCv2pdb>$(VisualDInstallDir)cv2pdb\cv2pdb.exe</pathCv2pdb>
-  <cv2pdbPre2043>0</cv2pdbPre2043>
   <cv2pdbNoDemangle>0</cv2pdbNoDemangle>
   <cv2pdbEnumType>0</cv2pdbEnumType>
   <cv2pdbOptions />
+  <enableMixin>0</enableMixin>
+  <mixinPath>$(IntDir)\$(SafeProjectName).mixin</mixinPath>
   <objfiles />
   <linkswitches />
   <libfiles />
@@ -400,6 +473,9 @@
   <deffile />
   <resfile />
   <exefile>$(OutDir)\$(ProjectName).exe</exefile>
+  <pdbfile>$(IntDir)\$(SafeProjectName).pdb</pdbfile>
+  <impfile>$(IntDir)\$(SafeProjectName).lib</impfile>
+  <mapfile>$(IntDir)\$(SafeProjectName).map</mapfile>
   <useStdLibPath>1</useStdLibPath>
   <cRuntime>1</cRuntime>
   <privatePhobos>0</privatePhobos>
@@ -409,9 +485,6 @@
   <filesToClean>*.obj;*.cmd;*.build;*.json;*.dep</filesToClean>
  </Config>
  <Folder name="dmd">
-  <Folder name="gen">
-   <File tool="Custom" path="..\..\VERSION" customcmd="copy ..\..\VERSION $(OutDir)\VERSION" uptodateWithSameTime="true" outfile="$(OutDir)\VERSION" />
-  </Folder>
   <Folder name="dmd">
    <Folder name="backend">
     <File path="..\dmd\backend\bcomplex.d" />
@@ -545,8 +618,8 @@
    <File path="..\dmd\semantic.d" />
    <File path="..\dmd\sideeffect.d" />
    <File path="..\dmd\statement.d" />
-   <File path="..\dmd\statementsem.d" />
    <File path="..\dmd\statement_rewrite_walker.d" />
+   <File path="..\dmd\statementsem.d" />
    <File path="..\dmd\staticassert.d" />
    <File path="..\dmd\staticcond.d" />
    <File path="..\dmd\target.d" />
@@ -566,6 +639,9 @@
    <File path="..\dmd\utils.d" />
    <File path="..\dmd\visitor.d" />
    <File path="..\win32.mak" />
+  </Folder>
+  <Folder name="gen">
+   <File customcmd="copy ..\..\VERSION $(OutDir)\VERSION" outfile="$(OutDir)\VERSION" path="..\..\VERSION" uptodateWithSameTime="true" tool="Custom" />
   </Folder>
  </Folder>
 </DProject>

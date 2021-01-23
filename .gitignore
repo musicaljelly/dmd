@@ -15,6 +15,7 @@ generated/
 # !!!
 src/vcbuild/generated
 src/vcbuild/dmd.VC.db
+src/vcbuild/.vs/
 # !!!
 
 # Visual Studio files
