@@ -2,15 +2,15 @@
  * Compiler implementation of the D programming language
  * http://dlang.org
  *
- * Copyright: Copyright (c) 1999-2017 by The D Language Foundation, All Rights Reserved
+ * Copyright: Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
  * Authors:   Walter Bright, http://www.digitalmars.com
  * License:   $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:    $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/root/stringtable.d, root/_stringtable.d)
+ * Documentation:  https://dlang.org/phobos/dmd_root_stringtable.html
+ * Coverage:    https://codecov.io/gh/dlang/dmd/src/master/src/dmd/root/stringtable.d
  */
 
 module dmd.root.stringtable;
-
-// Online documentation: https://dlang.org/phobos/dmd_root_stringtable.html
 
 import core.stdc.string;
 import dmd.root.rmem, dmd.root.hash;
@@ -103,7 +103,7 @@ public:
         pools = null;
     }
 
-    extern (C++) StringValue* lookup(const(char)* s, size_t length) nothrow pure
+    extern (C++) inout(StringValue)* lookup(const(char)* s, size_t length) inout nothrow pure
     {
         const(hash_t) hash = calcHash(s, length);
         const(size_t) i = findSlot(hash, s, length);
@@ -168,6 +168,11 @@ public:
         return 0;
     }
 
+    StringValue* update(const(char)[] name) nothrow
+    {
+        return update(name.ptr, name.length);
+    }
+
 private:
 nothrow:
     uint allocValue(const(char)* s, size_t length, void* ptrvalue)
@@ -189,16 +194,16 @@ nothrow:
         return vptr;
     }
 
-    StringValue* getValue(uint vptr) pure
+    inout(StringValue)* getValue(uint vptr) inout pure
     {
         if (!vptr)
             return null;
         const(size_t) idx = (vptr >> POOL_BITS) - 1;
         const(size_t) off = vptr & POOL_SIZE - 1;
-        return cast(StringValue*)&pools[idx][off];
+        return cast(inout(StringValue)*)&pools[idx][off];
     }
 
-    size_t findSlot(hash_t hash, const(char)* s, size_t length) pure
+    size_t findSlot(hash_t hash, const(char)* s, size_t length) const pure
     {
         // quadratic probing using triangular numbers
         // http://stackoverflow.com/questions/2348187/moving-from-linear-probing-to-quadratic-probing-hash-collisons/2349774#2349774

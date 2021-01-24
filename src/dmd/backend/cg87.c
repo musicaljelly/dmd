@@ -3,13 +3,13 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1987-1995 by Symantec
- *              Copyright (c) 2000-2017 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2018 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/cg87.c, backend/cg87.c)
  */
 
-#if !SPP
+#if (SCPP && !HTOD) || MARS
 
 #include        <stdio.h>
 #include        <string.h>
@@ -1510,8 +1510,8 @@ void orth87(CodeBuilder& cdb,elem *e,regm_t *pretregs)
         reverse ^= 1;
     }
 
-    regm_t retregs = mST0;
-    codelem(cdb,e1,&retregs,FALSE);
+    regm_t retregs1 = mST0;
+    codelem(cdb,e1,&retregs1,FALSE);
     note87(e1,0,0);
 
     if (config.flags4 & CFG4fdivcall && e->Eoper == OPdiv)

@@ -675,7 +675,7 @@ void test45()
    assert(foo45(0)==2);
    try{
       foo45(1);
-   }catch{
+   }catch(Throwable){
       return cast(void)0;
    }
    assert(0);
@@ -1084,17 +1084,17 @@ void test71()
 {
     size_t s = Foo71!(
 "helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-"helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-"helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-"helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-"helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-"helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-"helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-"helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-"helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-"helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-"helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-"When dealing with complex template tuples, it's very easy to overflow the
+~ "helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+~ "helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+~ "helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+~ "helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+~ "helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+~ "helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+~ "helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+~ "helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+~ "helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+~ "helloabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+~ "When dealing with complex template tuples, it's very easy to overflow the
 maximum symbol length allowed by OPTLINK.  This is, simply put, a damn shame,
 because it prevents otherwise completely legal code from compiling and linking
 with DMDWin, whereas it works perfectly fine when using DMDNix or GDC.
@@ -3506,7 +3506,7 @@ void test215()
     enum assocarrayliteral = Q!( [1:2] ).q.stringof;
     enum complex80 = Q!( 1+1.0i ).q.stringof;
     //enum dottype = Q!( C.Object.toString ).q.stringof;
-    enum halt = (assert(0), 0).stringof;    // ICE w/ -release
+    enum halt = 0.stringof;    // ICE w/ -release
     //enum remove = Q!( [1:2].remove(1) ).q.stringof;
     enum templat = Q!( Q ).q.stringof;
 }
@@ -4611,11 +4611,13 @@ void test7290()
     int add = 2;
     scope dg = (int a) => a + add;
 
+    // This will break with -dip1000 because a closure will no longer be allocated
     assert(GC.addrOf(dg.ptr) == null);
 
     foo7290a!dg();
     foo7290b(dg);
-    foo7290c(dg);
+    foo7290c(dg); // this will fail with -dip1000 and @safe because a scope delegate gets
+                  // assigned to @system delegate, but no closure was allocated
 }
 
 /***************************************************/
@@ -5615,7 +5617,11 @@ void testreal_to_ulong()
     real adjust = 1.0L/real.epsilon;
     u = r2ulong(adjust);
     //writefln("%s %s", adjust, u);
-    static if(real.mant_dig == 64)
+    static if(real.mant_dig == 113)
+        assert(u == 18446744073709551615UL);
+    else static if(real.mant_dig == 106)
+        assert(u == 18446744073709551615UL);
+    else static if(real.mant_dig == 64)
         assert(u == 9223372036854775808UL);
     else static if(real.mant_dig == 53)
         assert(u == 4503599627370496UL);
@@ -6126,6 +6132,18 @@ void test5332()
 }
 
 /***************************************************/
+// https://issues.dlang.org/show_bug.cgi?id=11742
+
+const int x11472 = void;
+
+static this() { x11472 = 10; }
+
+void test11472()
+{
+    assert(x11472 == 10);
+}
+
+/***************************************************/
 
 int main()
 {
@@ -6427,6 +6445,7 @@ int main()
     test252();
     test7997();
     test5332();
+    test11472();
 
     writefln("Success");
     return 0;

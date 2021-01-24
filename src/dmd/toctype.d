@@ -2,15 +2,15 @@
  * Compiler implementation of the
  * $(LINK2 http://www.dlang.org, D programming language).
  *
- * Copyright:   Copyright (c) 1999-2017 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/toctype.d, _toctype.d)
+ * Documentation:  https://dlang.org/phobos/dmd_toctype.html
+ * Coverage:    https://codecov.io/gh/dlang/dmd/src/master/src/dmd/toctype.d
  */
 
 module dmd.toctype;
-
-// Online documentation: https://dlang.org/phobos/dmd_toctype.html
 
 import core.stdc.stdlib;
 
@@ -19,6 +19,7 @@ import dmd.backend.ty;
 import dmd.backend.type;
 
 import dmd.declaration;
+import dmd.denum;
 import dmd.dstruct;
 import dmd.globals;
 import dmd.glue;
@@ -74,9 +75,9 @@ public:
         {
             Parameter p = Parameter.getNth(t.parameters, i);
             type* tp = Type_toCtype(p.type);
-            if (p.storageClass & (STCout | STCref))
+            if (p.storageClass & (STC.out_ | STC.ref_))
                 tp = type_allocn(TYnref, tp);
-            else if (p.storageClass & STClazy)
+            else if (p.storageClass & STC.lazy_)
             {
                 // Mangle as delegate
                 type* tf = type_function(TYnfunc, null, 0, false, tp);
@@ -100,20 +101,20 @@ public:
         {
         case 0:
             assert(0);
-        case MODconst:
-        case MODwild:
-        case MODwildconst:
+        case MODFlags.const_:
+        case MODFlags.wild:
+        case MODFlags.wildconst:
             t.ctype.Tty |= mTYconst;
             break;
-        case MODshared:
+        case MODFlags.shared_:
             t.ctype.Tty |= mTYshared;
             break;
-        case MODshared | MODconst:
-        case MODshared | MODwild:
-        case MODshared | MODwildconst:
+        case MODFlags.shared_ | MODFlags.const_:
+        case MODFlags.shared_ | MODFlags.wild:
+        case MODFlags.shared_ | MODFlags.wildconst:
             t.ctype.Tty |= mTYshared | mTYconst;
             break;
-        case MODimmutable:
+        case MODFlags.immutable_:
             t.ctype.Tty |= mTYimmutable;
             break;
         default:
@@ -134,7 +135,7 @@ public:
                 t.ctype.Tcount++;
                 return;
             }
-            t.ctype = type_struct_class(sym.toPrettyChars(true), sym.alignsize, sym.structsize, sym.arg1type ? Type_toCtype(sym.arg1type) : null, sym.arg2type ? Type_toCtype(sym.arg2type) : null, sym.isUnionDeclaration() !is null, false, sym.isPOD() != 0);
+            t.ctype = type_struct_class(sym.toPrettyChars(true), sym.alignsize, sym.structsize, sym.arg1type ? Type_toCtype(sym.arg1type) : null, sym.arg2type ? Type_toCtype(sym.arg2type) : null, sym.isUnionDeclaration() !is null, false, sym.isPOD() != 0, sym.hasNoFields);
             /* Add in fields of the struct
              * (after setting ctype to avoid infinite recursion)
              */
@@ -170,18 +171,26 @@ public:
         //printf("TypeEnum::toCtype() '%s'\n", t.sym.toChars());
         if (t.mod == 0)
         {
-            if (!t.sym.memtype)
+            EnumDeclaration sym = t.sym;
+            auto symMemtype = sym.memtype;
+            if (!symMemtype)
             {
                 // https://issues.dlang.org/show_bug.cgi?id=13792
                 t.ctype = Type_toCtype(Type.tvoid);
             }
-            else if (t.sym.memtype.toBasetype().ty == Tint32)
+            else if (sym.ident == Id.__c_long)
             {
-                t.ctype = type_enum(t.sym.toPrettyChars(true), Type_toCtype(t.sym.memtype));
+                t.ctype = type_fake(totym(t));
+                t.ctype.Tcount++;
+                return;
+            }
+            else if (symMemtype.toBasetype().ty == Tint32)
+            {
+                t.ctype = type_enum(sym.toPrettyChars(true), Type_toCtype(symMemtype));
             }
             else
             {
-                t.ctype = Type_toCtype(t.sym.memtype);
+                t.ctype = Type_toCtype(symMemtype);
             }
 
             if (global.params.symdebugref)
@@ -214,7 +223,7 @@ public:
         if (t.mod == 0)
         {
             //printf("TypeClass::toCtype() %s\n", toChars());
-            type* tc = type_struct_class(t.sym.toPrettyChars(true), t.sym.alignsize, t.sym.structsize, null, null, false, true, true);
+            type* tc = type_struct_class(t.sym.toPrettyChars(true), t.sym.alignsize, t.sym.structsize, null, null, false, true, true, false);
             t.ctype = type_pointer(tc);
             /* Add in fields of the class
              * (after setting ctype to avoid infinite recursion)

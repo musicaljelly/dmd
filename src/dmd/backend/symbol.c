@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1984-1998 by Symantec
- *              Copyright (c) 2000-2017 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2018 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/symbol.c, backend/symbol.c)
@@ -204,10 +204,14 @@ int Symbol::Salignsize()
 }
 
 /****************************************
- * Return if symbol is dead.
+ * Aver if Symbol is not only merely dead, but really most sincerely dead.
+ * Params:
+ *      anyInlineAsm = true if there's any inline assembler code
+ * Returns:
+ *      true if symbol is dead.
  */
 
-bool Symbol::Sisdead(bool anyiasm)
+bool Symbol::Sisdead(bool anyInlineAsm)
 {
     return Sflags & SFLdead ||
            /* SFLdead means the optimizer found no references to it.
@@ -217,7 +221,7 @@ bool Symbol::Sisdead(bool anyiasm)
             * Code that does write those variables to memory gets NOPed out
             * during address assignment.
             */
-           (!anyiasm && !(Sflags & SFLread) && Sflags & SFLunambig &&
+           (!anyInlineAsm && !(Sflags & SFLread) && Sflags & SFLunambig &&
 #if MARS
             // mTYvolatile means this variable has been reference by a nested function
             !(Stype->Tty & mTYvolatile) &&
@@ -413,7 +417,7 @@ void symbol_func(symbol *s)
     // Interrupt functions modify all registers
     // BUG: do interrupt functions really save BP?
     // Note that fregsaved may not be set yet
-    s->Sregsaved = (s->Stype && tybasic(s->Stype->Tty) == TYifunc) ? mBP : fregsaved;
+    s->Sregsaved = (s->Stype && tybasic(s->Stype->Tty) == TYifunc) ? (regm_t) mBP : fregsaved;
     s->Sseg = UNKNOWN;          // don't know what segment it is in
     if (!s->Sfunc)
         s->Sfunc = func_calloc();

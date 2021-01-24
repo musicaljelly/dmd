@@ -4849,6 +4849,56 @@ void test15781()
 }
 
 /******************************************/
+// https://issues.dlang.org/show_bug.cgi?id=16042
+
+struct Foo16042 {}
+
+auto map16042(alias func, T)(T t)
+{
+    return func(t);
+}
+
+auto toChars16042(R)(R r) if (is(R == int[]))
+{
+    Foo16042 f;
+    assert(toChars16042(f) == 1);               // OK
+    assert(map16042!(toChars16042)(f) == 1);    // OK <- NG
+    assert(map16042!((toChars16042))(f) == 1);  // OK
+}
+
+auto toChars16042(Foo16042 f)
+{
+    return 1;
+}
+
+void test16042()
+{
+    [1].toChars16042();
+}
+
+// ---
+
+auto fn16042(R)(R r) if (is(R == int[])) {}
+auto fn16042(Foo16042 f) { return 1; }
+
+struct Namespace16042
+{
+    alias fn = fn16042!(int[]);
+}
+
+void test16042b()
+{
+    Foo16042 f;
+
+    with (Namespace16042)
+    {
+        static assert(!__traits(compiles, fn(f)));              // NG
+        static assert(!__traits(compiles, map16042!(fn)(f)));   // should be NG -> actually NG
+        static assert(!__traits(compiles, map16042!((fn))(f))); // NG
+    }
+}
+
+/******************************************/
 // https://issues.dlang.org/show_bug.cgi?id=15243
 
 struct S15243(Types...)
@@ -4875,6 +4925,56 @@ void test15243()
 
     S15243!(int, long, string) s3;
     s3.apply3(&f3);
+}
+
+/******************************************/
+// https://issues.dlang.org/show_bug.cgi?id=15653
+
+alias TypeTuple15653(T...) = T;
+
+void test15653()
+{
+    void foo(U, T)(const T x)     { static assert(is(T == U)); }
+    void bar(U, T)(immutable T x) { static assert(is(T == U)); }
+
+    struct X { int a; long[2] b; }
+    struct Y { int* a; long[] b; }
+
+    foreach (U; TypeTuple15653!( byte,    short,   int,  long,
+                                ubyte,   ushort,  uint, ulong,
+                                 float,  double,  real,
+                                ifloat, idouble, ireal,
+                                cfloat, cdouble, creal,
+                                void delegate(),
+                                int[2], X, X[2]))
+    {
+        foo!U(U.init);      // OK
+        bar!U(U.init);      // Was error, now OK
+
+        U u;
+        foo!U(u);           // OK
+        bar!U(u);           // Was error, now OK
+    }
+
+    foreach (U; TypeTuple15653!(void*, int**, long[], double*[2]))
+    {
+        foo!U(U.init);      // OK
+        bar!U(U.init);      // Was error, now OK
+
+        U u;
+        foo!U(u);
+        static assert(!__traits(compiles, bar!U(u)), U.stringof);
+    }
+
+    foreach (U; TypeTuple15653!(Object, Y, Y[2], int[int]))
+    {
+        foo!U(U.init);      // OK
+        static assert(!__traits(compiles, bar!U(U.init)), U.stringof);
+
+        U u;
+        foo!U(u);           // OK
+        static assert(!__traits(compiles, bar!U(u)), U.stringof);
+    }
 }
 
 /******************************************/
@@ -4991,7 +5091,10 @@ int main()
     test14735();
     test14802();
     test15116();
+    test16042();
+    test16042b();
     test15243();
+    test15653();
 
     printf("Success\n");
     return 0;

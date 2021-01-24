@@ -2,15 +2,15 @@
  * Compiler implementation of the
  * $(LINK2 http://www.dlang.org, D programming language).
  *
- * Copyright:   Copyright (c) 1999-2017 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/link.d, _link.d)
+ * Documentation:  https://dlang.org/phobos/dmd_link.html
+ * Coverage:    https://codecov.io/gh/dlang/dmd/src/master/src/dmd/link.d
  */
 
 module dmd.link;
-
-// Online documentation: https://dlang.org/phobos/dmd_link.html
 
 import core.stdc.ctype;
 import core.stdc.stdio;
@@ -112,11 +112,11 @@ version (Posix)
     {
         version (OSX)
         {
-            static __gshared const(char)* nmeErrorMessage = "\"__Dmain\", referenced from:";
+            static __gshared const(char)* nmeErrorMessage = "`__Dmain`, referenced from:";
         }
         else
         {
-            static __gshared const(char)* nmeErrorMessage = "undefined reference to `_Dmain'";
+            static __gshared const(char)* nmeErrorMessage = "undefined reference to `_Dmain`";
         }
         FILE* stream = fdopen(fd, "r");
         if (stream is null)
@@ -161,22 +161,12 @@ public int runLINK()
         if (global.params.mscoff)
         {
             OutBuffer cmdbuf;
-            cmdbuf.writestring("/NOLOGO ");
+            cmdbuf.writestring("/NOLOGO");
             for (size_t i = 0; i < global.params.objfiles.dim; i++)
             {
-                if (i)
-                    cmdbuf.writeByte(' ');
+                cmdbuf.writeByte(' ');
                 const(char)* p = global.params.objfiles[i];
-                const(char)* basename = FileName.removeExt(FileName.name(p));
-                const(char)* ext = FileName.ext(p);
-                if (ext && !strchr(basename, '.'))
-                {
-                    // Write name sans extension (but not if a double extension)
-                    writeFilename(&cmdbuf, p, ext - p - 1);
-                }
-                else
-                    writeFilename(&cmdbuf, p);
-                FileName.free(basename);
+                writeFilename(&cmdbuf, p);
             }
             if (global.params.resfile)
             {
@@ -199,7 +189,7 @@ public int runLINK()
                 global.params.exefile = cast(char*)FileName.forceExt(n, "exe");
             }
             // Make sure path to exe file exists
-            ensurePathToNameExists(Loc(), global.params.exefile);
+            ensurePathToNameExists(Loc.initial, global.params.exefile);
             cmdbuf.writeByte(' ');
             if (global.params.mapfile)
             {
@@ -267,7 +257,7 @@ public int runLINK()
                 flnk.setbuffer(p, plen);
                 flnk._ref = 1;
                 if (flnk.write())
-                    error(Loc(), "error writing file %s", lnkfilename);
+                    error(Loc.initial, "error writing file %s", lnkfilename);
                 if (strlen(lnkfilename) < plen)
                     sprintf(p, "@%s", lnkfilename);
             }
@@ -319,7 +309,7 @@ public int runLINK()
                 global.params.exefile = cast(char*)FileName.forceExt(n, "exe");
             }
             // Make sure path to exe file exists
-            ensurePathToNameExists(Loc(), global.params.exefile);
+            ensurePathToNameExists(Loc.initial, global.params.exefile);
             cmdbuf.writeByte(',');
             if (global.params.mapfile)
                 writeFilename(&cmdbuf, global.params.mapfile);
@@ -395,7 +385,7 @@ public int runLINK()
                 flnk.setbuffer(p, plen);
                 flnk._ref = 1;
                 if (flnk.write())
-                    error(Loc(), "error writing file %s", lnkfilename);
+                    error(Loc.initial, "error writing file %s", lnkfilename);
                 if (strlen(lnkfilename) < plen)
                     sprintf(p, "@%s", lnkfilename);
             }
@@ -464,7 +454,7 @@ public int runLINK()
                 int fd = mkstemp(name.ptr);
                 if (fd == -1)
                 {
-                    error(Loc(), "error creating temporary file");
+                    error(Loc.initial, "error creating temporary file");
                     return 1;
                 }
                 else
@@ -511,7 +501,7 @@ public int runLINK()
             global.params.exefile = ex;
         }
         // Make sure path to exe file exists
-        ensurePathToNameExists(Loc(), global.params.exefile);
+        ensurePathToNameExists(Loc.initial, global.params.exefile);
         if (global.params.symdebug)
             argv.push("-g");
         if (global.params.is64bit)
@@ -579,25 +569,14 @@ public int runLINK()
             argv.push("-Xlinker");
             argv.push("--gc-sections");
         }
-        for (size_t i = 0; i < global.params.linkswitches.dim; i++)
-        {
-            const(char)* p = global.params.linkswitches[i];
-            if (!p || !p[0] || !(p[0] == '-' && (p[1] == 'l' || p[1] == 'L')))
-            {
-                // Don't need -Xlinker if switch starts with -l or -L.
-                // Eliding -Xlinker is significant for -L since it allows our paths
-                // to take precedence over gcc defaults.
-                argv.push("-Xlinker");
-            }
-            argv.push(p);
-        }
         /* Add each library, prefixing it with "-l".
          * The order of libraries passed is:
          *  1. any libraries passed with -L command line switch
          *  2. libraries specified on the command line
          *  3. libraries specified by pragma(lib), which were appended
          *     to global.params.libfiles.
-         *  4. standard libraries.
+         *  4. link switches, that may also contain -l libraries
+         *  5. standard libraries.
          */
         for (size_t i = 0; i < global.params.libfiles.dim; i++)
         {
@@ -619,11 +598,23 @@ public int runLINK()
             const(char)* p = global.params.dllfiles[i];
             argv.push(p);
         }
+        for (size_t i = 0; i < global.params.linkswitches.dim; i++)
+        {
+            const(char)* p = global.params.linkswitches[i];
+            if (!p || !p[0] || !(p[0] == '-' && (p[1] == 'l' || p[1] == 'L')))
+            {
+                // Don't need -Xlinker if switch starts with -l or -L.
+                // Eliding -Xlinker is significant for -L since it allows our paths
+                // to take precedence over gcc defaults.
+                argv.push("-Xlinker");
+            }
+            argv.push(p);
+        }
         /* D runtime libraries must go after user specified libraries
          * passed with -l.
          */
         const(char)* libname = global.params.symdebug ? global.params.debuglibname : global.params.defaultlibname;
-        size_t slen = strlen(libname);
+        size_t slen = libname ? strlen(libname) : 0;
         if (!global.params.betterC && slen)
         {
             char* buf = cast(char*)malloc(3 + slen + 1);
@@ -670,9 +661,13 @@ public int runLINK()
         if (global.params.verbose)
         {
             // Print it
+            OutBuffer buf;
             for (size_t i = 0; i < argv.dim; i++)
-                fprintf(global.stdmsg, "%s ", argv[i]);
-            fprintf(global.stdmsg, "\n");
+            {
+                buf.writestring(argv[i]);
+                buf.writeByte(' ');
+            }
+            message(buf.peekString());
         }
         argv.push(null);
         // set up pipes
@@ -712,22 +707,22 @@ public int runLINK()
                 }
                 else
                 {
-                    error(Loc(), "linker exited with status %d", status);
+                    error(Loc.initial, "linker exited with status %d", status);
                     if (nme == 1)
-                        error(Loc(), "no main function specified");
+                        error(Loc.initial, "no main function specified");
                 }
             }
         }
         else if (WIFSIGNALED(status))
         {
-            error(Loc(), "linker killed by signal %d", WTERMSIG(status));
+            error(Loc.initial, "linker killed by signal %d", WTERMSIG(status));
             status = 1;
         }
         return status;
     }
     else
     {
-        error(Loc(), "linking is not yet supported for this version of DMD.");
+        error(Loc.initial, "linking is not yet supported for this version of DMD.");
         return -1;
     }
 }
@@ -745,7 +740,7 @@ version (Windows)
         int status;
         size_t len;
         if (global.params.verbose)
-            fprintf(global.stdmsg, "%s %s\n", cmd, args);
+            message("%s %s", cmd, args);
         if (!global.params.mscoff)
         {
             if ((len = strlen(args)) > 255)
@@ -759,7 +754,7 @@ version (Windows)
                 }
                 else
                 {
-                    error(Loc(), "command line length of %d is too long", len);
+                    error(Loc.initial, "command line length of %d is too long", len);
                 }
             }
         }
@@ -807,14 +802,12 @@ version (Windows)
                 status = spawnlp(0, cmd, cmd, args, null);
             }
         }
-        //if (global.params.verbose)
-        //    fprintf(global.stdmsg, "\n");
         if (status)
         {
             if (status == -1)
-                error(Loc(), "can't run '%s', check PATH", cmd);
+                error(Loc.initial, "can't run '%s', check PATH", cmd);
             else
-                error(Loc(), "linker exited with status %d", status);
+                error(Loc.initial, "linker exited with status %d", status);
         }
         return status;
     }
@@ -853,10 +846,14 @@ public int runProgram()
     //printf("runProgram()\n");
     if (global.params.verbose)
     {
-        fprintf(global.stdmsg, "%s", global.params.exefile);
+        OutBuffer buf;
+        buf.writestring(global.params.exefile);
         for (size_t i = 0; i < global.params.runargs.dim; ++i)
-            fprintf(global.stdmsg, " %s", global.params.runargs[i]);
-        fprintf(global.stdmsg, "\n");
+        {
+            buf.writeByte(' ');
+            buf.writestring(global.params.runargs[i]);
+        }
+        message(buf.peekString());
     }
     // Build argv[]
     Strings argv;
@@ -912,7 +909,7 @@ public int runProgram()
         }
         else if (WIFSIGNALED(status))
         {
-            error(Loc(), "program killed by signal %d", WTERMSIG(status));
+            error(Loc.initial, "program killed by signal %d", WTERMSIG(status));
             status = 1;
         }
         return status;
@@ -951,6 +948,26 @@ version (Windows)
         }
 
         /**
+         * retrieve the name of the default C runtime library
+         * Params:
+         *   x64 = target architecture (x86 if false)
+         * Returns:
+         *   name of the default C runtime library
+         */
+        const(char)* defaultRuntimeLibrary(bool x64)
+        {
+            if (VCInstallDir is null)
+            {
+                detectVCInstallDir();
+                detectVCToolsInstallDir();
+            }
+            if (getVCLibDir(x64))
+                return "libcmt";
+            else
+                return "msvcrt100"; // mingw replacement
+        }
+
+        /**
          * retrieve options to be passed to the Microsoft linker
          * Params:
          *   x64 = target architecture (x86 if false)
@@ -960,7 +977,7 @@ version (Windows)
         const(char)* linkOptions(bool x64)
         {
             OutBuffer cmdbuf;
-            if (auto vclibdir = getVCDir(VCDir.Lib, x64))
+            if (auto vclibdir = getVCLibDir(x64))
             {
                 cmdbuf.writestring(" /LIBPATH:\"");
                 cmdbuf.writestring(vclibdir);
@@ -978,7 +995,6 @@ version (Windows)
                     }
                 }
             }
-            const(char)* windowssdkdir = getenv("WindowsSdkDir");
             if (auto p = getSDKLibPath(x64))
             {
                 cmdbuf.writestring(" /LIBPATH:\"");
@@ -1005,28 +1021,37 @@ version (Windows)
          */
         const(char)* linkerPath(bool x64)
         {
-            if (auto p = getVCDir(VCDir.Bin, false)) // prefer 32-bit linker in case of cross-compilation
+            const(char)* addpath;
+            if (auto p = getVCBinDir(x64, addpath))
             {
                 OutBuffer cmdbuf;
                 cmdbuf.writestring(p);
                 cmdbuf.writestring(r"\link.exe");
-                if (VSInstallDir)
+                if (addpath)
                 {
                     // debug info needs DLLs from $(VSInstallDir)\Common7\IDE for most linker versions
                     //  so prepend it too the PATH environment variable
                     const char* path = getenv("PATH");
-                    const char* idepath = FileName.combine(VSInstallDir, r"Common7\IDE");
-                    auto pathlen = strlen(path);
-                    auto idepathlen = strlen(idepath);
+                    const pathlen = strlen(path);
+                    const addpathlen = strlen(addpath);
 
-                    char* npath = cast(char*)mem.xmalloc(5 + pathlen + 1 + idepathlen + 1);
+                    char* npath = cast(char*)mem.xmalloc(5 + pathlen + 1 + addpathlen + 1);
                     memcpy(npath, "PATH=".ptr, 5);
-                    memcpy(npath + 5, idepath, idepathlen);
-                    npath[5 + idepathlen] = ';';
-                    memcpy(npath + 5 + idepathlen + 1, path, pathlen + 1);
+                    memcpy(npath + 5, addpath, addpathlen);
+                    npath[5 + addpathlen] = ';';
+                    memcpy(npath + 5 + addpathlen + 1, path, pathlen + 1);
                     putenv(npath);
                 }
                 return cmdbuf.extractString();
+            }
+
+            // try lld-link.exe alongside dmd.exe
+            char[MAX_PATH + 1] dmdpath = void;
+            if (GetModuleFileNameA(null, dmdpath.ptr, dmdpath.length) <= MAX_PATH)
+            {
+                auto lldpath = FileName.replaceName(dmdpath.ptr, "lld-link.exe");
+                if (FileName.exists(lldpath))
+                    return lldpath;
             }
 
             // search PATH to avoid createProcess preferring "link.exe" from the dmd folder
@@ -1188,31 +1213,108 @@ version (Windows)
             }
         }
 
-        enum VCDir { Base, Bin, Lib }
-
         /**
-         * get Visual C folders
+         * get Visual C bin folder
          * Params:
-         *   dir = select bin,lib or base folder
          *   x64 = target architecture (x86 if false)
+         *   addpath = [out] path that needs to be added to the PATH environment variable
          * Returns:
-         *   folder containing the VC executables, the VC runtime libraries or the VC root folder
+         *   folder containing the VC executables
+         *
+         * Selects the binary path according to the host and target OS, but verifies
+         * that link.exe exists in that folder and falls back to 32-bit host/target if
+         * missing
+         * Note: differences for the linker binaries are small, they all
+         * allow cross compilation
          */
-        const(char)* getVCDir(VCDir dir, bool x64)
+        const(char)* getVCBinDir(bool x64, out const(char)* addpath)
         {
+            static const(char)* linkExists(const(char)* p)
+            {
+                auto lp = FileName.combine(p, "link.exe");
+                return FileName.exists(lp) ? p : null;
+            }
+
+            bool isHost64 = isWin64Host();
             if (VCToolsInstallDir !is null)
             {
-                if (dir == VCDir.Bin)
-                    return FileName.combine(VCToolsInstallDir, x64 ? r"bin\HostX86\x64" : r"bin\HostX86\x86");
-                if (dir == VCDir.Lib)
-                    return FileName.combine(VCToolsInstallDir, x64 ? r"lib\x64" : r"lib\x86");
-                return VCToolsInstallDir;
+                if (isHost64)
+                {
+                    if (x64)
+                    {
+                        if (auto p = linkExists(FileName.combine(VCToolsInstallDir, r"bin\HostX64\x64")))
+                            return p;
+                        // in case of missing linker, prefer other host binaries over other target architecture
+                    }
+                    else
+                    {
+                        if (auto p = linkExists(FileName.combine(VCToolsInstallDir, r"bin\HostX64\x86")))
+                        {
+                            addpath = FileName.combine(VCToolsInstallDir, r"bin\HostX64\x64");
+                            return p;
+                        }
+                    }
+                }
+                if (x64)
+                {
+                    if (auto p = linkExists(FileName.combine(VCToolsInstallDir, r"bin\HostX86\x64")))
+                    {
+                        addpath = FileName.combine(VCToolsInstallDir, r"bin\HostX86\x86");
+                        return p;
+                    }
+                }
+                if (auto p = linkExists(FileName.combine(VCToolsInstallDir, r"bin\HostX86\x86")))
+                    return p;
             }
-            if (dir == VCDir.Bin)
-                return FileName.combine(VCInstallDir, x64 ? r"bin\amd64" : "bin");
-            if (dir == VCDir.Lib)
+            if (VCInstallDir !is null)
+            {
+                if (isHost64)
+                {
+                    if (x64)
+                    {
+                        if (auto p = linkExists(FileName.combine(VCInstallDir, r"bin\amd64")))
+                            return p;
+                        // in case of missing linker, prefer other host binaries over other target architecture
+                    }
+                    else
+                    {
+                        if (auto p = linkExists(FileName.combine(VCInstallDir, r"bin\amd64_x86")))
+                        {
+                            addpath = FileName.combine(VCInstallDir, r"bin\amd64");
+                            return p;
+                        }
+                    }
+                }
+
+                if (VSInstallDir)
+                    addpath = FileName.combine(VSInstallDir, r"Common7\IDE");
+                else
+                    addpath = FileName.combine(VCInstallDir, r"bin");
+
+                if (x64)
+                    if (auto p = linkExists(FileName.combine(VCInstallDir, r"x86_amd64")))
+                        return p;
+
+                if (auto p = linkExists(FileName.combine(VCInstallDir, r"bin\HostX86\x86")))
+                    return p;
+            }
+            return null;
+        }
+
+        /**
+        * get Visual C Library folder
+        * Params:
+        *   x64 = target architecture (x86 if false)
+        * Returns:
+        *   folder containing the the VC runtime libraries
+        */
+        const(char)* getVCLibDir(bool x64)
+        {
+            if (VCToolsInstallDir !is null)
+                return FileName.combine(VCToolsInstallDir, x64 ? r"lib\x64" : r"lib\x86");
+            if (VCInstallDir !is null)
                 return FileName.combine(VCInstallDir, x64 ? r"lib\amd64" : "lib");
-            return VCInstallDir;
+            return null;
         }
 
         /**
@@ -1254,6 +1356,12 @@ version (Windows)
                 else if (!x64 && FileName.exists(FileName.buildPath(sdk, "kernel32.lib"))) // SDK 7.1 or earlier
                     return sdk;
             }
+
+            // try mingw fallback relative to phobos library folder that's part of LIB
+            Strings* libpaths = FileName.splitPath(getenv("LIB"));
+            if (auto p = FileName.searchPath(libpaths, r"mingw\kernel32.lib", false))
+                return FileName.path(p);
+
             return null;
         }
 
@@ -1332,6 +1440,36 @@ version (Windows)
             scope char[] pbuf = new char[cnt + 1];
             RegQueryValueExA(key, valueName, null, &type, cast(ubyte*) pbuf.ptr, &cnt);
             return pbuf.ptr;
+        }
+
+        /***
+         * get architecture of host OS
+         */
+        static bool isWin64Host()
+        {
+            version (Win64)
+            {
+                return true;
+            }
+            else
+            {
+                // running as a 32-bit process on a 64-bit host?
+                alias fnIsWow64Process = extern(Windows) BOOL function(HANDLE, PBOOL);
+                static fnIsWow64Process pIsWow64Process;
+
+                if (!pIsWow64Process)
+                {
+                    //IsWow64Process is not available on all supported versions of Windows.
+                    pIsWow64Process = cast(fnIsWow64Process) GetProcAddress(GetModuleHandleA("kernel32"), "IsWow64Process");
+                    if (!pIsWow64Process)
+                        return false;
+                }
+                BOOL bIsWow64 = FALSE;
+                if (!pIsWow64Process(GetCurrentProcess(), &bIsWow64))
+                    return false;
+
+                return bIsWow64 != 0;
+            }
         }
     }
 }

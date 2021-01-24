@@ -1,69 +1,3 @@
-# Execute the dmd test suite
-#
-# Targets
-# -------
-#
-#    default | all:      run all unit tests that haven't been run yet
-#
-#    run_tests:          run all tests
-#    run_runnable_tests:         run just the runnable tests
-#    run_compilable_tests:       run just the compilable tests
-#    run_fail_compilation_tests: run just the fail compilation tests
-#
-#    quick:              run all tests with no default permuted args
-#                        (individual test specified options still honored)
-#
-#    clean:              remove all temporary or result files from prevous runs
-#
-#    test_results/compilable/json.d.out      runs an individual test
-#                                            (run log of the test is stored)
-
-# In-test variables
-# -----------------
-#
-#   COMPILE_SEPARATELY:  if present, forces each .d file to compile separately and linked
-#                        together in an extra setp.
-#                        default: (none, aka compile/link all in one step)
-#
-#   EXECUTE_ARGS:        parameters to add to the execution of the test
-#                        default: (none)
-#
-#   EXTRA_SOURCES:       list of extra files to build and link along with the test
-#                        default: (none)
-#
-#   EXTRA_OBJC_SOURCES:  list of extra Objective-C files to build and link along with the test
-#                        default: (none). Test files with this variable will be ignored unless
-#                        the D_OBJC environment variable is set to "1"
-#
-#   PERMUTE_ARGS:        the set of arguments to permute in multiple $(DMD) invocations.
-#                        An empty set means only one permutation with no arguments.
-#                        default: the make variable ARGS (see below)
-#
-#   TEST_OUTPUT:         the output is expected from the compilation (if the
-#                        output of the compilation doesn't match, the test
-#                        fails). You can use the this format for multi-line
-#                        output:
-#                        TEST_OUTPUT:
-#                        ---
-#                        Some
-#                        Output
-#                        ---
-#
-#   POST_SCRIPT:         name of script to execute after test run
-#                        note: arguments to the script may be included after the name.
-#                              additionally, the name of the file that contains the output
-#                              of the compile/link/run steps is added as the last parameter.
-#                        default: (none)
-#
-#   REQUIRED_ARGS:       arguments to add to the $(DMD) command line
-#                        default: (none)
-#                        note: the make variable REQUIRED_ARGS is also added to the $(DMD)
-#                              command line (see below)
-#
-#   DISABLED:            text describing why the test is disabled (if empty, the test is
-#                        considered to be enabled).
-#                        default: (none, enabled)
-
 ifeq (Windows_NT,$(OS))
     ifeq ($(findstring WOW64, $(shell uname)),WOW64)
         OS:=win64
@@ -76,6 +10,10 @@ endif
 ifeq (Win_32,$(OS))
     OS:=win32
     MODEL:=32
+endif
+ifeq (Win_32_64,$(OS))
+    OS:=win64
+    MODEL:=64
 endif
 ifeq (Win_64,$(OS))
     OS:=win64
@@ -91,6 +29,8 @@ ifeq (freebsd,$(OS))
     SHELL=/usr/local/bin/bash
 else ifeq (netbsd,$(OS))
     SHELL=/usr/pkg/bin/bash
+else ifeq (dragonflybsd,$(OS))
+    SHELL=/usr/local/bin/bash
 else
     SHELL=/bin/bash
 endif
@@ -164,6 +104,7 @@ else
     endif
     export DFLAGS
 endif
+REQUIRED_ARGS+=$(PIC_FLAG)
 
 ifeq ($(OS),osx)
     ifeq ($(MODEL),64)
@@ -186,25 +127,10 @@ fail_compilation_test_results=$(addsuffix .out,$(addprefix $(RESULTS_DIR)/,$(fai
 
 all: run_tests
 
-$(RESULTS_DIR)/runnable/%.d.out: runnable/%.d $(RESULTS_DIR)/.created $(RESULTS_DIR)/d_do_test$(EXE) $(DMD)
-	$(QUIET) $(RESULTS_DIR)/d_do_test $(<D) $* d
+test_tools=$(RESULTS_DIR)/d_do_test$(EXE) $(RESULTS_DIR)/sanitize_json$(EXE)
 
-$(RESULTS_DIR)/runnable/%.sh.out: runnable/%.sh $(RESULTS_DIR)/.created $(RESULTS_DIR)/d_do_test$(EXE) $(DMD)
-	$(QUIET) echo " ... $(<D)/$*.sh"
-	$(QUIET) ./$(<D)/$*.sh
-
-$(RESULTS_DIR)/compilable/%.d.out: compilable/%.d $(RESULTS_DIR)/.created $(RESULTS_DIR)/d_do_test$(EXE) $(DMD)
-	$(QUIET) $(RESULTS_DIR)/d_do_test $(<D) $* d
-
-$(RESULTS_DIR)/compilable/%.sh.out: compilable/%.sh $(RESULTS_DIR)/.created $(RESULTS_DIR)/d_do_test$(EXE) $(DMD)
-	$(QUIET) echo " ... $(<D)/$*.sh"
-	$(QUIET) ./$(<D)/$*.sh
-
-$(RESULTS_DIR)/fail_compilation/%.d.out: fail_compilation/%.d $(RESULTS_DIR)/.created $(RESULTS_DIR)/d_do_test$(EXE) $(DMD)
-	$(QUIET) $(RESULTS_DIR)/d_do_test $(<D) $* d
-
-$(RESULTS_DIR)/fail_compilation/%.html.out: fail_compilation/%.html $(RESULTS_DIR)/.created $(RESULTS_DIR)/d_do_test$(EXE) $(DMD)
-	$(QUIET) $(RESULTS_DIR)/d_do_test $(<D) $* html
+$(RESULTS_DIR)/%.out: % $(RESULTS_DIR)/.created $(test_tools) $(DMD)
+	$(QUIET) $(RESULTS_DIR)/d_do_test $<
 
 quick:
 	$(MAKE) ARGS="" run_tests
@@ -225,27 +151,34 @@ run_tests: start_runnable_tests start_compilable_tests start_fail_compilation_te
 
 run_runnable_tests: $(runnable_test_results)
 
-start_runnable_tests: $(RESULTS_DIR)/.created $(RESULTS_DIR)/d_do_test$(EXE)
+start_runnable_tests: $(RESULTS_DIR)/.created $(test_tools)
 	@echo "Running runnable tests"
 	$(QUIET)$(MAKE) --no-print-directory run_runnable_tests
 
 run_compilable_tests: $(compilable_test_results)
 
-start_compilable_tests: $(RESULTS_DIR)/.created $(RESULTS_DIR)/d_do_test$(EXE)
+start_compilable_tests: $(RESULTS_DIR)/.created $(test_tools)
 	@echo "Running compilable tests"
 	$(QUIET)$(MAKE) --no-print-directory run_compilable_tests
 
 run_fail_compilation_tests: $(fail_compilation_test_results)
 
-start_fail_compilation_tests: $(RESULTS_DIR)/.created $(RESULTS_DIR)/d_do_test$(EXE)
+start_fail_compilation_tests: $(RESULTS_DIR)/.created $(test_tools)
 	@echo "Running fail compilation tests"
 	$(QUIET)$(MAKE) --no-print-directory run_fail_compilation_tests
 
-$(RESULTS_DIR)/d_do_test$(EXE): d_do_test.d $(RESULTS_DIR)/.created
+$(RESULTS_DIR)/d_do_test$(EXE): tools/d_do_test.d $(RESULTS_DIR)/.created
 	@echo "Building d_do_test tool"
 	@echo "OS: '$(OS)'"
 	@echo "MODEL: '$(MODEL)'"
 	@echo "PIC: '$(PIC_FLAG)'"
-	$(DMD) -conf= $(MODEL_FLAG) $(DEBUG_FLAGS) -unittest -run d_do_test.d -unittest
-	$(DMD) -conf= $(MODEL_FLAG) $(DEBUG_FLAGS) -od$(RESULTS_DIR) -of$(RESULTS_DIR)$(DSEP)d_do_test$(EXE) d_do_test.d
+	$(DMD) -conf= $(MODEL_FLAG) $(DEBUG_FLAGS) -unittest -run $<
+	$(DMD) -conf= $(MODEL_FLAG) $(DEBUG_FLAGS) -od$(RESULTS_DIR) -of$(RESULTS_DIR)$(DSEP)d_do_test$(EXE) $<
+
+$(RESULTS_DIR)/sanitize_json$(EXE): tools/sanitize_json.d $(RESULTS_DIR)/.created
+	@echo "Building sanitize_json tool"
+	@echo "OS: '$(OS)'"
+	@echo "MODEL: '$(MODEL)'"
+	@echo "PIC: '$(PIC_FLAG)'"
+	$(DMD) -conf= $(MODEL_FLAG) $(DEBUG_FLAGS) -od$(RESULTS_DIR) -of$(RESULTS_DIR)$(DSEP)sanitize_json$(EXE) -i $<
 

@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1985-1998 by Symantec
- *              Copyright (c) 2000-2017 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2018 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/code_x86.c, backend/code_x86.c)
@@ -14,6 +14,7 @@ module dmd.backend.code_x86;
 // Online documentation: https://dlang.org/phobos/dmd_backend_code_x86.html
 
 import dmd.backend.cdef;
+import dmd.backend.cc : config;
 import dmd.backend.code;
 
 /* Register definitions */
@@ -241,6 +242,8 @@ struct code
     evc IEV2;             // 2nd operand, if any
 
     bool isJumpOP() { return Iop == JMP || Iop == JMPS; }
+
+    extern (C++) void print();               // pretty-printer
 }
 
 /*******************
@@ -377,3 +380,6 @@ uint VEX3_B2(code.Svex ivex)
         ivex.l    << 2 |
         ivex.pp;
 }
+
+bool ADDFWAIT() { return config.target_cpu <= TARGET_80286; }
+

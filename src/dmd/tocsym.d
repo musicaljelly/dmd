@@ -2,15 +2,15 @@
  * Compiler implementation of the
  * $(LINK2 http://www.dlang.org, D programming language).
  *
- * Copyright:   Copyright (c) 1999-2017 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/tocsym.d, _tocsym.d)
+ * Documentation:  https://dlang.org/phobos/dmd_tocsym.html
+ * Coverage:    https://codecov.io/gh/dlang/dmd/src/master/src/dmd/tocsym.d
  */
 
 module dmd.tocsym;
-
-// Online documentation: https://dlang.org/phobos/dmd_tocsym.html
 
 import core.stdc.stdio;
 import core.stdc.string;
@@ -137,32 +137,43 @@ Symbol *toSymbol(Dsymbol s)
             //printf("VarDeclaration.toSymbol(%s)\n", vd.toChars());
             assert(!vd.needThis());
 
-            Symbol *s;
+            const(char)[] id;
+            import dmd.root.outbuffer : OutBuffer;
+            OutBuffer buf;
+            bool isNRVO = false;
             if (vd.isDataseg())
             {
-                import dmd.root.outbuffer : OutBuffer;
-                OutBuffer buf;
                 mangleToBuffer(vd, &buf);
-                const length = buf.offset;
-                const id = buf.peekString();
-                s = symbol_calloc(id, cast(uint)length);
+                id = buf.peekString()[0..buf.offset]; // symbol_calloc needs zero termination
             }
             else
             {
-                const id = vd.ident.toChars();
-                s = symbol_calloc(id, cast(uint)strlen(id));
+                id = vd.ident.toString();
+                if (FuncDeclaration fd = vd.toParent2().isFuncDeclaration())
+                {
+                    if (fd.nrvo_can && fd.nrvo_var == vd)
+                    {
+                        buf.writestring("__nrvo_");
+                        buf.writestring(id);
+                        id = buf.peekString()[0..buf.offset]; // symbol_calloc needs zero termination
+                        isNRVO = true;
+                    }
+                }
             }
+            Symbol *s = symbol_calloc(id.ptr, cast(uint)id.length);
             s.Salignment = vd.alignment;
-            if (vd.storage_class & STCtemp)
+            if (vd.storage_class & STC.temp)
                 s.Sflags |= SFLartifical;
+            if (isNRVO)
+                s.Sflags |= SFLnodebug;
 
             TYPE *t;
-            if (vd.storage_class & (STCout | STCref))
+            if (vd.storage_class & (STC.out_ | STC.ref_))
             {
                 t = type_allocn(TYnref, Type_toCtype(vd.type));
                 t.Tcount++;
             }
-            else if (vd.storage_class & STClazy)
+            else if (vd.storage_class & STC.lazy_)
             {
                 if (config.exe == EX_WIN64 && vd.isParameter())
                     t = type_fake(TYnptr);
@@ -172,7 +183,7 @@ Symbol *toSymbol(Dsymbol s)
             }
             else if (vd.isParameter())
             {
-                if (config.exe == EX_WIN64 && vd.type.size(Loc()) > _tysize[TYnptr])
+                if (config.exe == EX_WIN64 && vd.type.size(Loc.initial) > _tysize[TYnptr])
                 {
                     t = type_allocn(TYnref, Type_toCtype(vd.type));
                     t.Tcount++;
@@ -191,7 +202,7 @@ Symbol *toSymbol(Dsymbol s)
 
             if (vd.isDataseg())
             {
-                if (vd.isThreadlocal() && !(vd.storage_class & STCtemp))
+                if (vd.isThreadlocal() && !(vd.storage_class & STC.temp))
                 {
                     /* Thread local storage
                      */
@@ -205,10 +216,7 @@ Symbol *toSymbol(Dsymbol s)
 
                     if (global.params.vtls)
                     {
-                        const(char)* p = vd.loc.toChars();
-                        fprintf(global.stdmsg, "%s: %s is thread local\n", p ? p : "", vd.toChars());
-                        if (p)
-                            mem.xfree(cast(void*)p);
+                        message(vd.loc, "`%s` is thread local", vd.toChars());
                     }
                 }
                 s.Sclass = SCextern;
@@ -237,35 +245,36 @@ Symbol *toSymbol(Dsymbol s)
                 }
             }
 
-            if (vd.storage_class & STCvolatile)
+            if (vd.storage_class & STC.volatile_)
             {
                 type_setcv(&t, t.Tty | mTYvolatile);
             }
 
             mangle_t m = 0;
-            switch (vd.linkage)
+            final switch (vd.linkage)
             {
-                case LINKwindows:
+                case LINK.windows:
                     m = global.params.is64bit ? mTYman_c : mTYman_std;
                     break;
 
-                case LINKpascal:
+                case LINK.pascal:
                     m = mTYman_pas;
                     break;
 
-                case LINKobjc:
-                case LINKc:
+                case LINK.objc:
+                case LINK.c:
                     m = mTYman_c;
                     break;
 
-                case LINKd:
+                case LINK.d:
                     m = mTYman_d;
                     break;
-                case LINKcpp:
+                case LINK.cpp:
                     s.Sflags |= SFLpublic;
-                    m = mTYman_d;
+                    m = mTYman_cpp;
                     break;
-                default:
+                case LINK.default_:
+                case LINK.system:
                     printf("linkage = %d, vd = %s %s @ [%s]\n",
                         vd.linkage, vd.kind(), vd.toChars(), vd.loc.toChars());
                     assert(0);
@@ -341,26 +350,26 @@ Symbol *toSymbol(Dsymbol s)
             }
             else
             {
-                switch (fd.linkage)
+                final switch (fd.linkage)
                 {
-                    case LINKwindows:
+                    case LINK.windows:
                         t.Tmangle = global.params.is64bit ? mTYman_c : mTYman_std;
                         break;
 
-                    case LINKpascal:
+                    case LINK.pascal:
                         t.Tty = TYnpfunc;
                         t.Tmangle = mTYman_pas;
                         break;
 
-                    case LINKc:
-                    case LINKobjc:
+                    case LINK.c:
+                    case LINK.objc:
                         t.Tmangle = mTYman_c;
                         break;
 
-                    case LINKd:
+                    case LINK.d:
                         t.Tmangle = mTYman_d;
                         break;
-                    case LINKcpp:
+                    case LINK.cpp:
                         s.Sflags |= SFLpublic;
                         if (fd.isThis() && !global.params.is64bit && global.params.isWindows)
                         {
@@ -373,9 +382,10 @@ Symbol *toSymbol(Dsymbol s)
                                 t.Tty = TYmfunc;
                             }
                         }
-                        t.Tmangle = mTYman_d;
+                        t.Tmangle = mTYman_cpp;
                         break;
-                    default:
+                    case LINK.default_:
+                    case LINK.system:
                         printf("linkage = %d\n", fd.linkage);
                         assert(0);
                 }
@@ -534,7 +544,7 @@ Classsym *fake_classsym(Identifier id)
 {
     auto t = type_struct_class(id.toChars(),8,0,
         null,null,
-        false, false, true);
+        false, false, true, false);
 
     t.Ttag.Sstruct.Sflags = STRglobal;
     t.Tflags |= TFsizeunknown | TFforward;
@@ -550,7 +560,7 @@ Classsym *fake_classsym(Identifier id)
 
 Symbol *toVtblSymbol(ClassDeclaration cd)
 {
-    if (!cd.vtblsym)
+    if (!cd.vtblsym || !cd.vtblsym.csym)
     {
         if (!cd.csym)
             toSymbol(cd);
@@ -560,9 +570,11 @@ Symbol *toVtblSymbol(ClassDeclaration cd)
         auto s = toSymbolX(cd, "__vtbl", SCextern, t, "Z");
         s.Sflags |= SFLnodebug;
         s.Sfl = FLextern;
-        cd.vtblsym = s;
+
+        auto vtbl = cd.vtblSymbol();
+        vtbl.csym = s;
     }
-    return cd.vtblsym;
+    return cd.vtblsym.csym;
 }
 
 /**********************************

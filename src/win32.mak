@@ -1,7 +1,6 @@
 #_ win32.mak
 #
-# Copyright (c) 1999-2016 by The D Language Foundation
-# All Rights Reserved
+# Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
 # written by Walter Bright
 # http://www.digitalmars.com
 # Distributed under the Boost Software License, Version 1.0.
@@ -61,6 +60,8 @@ OS=windows
 
 ##### Directories
 
+# DMC directory
+DMCROOT=$(DM_HOME)\dm
 # DMD source directories
 D=dmd
 C=$D\backend
@@ -150,18 +151,19 @@ DMDMAKE=$(MAKE) -fwin32.mak C=$C TK=$(TK) ROOT=$(ROOT) MAKE="$(MAKE)" HOST_DC="$
 
 # D front end
 FRONT_SRCS=$D/access.d $D/aggregate.d $D/aliasthis.d $D/apply.d $D/argtypes.d $D/arrayop.d	\
-	$D/arraytypes.d $D/astcodegen.d $D/attrib.d $D/builtin.d $D/canthrow.d $D/clone.d $D/complex.d		\
-	$D/cond.d $D/constfold.d $D/cppmangle.d $D/cppmanglewin.d $D/ctfeexpr.d $D/dcast.d $D/dclass.d		\
+	$D/arraytypes.d $D/astcodegen.d $D/attrib.d $D/builtin.d $D/canthrow.d $D/cli.d $D/clone.d $D/compiler.d $D/complex.d	\
+	$D/cond.d $D/constfold.d $D/cppmangle.d $D/cppmanglewin.d $D/ctfeexpr.d $D/ctorflow.d $D/dcast.d $D/dclass.d		\
 	$D/declaration.d $D/delegatize.d $D/denum.d $D/dimport.d $D/dinifile.d $D/dinterpret.d	\
 	$D/dmacro.d $D/dmangle.d $D/dmodule.d $D/doc.d $D/dscope.d $D/dstruct.d $D/dsymbol.d $D/dsymbolsem.d		\
-	$D/dtemplate.d $D/dversion.d $D/escape.d			\
+	$D/lambdacomp.d $D/dtemplate.d $D/dversion.d $D/escape.d			\
 	$D/expression.d $D/expressionsem.d $D/func.d $D/hdrgen.d $D/id.d $D/imphint.d	\
 	$D/impcnvtab.d $D/init.d $D/initsem.d $D/inline.d $D/inlinecost.d $D/intrange.d $D/json.d $D/lib.d $D/link.d	\
 	$D/mars.d $D/mtype.d $D/nogc.d $D/nspace.d $D/objc.d $D/opover.d $D/optimize.d $D/parse.d	\
-	$D/sapply.d $D/semantic.d $D/sideeffect.d $D/statement.d $D/staticassert.d $D/target.d	\
+	$D/sapply.d $D/sideeffect.d $D/statement.d $D/staticassert.d $D/target.d	\
 	$D/safe.d $D/blockexit.d $D/permissivevisitor.d $D/transitivevisitor.d $D/parsetimevisitor.d $D/printast.d $D/typesem.d \
 	$D/traits.d $D/utils.d $D/visitor.d $D/libomf.d $D/scanomf.d $D/templateparamsem.d $D/typinf.d \
-	$D/libmscoff.d $D/scanmscoff.d $D/statement_rewrite_walker.d $D/statementsem.d $D/staticcond.d
+	$D/libmscoff.d $D/scanmscoff.d $D/statement_rewrite_walker.d $D/statementsem.d $D/staticcond.d \
+	$D/semantic2.d $D/semantic3.d
 
 LEXER_SRCS=$D/console.d $D/entity.d $D/errors.d $D/globals.d $D/id.d $D/identifier.d \
 	$D/lexer.d $D/tokens.d $D/utf.d
@@ -173,9 +175,9 @@ LEXER_ROOT=$(ROOT)/array.d $(ROOT)/ctfloat.d $(ROOT)/file.d $(ROOT)/filename.d \
 PARSER_SRCS=$D/astbase.d $D/parsetimevisitor.d $D/parse.d $D/transitivevisitor.d $D/permissivevisitor.d $D/strictvisitor.d
 
 GLUE_SRCS=$D/irstate.d $D/toctype.d $D/glue.d $D/gluelayer.d $D/todt.d $D/tocsym.d $D/toir.d $D/dmsc.d \
-	$D/tocvdebug.d $D/s2ir.d $D/toobj.d $D/e2ir.d $D/objc_glue_stubs.d $D/eh.d $D/iasm.d
+	$D/tocvdebug.d $D/s2ir.d $D/toobj.d $D/e2ir.d $D/objc_glue.d $D/eh.d $D/iasm.d
 
-BACK_HDRS=$C/bcomplex.d $C/cc.d $C/cdef.d $C/cgcv.d $C/code.d $C/cv4.d $C/dt.d $C/el.d $C/global.d \
+BACK_HDRS=$C/cc.d $C/cdef.d $C/cgcv.d $C/code.d $C/cv4.d $C/dt.d $C/el.d $C/global.d \
 	$C/obj.d $C/oper.d $C/outbuf.d $C/rtlsym.d $C/code_x86.d $C/iasm.d \
 	$C/ty.d $C/type.d $C/exh.d $C/mach.d $C/md5.d $C/mscoff.d $C/dwarf.d $C/dwarf2.d $C/xmm.d
 
@@ -190,7 +192,7 @@ GLUEOBJ=
 
 # D back end
 GBACKOBJ= $G/go.obj $G/gdag.obj $G/gother.obj $G/gflow.obj $G/gloop.obj $G/var.obj $G/el.obj \
-	$G/newman.obj $G/glocal.obj $G/os.obj $G/nteh.obj $G/evalu8.obj $G/cgcs.obj \
+	$G/newman.obj $G/glocal.obj $G/os.obj $G/nteh.obj $G/evalu8.obj $G/fp.obj $G/cgcs.obj \
 	$G/rtlsym.obj $G/cgelem.obj $G/cgen.obj $G/cgreg.obj $G/out.obj \
 	$G/blockopt.obj $G/cgobj.obj $G/cg.obj $G/cgcv.obj $G/type.obj $G/dt.obj \
 	$G/debug.obj $G/code.obj $G/cg87.obj $G/cgxmm.obj $G/cgsched.obj $G/ee.obj $G/csymbol.obj \
@@ -198,7 +200,7 @@ GBACKOBJ= $G/go.obj $G/gdag.obj $G/gother.obj $G/gflow.obj $G/gloop.obj $G/var.o
 	$G/bcomplex.obj $G/ptrntab.obj $G/aa.obj $G/ti_achar.obj $G/md5.obj \
 	$G/ti_pvoid.obj $G/mscoffobj.obj $G/pdata.obj $G/cv8.obj $G/backconfig.obj \
 	$G/divcoeff.obj $G/dwarf.obj $G/compress.obj $G/varstats.obj \
-	$G/ph2.obj $G/util2.obj $G/tk.obj $G/gsroa.obj \
+	$G/ph2.obj $G/util2.obj $G/tk.obj $G/gsroa.obj $G/dvec.obj \
 
 # Root package
 ROOT_SRCS=$(ROOT)/aav.d $(ROOT)/array.d $(ROOT)/ctfloat.d $(ROOT)/file.d \
@@ -208,7 +210,7 @@ ROOT_SRCS=$(ROOT)/aav.d $(ROOT)/array.d $(ROOT)/ctfloat.d $(ROOT)/file.d \
 
 # D front end
 SRCS = $D/aggregate.h $D/aliasthis.h $D/arraytypes.h	\
-	$D/attrib.h $D/complex_t.h $D/cond.h $D/ctfe.h $D/ctfe.h $D/declaration.h $D/dsymbol.h	\
+	$D/attrib.h $D/compiler.h $D/complex_t.h $D/cond.h $D/ctfe.h $D/ctfe.h $D/declaration.h $D/dsymbol.h	\
 	$D/enum.h $D/errors.h $D/expression.h $D/globals.h $D/hdrgen.h $D/identifier.h	\
 	$D/id.h $D/import.h $D/init.h $D/intrange.h $D/json.h	\
 	$D/mars.h $D/module.h $D/mtype.h $D/nspace.h $D/objc.h                         \
@@ -218,7 +220,6 @@ SRCS = $D/aggregate.h $D/aliasthis.h $D/arraytypes.h	\
 # Glue layer
 GLUESRC= \
 	$D/libelf.d $D/scanelf.d $D/libmach.d $D/scanmach.d \
-	$D/objc_glue.d \
 	$(GLUE_SRCS)
 
 # D back end
@@ -226,12 +227,12 @@ BACKSRC= $C\cdef.h $C\cc.h $C\oper.h $C\ty.h $C\optabgen.c \
 	$C\global.h $C\code.h $C\code_x86.h $C/code_stub.h $C/platform_stub.c \
 	$C\type.h $C\dt.h $C\cgcv.h \
 	$C\el.h $C\iasm.h $C\rtlsym.h \
-	$C\bcomplex.c $C\blockopt.c $C\cg.c $C\cg87.c $C\cgxmm.c \
+	$C\bcomplex.d $C\blockopt.c $C\cg.c $C\cg87.c $C\cgxmm.c \
 	$C\cgcod.c $C\cgcs.c $C\cgcv.c $C\cgelem.c $C\cgen.c $C\cgobj.c \
 	$C\compress.c $C\cgreg.c $C\var.c \
 	$C\cgsched.c $C\cod1.c $C\cod2.c $C\cod3.c $C\cod4.c $C\cod5.c \
 	$C\code.c $C\symbol.c $C\debug.c $C\dt.c $C\ee.c $C\el.c \
-	$C\evalu8.c $C\go.c $C\gflow.c $C\gdag.c \
+	$C\evalu8.d $C\fp.c $C\go.c $C\gflow.c $C\gdag.c \
 	$C\gother.c $C\glocal.c $C\gloop.c $C\gsroa.c $C\newman.c \
 	$C\nteh.c $C\os.c $C\out.c $C\outbuf.c $C\ptrntab.c $C\rtlsym.c \
 	$C\type.c $C\melf.h $C\mach.h $C\mscoff.h $C\bcomplex.h \
@@ -241,11 +242,11 @@ BACKSRC= $C\cdef.h $C\cc.h $C\oper.h $C\ty.h $C\optabgen.c \
 	$C\strtold.c $C\aa.h $C\aa.c $C\tinfo.h $C\ti_achar.c \
 	$C\md5.h $C\md5.c $C\ti_pvoid.c $C\xmm.h $C\ph2.c $C\util2.c \
 	$C\mscoffobj.c $C\obj.h $C\pdata.c $C\cv8.c $C\backconfig.c \
-	$C\divcoeff.c $C\dwarfeh.c $C\varstats.c $C\varstats.h \
-	$C\backend.txt
+	$C\divcoeff.d $C\dwarfeh.c $C\varstats.c $C\varstats.h \
+	$C\dvec.d $C\backend.txt
 
 # Toolkit
-TKSRCC=	$(TK)\filespec.c $(TK)\mem.c $(TK)\vec.c $(TK)\list.c
+TKSRCC=	$(TK)\filespec.c $(TK)\mem.c $(TK)\list.c
 TKSRC= $(TK)\filespec.h $(TK)\mem.h $(TK)\list.h $(TK)\vec.h \
 	$(TKSRCC)
 
@@ -253,7 +254,7 @@ TKSRC= $(TK)\filespec.h $(TK)\mem.h $(TK)\list.h $(TK)\vec.h \
 ROOTSRCC=$(ROOT)\newdelete.c
 ROOTSRCD=$(ROOT)\rmem.d $(ROOT)\stringtable.d $(ROOT)\hash.d $(ROOT)\man.d $(ROOT)\port.d \
 	$(ROOT)\response.d $(ROOT)\rootobject.d $(ROOT)\speller.d $(ROOT)\aav.d \
-	$(ROOT)\ctfloat.d $(ROOT)\outbuffer.d $(ROOT)\filename.d \
+	$(ROOT)\ctfloat.d $(ROOT)\longdouble.d $(ROOT)\outbuffer.d $(ROOT)\filename.d \
 	$(ROOT)\file.d $(ROOT)\array.d
 ROOTSRC= $(ROOT)\root.h $(ROOT)\stringtable.h \
 	$(ROOT)\longdouble.h $(ROOT)\outbuffer.h $(ROOT)\object.h $(ROOT)\ctfloat.h \
@@ -288,10 +289,17 @@ release:
 $G :
 	if not exist "$G" mkdir $G
 
-debdmd:
+check-host-dc:
+	@cmd /c if "$(HOST_DC)" == "" (echo Error: Environment variable HOST_DC is not set & exit 1)
+
+debdmd: check-host-dc debdmd-make
+
+debdmd-make:
 	$(DMDMAKE) "OPT=" "DEBUG=-D -g -DUNITTEST" "DDEBUG=-debug -g -unittest" "DOPT=" "LFLAGS=-L/ma/co/la" $(TARGETEXE)
 
-reldmd:
+reldmd: check-host-dc reldmd-make
+
+reldmd-make:
 	$(DMDMAKE) "OPT=-o" "DEBUG=" "DDEBUG=" "DOPT=-O -release -inline" "LFLAGS=-L/delexe/la" $(TARGETEXE)
 
 profile:
@@ -433,14 +441,14 @@ $G\VERSION : ..\VERSION $G
 	$(CC) -c $(CFLAGS) $*
 
 # D front/back end
-$G/bcomplex.obj : $C\bcomplex.c
-	$(CC) -c -o$@ $(MFLAGS) $C\bcomplex
-
 $G/aa.obj : $C\tinfo.h $C\aa.h $C\aa.c
 	$(CC) -c -o$@ $(MFLAGS) -I$D -I$G $C\aa
 
 $G/backconfig.obj : $C\backconfig.c
 	$(CC) -c -o$@ $(MFLAGS) $C\backconfig
+
+$G/bcomplex.obj : $C\bcomplex.d
+	$(HOST_DC) -c -of$@ $(DFLAGS) -mv=dmd.backend=$C $C\bcomplex
 
 $G/blockopt.obj : $C\blockopt.c
 	$(CC) -c -o$@ $(MFLAGS) $C\blockopt
@@ -508,11 +516,14 @@ $G/cv8.obj : $C\cv8.c
 $G/debug.obj : $C\debug.c
 	$(CC) -c -o$@ $(MFLAGS) -I$D -I$G $C\debug
 
-$G/divcoeff.obj : $C\divcoeff.c
-	$(CC) -c -o$@ -cpp -e $(DEBUG) $C\divcoeff
+$G/divcoeff.obj : $C\divcoeff.d
+	$(HOST_DC) -c -of$@ $(DFLAGS) -betterC $C\divcoeff
 
 $G/dt.obj : $C\dt.h $C\dt.c
 	$(CC) -c -o$@ $(MFLAGS) $C\dt
+
+$G/dvec.obj : $C\dvec.d
+	$(HOST_DC) -c -of$@ $(DFLAGS) -betterC $C\dvec
 
 $G/dwarf.obj : $C\dwarf.h $C\dwarf.c
 	$(CC) -c -o$@ $(MFLAGS) $C\dwarf
@@ -523,8 +534,11 @@ $G/ee.obj : $C\ee.c
 $G/el.obj : $C\rtlsym.h $C\el.h $C\el.c
 	$(CC) -c -o$@ $(MFLAGS) $C\el
 
-$G/evalu8.obj : $C\evalu8.c
-	$(CC) -c -o$@ $(MFLAGS) $C\evalu8
+$G/evalu8.obj : $C\evalu8.d
+	$(HOST_DC) -c -of$@ $(DFLAGS) -betterC -mv=dmd.backend=$C $C\evalu8
+
+$G/fp.obj : $C\fp.c
+	$(CC) -c -o$@ $(MFLAGS) $C\fp
 
 $G/go.obj : $C\go.c
 	$(CC) -c -o$@ $(MFLAGS) $C\go
@@ -612,12 +626,8 @@ $G/tk.obj : $C\tk.c
 $G\newdelete.obj : $(ROOT)\newdelete.c
 	$(CC) -c -o$@ $(CFLAGS) $(ROOT)\newdelete.c
 
-# Win64
-$G\longdouble.obj : $(ROOT)\longdouble.c
-	$(CC) -c -o$@ $(CFLAGS) $(ROOT)\longdouble.c
-
-$G\ldfpu.obj : vcbuild\ldfpu.asm
-	$(ML) -c -o$@ -Zi -Fo$G\ldfpu.obj vcbuild\ldfpu.asm
+$G/longdouble.obj : $(ROOT)\longdouble.d
+	$(HOST_DC) -c -of$@ $(DFLAGS) $(ROOT)\longdouble.d
 
 ############################## Generated Rules ###############################
 

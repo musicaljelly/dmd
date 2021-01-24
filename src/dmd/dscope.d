@@ -2,20 +2,21 @@
  * Compiler implementation of the
  * $(LINK2 http://www.dlang.org, D programming language).
  *
- * Copyright:   Copyright (c) 1999-2017 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/dscope.d, _dscope.d)
+ * Documentation:  https://dlang.org/phobos/dmd_dscope.html
+ * Coverage:    https://codecov.io/gh/dlang/dmd/src/master/src/dmd/dscope.d
  */
 
 module dmd.dscope;
-
-// Online documentation: https://dlang.org/phobos/dmd_dscope.html
 
 import core.stdc.stdio;
 import core.stdc.string;
 import dmd.aggregate;
 import dmd.attrib;
+import dmd.ctorflow;
 import dmd.dclass;
 import dmd.declaration;
 import dmd.dmodule;
@@ -36,80 +37,32 @@ import dmd.tokens;
 
 //version=LOGSEARCH;
 
-extern (C++) bool mergeFieldInit(Loc loc, ref uint fieldInit, uint fi, bool mustInit)
-{
-    if (fi != fieldInit)
-    {
-        // Have any branches returned?
-        bool aRet = (fi & CSXreturn) != 0;
-        bool bRet = (fieldInit & CSXreturn) != 0;
-        // Have any branches halted?
-        bool aHalt = (fi & CSXhalt) != 0;
-        bool bHalt = (fieldInit & CSXhalt) != 0;
-        bool ok;
-        if (aHalt && bHalt)
-        {
-            ok = true;
-            fieldInit = CSXhalt;
-        }
-        else if (!aHalt && aRet)
-        {
-            ok = !mustInit || (fi & CSXthis_ctor);
-            fieldInit = fieldInit;
-        }
-        else if (!bHalt && bRet)
-        {
-            ok = !mustInit || (fieldInit & CSXthis_ctor);
-            fieldInit = fi;
-        }
-        else if (aHalt)
-        {
-            ok = !mustInit || (fieldInit & CSXthis_ctor);
-            fieldInit = fieldInit;
-        }
-        else if (bHalt)
-        {
-            ok = !mustInit || (fi & CSXthis_ctor);
-            fieldInit = fi;
-        }
-        else
-        {
-            ok = !mustInit || !((fieldInit ^ fi) & CSXthis_ctor);
-            fieldInit |= fi;
-        }
-        return ok;
-    }
-    return true;
-}
-
-enum CSXthis_ctor       = 0x01;     /// called this()
-enum CSXsuper_ctor      = 0x02;     /// called super()
-enum CSXthis            = 0x04;     /// referenced this
-enum CSXsuper           = 0x08;     /// referenced super
-enum CSXlabel           = 0x10;     /// seen a label
-enum CSXreturn          = 0x20;     /// seen a return statement
-enum CSXany_ctor        = 0x40;     /// either this() or super() was called
-enum CSXhalt            = 0x80;     /// assert(0)
 
 // Flags that would not be inherited beyond scope nesting
-enum SCOPEctor          = 0x0001;   /// constructor type
-enum SCOPEcondition     = 0x0004;   /// inside static if/assert condition
-enum SCOPEdebug         = 0x0008;   /// inside debug conditional
+enum SCOPE
+{
+    ctor          = 0x0001,   /// constructor type
+    noaccesscheck = 0x0002,   /// don't do access checks
+    condition     = 0x0004,   /// inside static if/assert condition
+    debug_        = 0x0008,   /// inside debug conditional
+    constraint    = 0x0010,   /// inside template constraint
+    invariant_    = 0x0020,   /// inside invariant code
+    require       = 0x0040,   /// inside in contract code
+    ensure        = 0x0060,   /// inside out contract code
+    contract      = 0x0060,   /// [mask] we're inside contract code
+    ctfe          = 0x0080,   /// inside a ctfe-only expression
+    compile       = 0x0100,   /// inside __traits(compile)
+    ignoresymbolvisibility    = 0x0200,   /// ignore symbol visibility
+                                          /// https://issues.dlang.org/show_bug.cgi?id=15907
+    onlysafeaccess = 0x0400,  /// unsafe access is not allowed for @safe code
+    free          = 0x8000,   /// is on free list
 
-// Flags that would be inherited beyond scope nesting
-enum SCOPEnoaccesscheck = 0x0002;   /// don't do access checks
-enum SCOPEconstraint    = 0x0010;   /// inside template constraint
-enum SCOPEinvariant     = 0x0020;   /// inside invariant code
-enum SCOPErequire       = 0x0040;   /// inside in contract code
-enum SCOPEensure        = 0x0060;   /// inside out contract code
-enum SCOPEcontract      = 0x0060;   /// [mask] we're inside contract code
-enum SCOPEctfe          = 0x0080;   /// inside a ctfe-only expression
-enum SCOPEcompile       = 0x0100;   /// inside __traits(compile)
-enum SCOPEignoresymbolvisibility    = 0x0200;   /// ignore symbol visibility
-                                                /// https://issues.dlang.org/show_bug.cgi?id=15907
-enum SCOPEfree          = 0x8000;   /// is on free list
+    fullinst      = 0x10000,  /// fully instantiate templates
+}
 
-enum SCOPEfullinst      = 0x10000;  /// fully instantiate templates
+// Flags that are carried along with a scope push()
+enum SCOPEpush = SCOPE.contract | SCOPE.debug_ | SCOPE.ctfe | SCOPE.compile | SCOPE.constraint |
+                 SCOPE.noaccesscheck | SCOPE.onlysafeaccess | SCOPE.ignoresymbolvisibility;
 
 struct Scope
 {
@@ -127,9 +80,9 @@ struct Scope
     Statement scontinue;            /// enclosing statement that supports "continue"
     ForeachStatement fes;           /// if nested function for ForeachStatement, this is it
     Scope* callsc;                  /// used for __FUNCTION__, __PRETTY_FUNCTION__ and __MODULE__
-    int inunion;                    /// we're processing members of a union
-    int nofree;                     /// set if shouldn't free it
-    int noctor;                     /// set if constructor calls aren't allowed
+    bool inunion;                   /// true if processing members of a union
+    bool nofree;                    /// true if shouldn't free it
+    bool inLoop;                    /// true if inside a loop (where constructor calls aren't allowed)
     int intypeof;                   /// in typeof(exp)
     VarDeclaration lastVar;         /// Previous symbol used to prevent goto-skips-init
 
@@ -141,27 +94,22 @@ struct Scope
     Module minst;                   /// root module where the instantiated templates should belong to
     TemplateInstance tinst;         /// enclosing template instance
 
-    // primitive flow analysis for constructors
-    uint callSuper;
-
-    // primitive flow analysis for field initializations
-    uint* fieldinit;
-    size_t fieldinit_dim;
+    CtorFlow ctorflow;              /// flow analysis for constructors
 
     /// alignment for struct members
     AlignDeclaration aligndecl;
 
     /// linkage for external functions
-    LINK linkage = LINKd;
+    LINK linkage = LINK.d;
 
     /// mangle type
     CPPMANGLE cppmangle = CPPMANGLE.def;
 
     /// inlining strategy for functions
-    PINLINE inlining = PINLINEdefault;
+    PINLINE inlining = PINLINE.default_;
 
     /// protection for class members
-    Prot protection = Prot(PROTpublic);
+    Prot protection = Prot(Prot.Kind.public_);
     int explicitProtection;         /// set if in an explicit protection attribute
 
     StorageClass stc;               /// storage class
@@ -186,8 +134,8 @@ struct Scope
             Scope* s = freelist;
             freelist = s.enclosing;
             //printf("freelist %p\n", s);
-            assert(s.flags & SCOPEfree);
-            s.flags &= ~SCOPEfree;
+            assert(s.flags & SCOPE.free);
+            s.flags &= ~SCOPE.free;
             return s;
         }
         return new Scope();
@@ -220,7 +168,7 @@ struct Scope
         /* https://issues.dlang.org/show_bug.cgi?id=11777
          * The copied scope should not inherit fieldinit.
          */
-        sc.fieldinit = null;
+        sc.ctorflow.fieldinit = null;
         return sc;
     }
 
@@ -228,13 +176,13 @@ struct Scope
     {
         Scope* s = copy();
         //printf("Scope::push(this = %p) new = %p\n", this, s);
-        assert(!(flags & SCOPEfree));
+        assert(!(flags & SCOPE.free));
         s.scopesym = null;
         s.enclosing = &this;
         debug
         {
             if (enclosing)
-                assert(!(enclosing.flags & SCOPEfree));
+                assert(!(enclosing.flags & SCOPE.free));
             if (s == enclosing)
             {
                 printf("this = %p, enclosing = %p, enclosing.enclosing = %p\n", s, &this, enclosing);
@@ -242,10 +190,9 @@ struct Scope
             assert(s != enclosing);
         }
         s.slabel = null;
-        s.nofree = 0;
-        s.fieldinit = saveFieldInit();
-        s.flags = (flags & (SCOPEcontract | SCOPEdebug | SCOPEctfe | SCOPEcompile | SCOPEconstraint |
-                            SCOPEnoaccesscheck | SCOPEignoresymbolvisibility));
+        s.nofree = false;
+        s.ctorflow.fieldinit = ctorflow.saveFieldInit();
+        s.flags = (flags & SCOPEpush);
         s.lastdc = null;
         assert(&this != s);
         return s;
@@ -262,48 +209,35 @@ struct Scope
     extern (C++) Scope* pop()
     {
         //printf("Scope::pop() %p nofree = %d\n", this, nofree);
-        Scope* enc = enclosing;
         if (enclosing)
-        {
-            enclosing.callSuper |= callSuper;
-            if (fieldinit)
-            {
-                if (enclosing.fieldinit)
-                {
-                    assert(fieldinit != enclosing.fieldinit);
-                    foreach (i; 0 .. fieldinit_dim)
-                        enclosing.fieldinit[i] |= fieldinit[i];
-                }
-                freeFieldinit();
-            }
-        }
+            enclosing.ctorflow.OR(ctorflow);
+        ctorflow.freeFieldinit();
+
+        Scope* enc = enclosing;
         if (!nofree)
         {
             enclosing = freelist;
             freelist = &this;
-            flags |= SCOPEfree;
+            flags |= SCOPE.free;
         }
         return enc;
     }
 
-    void allocFieldinit(size_t dim)
+    /*************************
+     * Similar to pop(), but the results in `this` are not folded
+     * into `enclosing`.
+     */
+    extern (D) void detach()
     {
-        fieldinit = cast(typeof(fieldinit))mem.xcalloc(typeof(*fieldinit).sizeof, dim);
-        fieldinit_dim = dim;
-    }
-
-    void freeFieldinit()
-    {
-        if (fieldinit)
-            mem.xfree(fieldinit);
-        fieldinit = null;
-        fieldinit_dim = 0;
+        ctorflow.freeFieldinit();
+        enclosing = null;
+        pop();
     }
 
     extern (C++) Scope* startCTFE()
     {
         Scope* sc = this.push();
-        sc.flags = this.flags | SCOPEctfe;
+        sc.flags = this.flags | SCOPE.ctfe;
         version (none)
         {
             /* TODO: Currently this is not possible, because we need to
@@ -329,96 +263,36 @@ struct Scope
 
     extern (C++) Scope* endCTFE()
     {
-        assert(flags & SCOPEctfe);
+        assert(flags & SCOPE.ctfe);
         return pop();
     }
 
-    extern (C++) void mergeCallSuper(Loc loc, uint cs)
-    {
-        // This does a primitive flow analysis to support the restrictions
-        // regarding when and how constructors can appear.
-        // It merges the results of two paths.
-        // The two paths are callSuper and cs; the result is merged into callSuper.
-        if (cs != callSuper)
-        {
-            // Have ALL branches called a constructor?
-            int aAll = (cs & (CSXthis_ctor | CSXsuper_ctor)) != 0;
-            int bAll = (callSuper & (CSXthis_ctor | CSXsuper_ctor)) != 0;
-            // Have ANY branches called a constructor?
-            bool aAny = (cs & CSXany_ctor) != 0;
-            bool bAny = (callSuper & CSXany_ctor) != 0;
-            // Have any branches returned?
-            bool aRet = (cs & CSXreturn) != 0;
-            bool bRet = (callSuper & CSXreturn) != 0;
-            // Have any branches halted?
-            bool aHalt = (cs & CSXhalt) != 0;
-            bool bHalt = (callSuper & CSXhalt) != 0;
-            bool ok = true;
-            if (aHalt && bHalt)
-            {
-                callSuper = CSXhalt;
-            }
-            else if ((!aHalt && aRet && !aAny && bAny) || (!bHalt && bRet && !bAny && aAny))
-            {
-                // If one has returned without a constructor call, there must be never
-                // have been ctor calls in the other.
-                ok = false;
-            }
-            else if (aHalt || aRet && aAll)
-            {
-                // If one branch has called a ctor and then exited, anything the
-                // other branch has done is OK (except returning without a
-                // ctor call, but we already checked that).
-                callSuper |= cs & (CSXany_ctor | CSXlabel);
-            }
-            else if (bHalt || bRet && bAll)
-            {
-                callSuper = cs | (callSuper & (CSXany_ctor | CSXlabel));
-            }
-            else
-            {
-                // Both branches must have called ctors, or both not.
-                ok = (aAll == bAll);
-                // If one returned without a ctor, we must remember that
-                // (Don't bother if we've already found an error)
-                if (ok && aRet && !aAny)
-                    callSuper |= CSXreturn;
-                callSuper |= cs & (CSXany_ctor | CSXlabel);
-            }
-            if (!ok)
-                error(loc, "one path skips constructor");
-        }
-    }
 
-    extern (C++) uint* saveFieldInit()
+    /*******************************
+     * Merge results of `ctorflow` into `this`.
+     * Params:
+     *   loc = for error messages
+     *   ctorflow = flow results to merge in
+     */
+    extern (D) void merge(const ref Loc loc, const ref CtorFlow ctorflow)
     {
-        uint* fi = null;
-        if (fieldinit) // copy
-        {
-            size_t dim = fieldinit_dim;
-            fi = cast(uint*)mem.xmalloc(uint.sizeof * dim);
-            for (size_t i = 0; i < dim; i++)
-                fi[i] = fieldinit[i];
-        }
-        return fi;
-    }
+        if (!mergeCallSuper(this.ctorflow.callSuper, ctorflow.callSuper))
+            error(loc, "one path skips constructor");
 
-    extern (C++) void mergeFieldInit(Loc loc, uint* fies)
-    {
-        if (fieldinit && fies)
+        const fies = ctorflow.fieldinit;
+        if (this.ctorflow.fieldinit.length && fies.length)
         {
             FuncDeclaration f = func;
             if (fes)
                 f = fes.func;
             auto ad = f.isMember2();
             assert(ad);
-            for (size_t i = 0; i < ad.fields.dim; i++)
+            foreach (i, v; ad.fields)
             {
-                VarDeclaration v = ad.fields[i];
-                bool mustInit = (v.storage_class & STCnodefaultctor || v.type.needsNested());
-                if (!.mergeFieldInit(loc, fieldinit[i], fies[i], mustInit))
+                bool mustInit = (v.storage_class & STC.nodefaultctor || v.type.needsNested());
+                if (!mergeFieldInit(this.ctorflow.fieldinit[i], fies[i]) && mustInit)
                 {
-                    .error(loc, "one path skips field %s", ad.fields[i].toChars());
+                    error(loc, "one path skips field `%s`", v.toChars());
                 }
             }
         }
@@ -443,7 +317,7 @@ struct Scope
      * Returns:
      *  symbol if found, null if not
      */
-    extern (C++) Dsymbol search(Loc loc, Identifier ident, Dsymbol* pscopesym, int flags = IgnoreNone)
+    extern (C++) Dsymbol search(const ref Loc loc, Identifier ident, Dsymbol* pscopesym, int flags = IgnoreNone)
     {
         version (LOGSEARCH)
         {
@@ -458,7 +332,7 @@ struct Scope
 
             static void printMsg(string txt, Dsymbol s)
             {
-                printf("%.*s  %s.%s, kind = '%s'\n", cast(int)msg.length, msg.ptr,
+                printf("%.*s  %s.%s, kind = '%s'\n", cast(int)txt.length, txt.ptr,
                     s.parent ? s.parent.toChars() : "", s.toChars(), s.kind());
             }
         }
@@ -505,7 +379,7 @@ struct Scope
                         ident == Id.length && sc.scopesym.isArrayScopeSymbol() &&
                         sc.enclosing && sc.enclosing.search(loc, ident, null, flags))
                     {
-                        warning(s.loc, "array 'length' hides other 'length' name in outer scope");
+                        warning(s.loc, "array `length` hides other `length` name in outer scope");
                     }
                     //printMsg("\tfound local", s);
                     if (pscopesym)
@@ -519,7 +393,7 @@ struct Scope
             return null;
         }
 
-        if (this.flags & SCOPEignoresymbolvisibility)
+        if (this.flags & SCOPE.ignoresymbolvisibility)
             flags |= IgnoreSymbolVisibility;
 
         Dsymbol sold = void;
@@ -555,7 +429,7 @@ struct Scope
                     s = searchScopes(flags | SearchImportsOnly | IgnoreSymbolVisibility);
 
                 if (s && !(flags & IgnoreErrors))
-                    .deprecation(loc, "%s is not visible from module %s", s.toPrettyChars(), _module.toChars());
+                    .deprecation(loc, "`%s` is not visible from module `%s`", s.toPrettyChars(), _module.toChars());
                 version (LOGSEARCH) if (s) printMsg("-Scope.search() found imported private symbol", s);
             }
         }
@@ -589,16 +463,16 @@ struct Scope
         OutBuffer buf;
         buf.writestring("local import search method found ");
         if (osold)
-            buf.printf("%s %s (%d overloads)", sold.kind(), sold.toPrettyChars(), cast(int) osold.a.dim);
+            buf.printf("%s `%s` (%d overloads)", sold.kind(), sold.toPrettyChars(), cast(int) osold.a.dim);
         else if (sold)
-            buf.printf("%s %s", sold.kind(), sold.toPrettyChars());
+            buf.printf("%s `%s`", sold.kind(), sold.toPrettyChars());
         else
             buf.writestring("nothing");
         buf.writestring(" instead of ");
         if (osnew)
-            buf.printf("%s %s (%d overloads)", snew.kind(), snew.toPrettyChars(), cast(int) osnew.a.dim);
+            buf.printf("%s `%s` (%d overloads)", snew.kind(), snew.toPrettyChars(), cast(int) osnew.a.dim);
         else if (snew)
-            buf.printf("%s %s", snew.kind(), snew.toPrettyChars());
+            buf.printf("%s `%s`", snew.kind(), snew.toPrettyChars());
         else
             buf.writestring("nothing");
 
@@ -629,7 +503,7 @@ struct Scope
             Scope* sc = &this;
             Module.clearCache();
             Dsymbol scopesym = null;
-            Dsymbol s = sc.search(Loc(), id, &scopesym, IgnoreErrors);
+            Dsymbol s = sc.search(Loc.initial, id, &scopesym, IgnoreErrors);
             if (s)
             {
                 for (cost = 0; sc; sc = sc.enclosing, ++cost)
@@ -638,7 +512,7 @@ struct Scope
                 if (scopesym != s.parent)
                 {
                     ++cost; // got to the symbol through an import
-                    if (s.prot().kind == PROTprivate)
+                    if (s.prot().kind == Prot.Kind.private_)
                         return null;
                 }
             }
@@ -660,13 +534,15 @@ struct Scope
     {
         TOK tok;
         if (ident == Id.NULL)
-            tok = TOKnull;
+            tok = TOK.null_;
         else if (ident == Id.TRUE)
-            tok = TOKtrue;
+            tok = TOK.true_;
         else if (ident == Id.FALSE)
-            tok = TOKfalse;
+            tok = TOK.false_;
         else if (ident == Id.unsigned)
-            tok = TOKuns32;
+            tok = TOK.uns32;
+        else if (ident == Id.wchar_t)
+            tok = global.params.isWindows ? TOK.wchar_ : TOK.dchar_;
         else
             return null;
         return Token.toChars(tok);
@@ -751,8 +627,8 @@ struct Scope
         for (Scope* sc = &this; sc; sc = sc.enclosing)
         {
             //printf("\tsc = %p\n", sc);
-            sc.nofree = 1;
-            assert(!(flags & SCOPEfree));
+            sc.nofree = true;
+            assert(!(flags & SCOPE.free));
             //assert(sc != sc.enclosing);
             //assert(!sc.enclosing || sc != sc.enclosing.enclosing);
             //if (++i == 10)
@@ -787,12 +663,10 @@ struct Scope
         this.depdecl = sc.depdecl;
         this.inunion = sc.inunion;
         this.nofree = sc.nofree;
-        this.noctor = sc.noctor;
+        this.inLoop = sc.inLoop;
         this.intypeof = sc.intypeof;
         this.lastVar = sc.lastVar;
-        this.callSuper = sc.callSuper;
-        this.fieldinit = sc.fieldinit;
-        this.fieldinit_dim = sc.fieldinit_dim;
+        this.ctorflow = sc.ctorflow;
         this.flags = sc.flags;
         this.lastdc = sc.lastdc;
         this.anchorCounts = sc.anchorCounts;
@@ -806,5 +680,29 @@ struct Scope
             return aligndecl.getAlignment(&this);
         else
             return STRUCTALIGN_DEFAULT;
+    }
+
+    /**********************************
+    * Checks whether the current scope (or any of its parents) is deprecated.
+    *
+    * Returns: `true` if this or any parent scope is deprecated, `false` otherwise`
+    */
+    extern(C++) bool isDeprecated()
+    {
+        for (Dsymbol sp = this.parent; sp; sp = sp.parent)
+        {
+            if (sp.isDeprecated())
+                return true;
+        }
+        for (Scope* sc2 = &this; sc2; sc2 = sc2.enclosing)
+        {
+            if (sc2.scopesym && sc2.scopesym.isDeprecated())
+                return true;
+
+            // If inside a StorageClassDeclaration that is deprecated
+            if (sc2.stc & STC.deprecated_)
+                return true;
+        }
+        return false;
     }
 }

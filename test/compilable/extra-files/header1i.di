@@ -5,12 +5,30 @@ pragma (lib, "test");
 pragma (msg, "Hello World");
 static assert(true, "message");
 alias mydbl = double;
-alias fl = function ()
+alias fl1 = function ()
 in
+{
+}
+in (true)
+out (; true)
+out (r; true)
+out
+{
+}
+out(r)
 {
 }
 do
 {
+	return 2;
+}
+;
+alias fl2 = function ()
+in (true)
+out (; true)
+out (r; true)
+{
+	return 2;
 }
 ;
 int testmain()
@@ -26,7 +44,7 @@ do
 {
 	float f = (float).infinity;
 	int i = cast(int)f;
-	writeln((i , 1), 2);
+	writeln(i, 1, 2);
 	writeln(cast(int)(float).max);
 	assert(i == cast(int)(float).max);
 	assert(i == 2147483648u);
@@ -569,7 +587,7 @@ class TestClass
 	{
 		return aa;
 	}
-	ref return retFunc()
+	ref retFunc() return
 	{
 		return aa;
 	}
@@ -632,15 +650,15 @@ struct SafeS
 {
 	@safe 
 	{
-		ref return SafeS foo()
+		ref SafeS foo() return
 		{
 			return this;
 		}
-		return scope SafeS foo()
+		scope SafeS foo2() return
 		{
 			return this;
 		}
-		ref return scope SafeS foo()
+		ref scope SafeS foo3() return
 		{
 			return this;
 		}

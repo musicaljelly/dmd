@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1984-1998 by Symantec
- *              Copyright (c) 2000-2017 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2018 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/util2.c, backend/util2.c)
@@ -14,6 +14,7 @@
 #include        <stdio.h>
 #include        <ctype.h>
 #include        <string.h>
+#include        <stdint.h>
 #include        <stdlib.h>
 #include        <time.h>
 
@@ -26,7 +27,6 @@
 #endif
 
 #if _WIN32 && __DMC__
-//#include      "scdll.h"
 #include        <controlc.h>
 #endif
 
@@ -37,6 +37,8 @@ void *ph_malloc(size_t nbytes);
 void *ph_calloc(size_t nbytes);
 void ph_free(void *p);
 void *ph_realloc(void *p , size_t nbytes);
+
+extern "C" void printInternalFailure(FILE* stream); // from dmd/mars.d
 
 
 void util_exit(int exitcode);
@@ -52,6 +54,7 @@ void file_progress()
 void util_assert(const char *file, int line)
 {
     fflush(stdout);
+    printInternalFailure(stdout);
     printf("Internal error: %s %d\n",file,line);
     err_exit();
 #if __clang__
@@ -141,7 +144,7 @@ void util_progress(int linnum)
 
 #endif
 
-#if __linux__ || __APPLE__ || __FreeBSD__ || __OpenBSD__ || __sun || _MSC_VER
+#if __linux__ || __APPLE__ || __FreeBSD__ || __OpenBSD__ || __DragonFly__ || __sun || _MSC_VER
 void util_progress()
 {
 }
@@ -279,7 +282,7 @@ int binary(const char *p, size_t len, const char ** table, int high)
  * If c is a power of 2, return that power else -1.
  */
 
-int ispow2(targ_ullong c)
+int ispow2(uint64_t c)
 {       int i;
 
         if (c == 0 || (c & (c - 1)))
@@ -377,3 +380,10 @@ void *util_realloc(void *oldp,unsigned n,unsigned size)
 #endif
 }
 #endif
+
+/*****************************
+ */
+void *mem_malloc2(unsigned size)
+{
+    return mem_malloc(size);
+}

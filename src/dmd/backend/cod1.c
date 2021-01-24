@@ -3,14 +3,14 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1984-1998 by Symantec
- *              Copyright (c) 2000-2017 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2018 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/cod1.c, backend/cod1.c)
  * Coverage:    https://codecov.io/gh/dlang/dmd/src/master/src/dmd/backend/cod3.c
  */
 
-#if !SPP
+#if (SCPP && !HTOD) || MARS
 
 #include        <stdio.h>
 #include        <string.h>
@@ -42,9 +42,9 @@ enum MF
         MFword          = 3
 };
 
-targ_size_t paramsize(elem *e);
+targ_size_t paramsize(elem *e, tym_t tyf);
 static void funccall(CodeBuilder& cdb,elem *,unsigned,unsigned,regm_t *,regm_t,bool);
-static void movParams(CodeBuilder& cdb,elem *e,unsigned stackalign, unsigned funcargtos);
+static void movParams(CodeBuilder& cdb,elem *e,unsigned stackalign, unsigned funcargtos, tym_t tyf);
 
 /* array to convert from index register to r/m field    */
                                        /* AX CX DX BX SP BP SI DI       */
@@ -436,7 +436,7 @@ void logexp(CodeBuilder& cdb,elem *e,int jcond,unsigned fltarg,code *targ)
     docommas(cdb,&e);             // scan down commas
     cgstate.stackclean++;
 
-    code *c, *ce, *cnop;
+    code *c, *ce;
     if (EOP(e) && !e->Ecount)     // if operator and not common sub
     {
         switch (e->Eoper)
@@ -788,7 +788,7 @@ void getlvalue_lsw(code *c)
  */
 
 void getlvalue(CodeBuilder& cdb,code *pcs,elem *e,regm_t keepmsk)
-{ regm_t idxregs;
+{
   unsigned fl,f,opsave;
   elem *e1;
   elem *e11;
@@ -1000,7 +1000,7 @@ void getlvalue(CodeBuilder& cdb,code *pcs,elem *e,regm_t keepmsk)
             }
             else
             {
-                idxregs = IDXREGS & ~keepmsk;   /* only these can be index regs */
+                regm_t idxregs = IDXREGS & ~keepmsk;   /* only these can be index regs */
                 assert(idxregs);
                 if (stackfl[f])                 /* if stack data type   */
                 {   idxregs &= mSI | mDI;       /* BX can't index off stack */
@@ -1030,7 +1030,7 @@ void getlvalue(CodeBuilder& cdb,code *pcs,elem *e,regm_t keepmsk)
             if (e1->Ecount)
             {   unsigned flagsave;
 
-                idxregs = IDXREGS & ~keepmsk;
+                regm_t idxregs = IDXREGS & ~keepmsk;
                 allocreg(cdb,&idxregs,&reg,TYoffset);
 
                 /* If desired result is a far pointer, we'll have       */
@@ -1077,6 +1077,7 @@ void getlvalue(CodeBuilder& cdb,code *pcs,elem *e,regm_t keepmsk)
 
         /* The rest of the cases could be a far pointer */
 
+        regm_t idxregs;
         idxregs = (I16 ? IDXREGS : allregs) & ~keepmsk; // only these can be index regs
         assert(idxregs);
         if (!I16 &&
@@ -1285,7 +1286,7 @@ void getlvalue(CodeBuilder& cdb,code *pcs,elem *e,regm_t keepmsk)
     case FLextern:
         if (s->Sident[0] == '_' && memcmp(s->Sident + 1,"tls_array",10) == 0)
         {
-#if TARGET_LINUX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_SOLARIS
+#if TARGET_LINUX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_DRAGONFLYBSD || TARGET_SOLARIS
             // Rewrite as GS:[0000], or FS:[0000] for 64 bit
             if (I64)
             {
@@ -1329,7 +1330,7 @@ void getlvalue(CodeBuilder& cdb,code *pcs,elem *e,regm_t keepmsk)
     case FLcsdata:
     case FLgot:
     case FLgotoff:
-#if TARGET_LINUX || TARGET_OSX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_SOLARIS
+#if TARGET_LINUX || TARGET_OSX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_DRAGONFLYBSD || TARGET_SOLARIS
     case FLtlsdata:
 #endif
     L3:
@@ -1671,8 +1672,6 @@ void tstresult(CodeBuilder& cdb,regm_t regm,tym_t tym,unsigned saveflag)
 
 void fixresult(CodeBuilder& cdb,elem *e,regm_t retregs,regm_t *pretregs)
 {
-  unsigned reg,rreg;
-
   //printf("fixresult(e = %p, retregs = %s, *pretregs = %s)\n",e,regm_str(retregs),regm_str(*pretregs));
   if (*pretregs == 0) return;           // if don't want result
   assert(e && retregs);                 // need something to work with
@@ -1707,6 +1706,8 @@ void fixresult(CodeBuilder& cdb,elem *e,regm_t retregs,regm_t *pretregs)
             forccs = 0;
         }
   }
+
+  unsigned reg,rreg;
   if ((retregs & forregs) == retregs)   // if already in right registers
         *pretregs = retregs;
   else if (forregs)             // if return the result in registers
@@ -1893,6 +1894,7 @@ void getClibInfo(unsigned clib, symbol **ps, ClibInfo **pinfo)
                               EX_OSX     | EX_OSX64     |
                               EX_FREEBSD | EX_FREEBSD64 |
                               EX_OPENBSD | EX_OPENBSD64 |
+                              EX_DRAGONFLYBSD64 |
                               EX_SOLARIS | EX_SOLARIS64);
 
     ClibInfo *cinfo = &clibinfo[clib];
@@ -2572,7 +2574,7 @@ void callclib(CodeBuilder& cdb,elem *e,unsigned clib,regm_t *pretregs,regm_t kee
         }
         if (pushebx)
         {
-            if (config.exe & (EX_LINUX | EX_LINUX64 | EX_FREEBSD | EX_FREEBSD64))
+            if (config.exe & (EX_LINUX | EX_LINUX64 | EX_FREEBSD | EX_FREEBSD64 | EX_DRAGONFLYBSD64))
             {
                 cdb.gen1(0x50 + CX);                             // PUSH ECX
                 cdb.gen1(0x50 + BX);                             // PUSH EBX
@@ -2712,12 +2714,13 @@ FuncParamRegs::FuncParamRegs(tym_t tyf)
 
 /*****************************************
  * Allocate parameter of type t and ty to registers *preg1 and *preg2.
+ * Params:
+ *      t = type, valid only if ty is TYstruct or TYarray
  * Returns:
  *      0       not allocated to any register
  *      1       *preg1, *preg2 set to allocated register pair
  */
 
-// t is valid only if ty is a TYstruct or TYarray
 static int type_jparam2(type *t, tym_t ty)
 {
     ty = tybasic(ty);
@@ -2740,7 +2743,6 @@ int FuncParamRegs::alloc(type *t, tym_t ty, reg_t *preg1, reg_t *preg2)
 {
     //printf("FuncParamRegs::alloc(ty = TY%s)\n", tystring[tybasic(ty)]);
     //if (t) type_print(t);
-    ++i;
 
     *preg1 = NOREG;
     *preg2 = NOREG;
@@ -2748,8 +2750,14 @@ int FuncParamRegs::alloc(type *t, tym_t ty, reg_t *preg1, reg_t *preg2)
     type *t2 = NULL;
     tym_t ty2 = TYMAX;
 
+    const tym_t tyb = tybasic(ty);
+    if (tyb == TYstruct && type_zeroSize(t, tyf))
+        return 0;               // don't allocate into registers
+
+    ++i;
+
     // If struct just wraps another type
-    if (tybasic(ty) == TYstruct && tybasic(t->Tty) == TYstruct)
+    if (tyb == TYstruct && tybasic(t->Tty) == TYstruct)
     {
         if (config.exe == EX_WIN64)
         {
@@ -2906,7 +2914,7 @@ void cdfunc(CodeBuilder& cdb,elem *e,regm_t *pretregs)
     for (int i = np; --i >= 0;)
     {
         elem *ep = parameters[i].e;
-        unsigned psize = _align(stackalign, paramsize(ep));     // align on stack boundary
+        unsigned psize = _align(stackalign, paramsize(ep, tyf));     // align on stack boundary
         if (config.exe == EX_WIN64)
         {
             //printf("[%d] size = %u, numpara = %d ep = %p ", i, psize, numpara, ep); WRTYxx(ep->Ety); printf("\n");
@@ -3055,9 +3063,9 @@ void cdfunc(CodeBuilder& cdb,elem *e,regm_t *pretregs)
             msavereg |= keepmsk;
             CodeBuilder cdbparams;
             if (usefuncarg)
-                movParams(cdbparams, ep, stackalign, funcargtos);
+                movParams(cdbparams, ep, stackalign, funcargtos, tyf);
             else
-                pushParams(cdbparams,ep,stackalign);
+                pushParams(cdbparams,ep,stackalign, tyf);
             regm_t tosave = keepmsk & ~msavereg;
             msavereg &= ~keepmsk | overlap;
 
@@ -3080,17 +3088,17 @@ void cdfunc(CodeBuilder& cdb,elem *e,regm_t *pretregs)
             cdb.append(cdbparams);
 
             // Alignment for parameter comes after it got pushed
-            unsigned numalign = parameters[i].numalign;
+            const unsigned numalignx = parameters[i].numalign;
             if (usefuncarg)
             {
-                funcargtos -= _align(stackalign, paramsize(ep)) + numalign;
+                funcargtos -= _align(stackalign, paramsize(ep, tyf)) + numalignx;
                 cgstate.funcargtos = funcargtos;
             }
-            else if (numalign)
+            else if (numalignx)
             {
-                cod3_stackadj(cdb, numalign);
-                cdb.genadjesp(numalign);
-                stackpush += numalign;
+                cod3_stackadj(cdb, numalignx);
+                cdb.genadjesp(numalignx);
+                stackpush += numalignx;
             }
         }
         else
@@ -3196,9 +3204,9 @@ void cdfunc(CodeBuilder& cdb,elem *e,regm_t *pretregs)
             {
                 getregs(cdb,retregs);
                 // LEA preg,np[RSP]
-                unsigned np = stackpush - ep->EV.Vuns;   // stack delta to parameter
+                unsigned delta = stackpush - ep->EV.Vuns;   // stack delta to parameter
                 cdb.genc1(LEA,
-                        (modregrm(0,4,SP) << 8) | modregxrm(2,preg,4), FLconst,np);
+                        (modregrm(0,4,SP) << 8) | modregxrm(2,preg,4), FLconst,delta);
                 if (I64)
                     code_orrex(cdb.last(), REX_W);
             }
@@ -3409,7 +3417,7 @@ static void funccall(CodeBuilder& cdb,elem *e,unsigned numpara,unsigned numalign
                 fl = el_fl(e1);
             if (tym1 == TYifunc)
                 cdbe.gen1(0x9C);                             // PUSHF
-#if TARGET_LINUX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_SOLARIS
+#if TARGET_LINUX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_DRAGONFLYBSD || TARGET_SOLARIS
             assert(!farfunc);
             if (s != tls_get_addr_sym)
             {
@@ -3448,7 +3456,7 @@ static void funccall(CodeBuilder& cdb,elem *e,unsigned numpara,unsigned numalign
         tym_t e11ty = tybasic(e11->Ety);
         assert(!I16 || (e11ty == (farfunc ? TYfptr : TYnptr)));
         load_localgot(cdb);
-#if TARGET_LINUX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_SOLARIS
+#if TARGET_LINUX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_DRAGONFLYBSD || TARGET_SOLARIS
         if (config.flags3 & CFG3pic && I32)
             keepmsk |= mBX;
 #endif
@@ -3622,7 +3630,7 @@ static void funccall(CodeBuilder& cdb,elem *e,unsigned numpara,unsigned numalign
  * Determine size of argument e that will be pushed.
  */
 
-targ_size_t paramsize(elem *e)
+targ_size_t paramsize(elem *e, tym_t tyf)
 {
     assert(e->Eoper != OPparam);
     targ_size_t szb;
@@ -3630,7 +3638,7 @@ targ_size_t paramsize(elem *e)
     if (tyscalar(tym))
         szb = size(tym);
     else if (tym == TYstruct || tym == TYarray)
-        szb = type_size(e->ET);
+        szb = type_parameterSize(e->ET, tyf);
     else
     {
         WRTYxx(tym);
@@ -3643,7 +3651,7 @@ targ_size_t paramsize(elem *e)
  * Generate code to move argument e on the stack.
  */
 
-static void movParams(CodeBuilder& cdb,elem *e,unsigned stackalign, unsigned funcargtos)
+static void movParams(CodeBuilder& cdb,elem *e,unsigned stackalign, unsigned funcargtos, tym_t tyf)
 {
     //printf("movParams(e = %p, stackalign = %d, funcargtos = %d)\n", e, stackalign, funcargtos);
     //printf("movParams()\n"); elem_print(e);
@@ -3656,7 +3664,7 @@ static void movParams(CodeBuilder& cdb,elem *e,unsigned stackalign, unsigned fun
 
     int grex = I64 ? REX_W << 16 : 0;
 
-    targ_size_t szb = paramsize(e);               // size before alignment
+    targ_size_t szb = paramsize(e, tyf);          // size before alignment
     targ_size_t sz = _align(stackalign,szb);       // size after alignment
     assert((sz & (stackalign - 1)) == 0);         // ensure that alignment worked
     assert((sz & (REGSIZE - 1)) == 0);
@@ -3843,7 +3851,7 @@ static void movParams(CodeBuilder& cdb,elem *e,unsigned stackalign, unsigned fun
  * stackpush is incremented by stackalign for each PUSH.
  */
 
-void pushParams(CodeBuilder& cdb,elem *e,unsigned stackalign)
+void pushParams(CodeBuilder& cdb,elem *e,unsigned stackalign, tym_t tyf)
 {
   //printf("params(e = %p, stackalign = %d)\n", e, stackalign);
   //printf("params()\n"); elem_print(e);
@@ -3856,7 +3864,7 @@ void pushParams(CodeBuilder& cdb,elem *e,unsigned stackalign)
 
   int grex = I64 ? REX_W << 16 : 0;
 
-  targ_size_t szb = paramsize(e);               // size before alignment
+  targ_size_t szb = paramsize(e, tyf);          // size before alignment
   targ_size_t sz = _align(stackalign,szb);      // size after alignment
   assert((sz & (stackalign - 1)) == 0);         // ensure that alignment worked
   assert((sz & (REGSIZE - 1)) == 0);
@@ -4035,15 +4043,24 @@ void pushParams(CodeBuilder& cdb,elem *e,unsigned stackalign)
                     if (!doneoff)
                     {   // This should be done when
                         // reg is loaded. Fix later
-                                                        // ADD reg,sz-2
+                                                        // ADD reg,sz-pushsize
                         cdb.genc2(0x81,grex | modregrmx(3,0,reg),sz-pushsize);
                     }
                     getregs(cdb,mCX);                       // the LOOP decrements it
-                    cdb.gen2(0xFF,buildModregrm(0,6,rm));           // PUSH [reg]
+                    cdb.gen2(0xFF,buildModregrm(0,6,rm));   // PUSH [reg]
                     cdb.last()->Iflags |= seg | CFtarg2;
                     code *c3 = cdb.last();
-                    cdb.genc2(0x81,grex | buildModregrm(3,5,reg),pushsize);  // SUB reg,2
-                    genjmp(cdb,0xE2,FLcode,(block *)c3);        // LOOP c3
+                    cdb.genc2(0x81,grex | buildModregrm(3,5,reg),pushsize);  // SUB reg,pushsize
+                    if (I16 || config.flags4 & CFG4space)
+                        genjmp(cdb,0xE2,FLcode,(block *)c3);// LOOP c3
+                    else
+                    {
+                        if (I64)
+                            cdb.gen2(0xFF,modregrm(3,1,CX));// DEC CX
+                        else
+                            cdb.gen1(0x48 + CX);            // DEC CX
+                        genjmp(cdb,JNE,FLcode,(block *)c3); // JNE c3
+                    }
                     regimmed_set(CX,0);
                     cdb.genadjesp(sz);
                 }
@@ -4142,7 +4159,7 @@ void pushParams(CodeBuilder& cdb,elem *e,unsigned stackalign)
                 code_orflag(cdb.last(),CFopsize);        // push a word
             cdb.genadjesp(stackalign);
             stackpush += stackalign;
-            pushParams(cdb,e1,stackalign);
+            pushParams(cdb,e1,stackalign, tyf);
             freenode(e);
             return;
         }
@@ -4212,7 +4229,7 @@ void pushParams(CodeBuilder& cdb,elem *e,unsigned stackalign)
         {   // Avoid PUSH MEM on the Pentium when optimizing for speed
             break;
         }
-        else if (movOnly(e))
+        else if (movOnly(e) || (tyxmmreg(tym) && config.fpxmmregs) || tyvector(tym))
             break;                      // no PUSH MEM
         else
         {
@@ -4350,15 +4367,15 @@ void pushParams(CodeBuilder& cdb,elem *e,unsigned stackalign)
   }
 
     regm_t retregs = tybyte(tym) ? BYTEREGS : allregs;
-    if (tyvector(tym))
+    if (tyvector(tym) || (tyxmmreg(tym) && config.fpxmmregs))
     {
-        regm_t retregs = XMMREGS;
-        codelem(cdb,e,&retregs,FALSE);
+        regm_t retxmm = XMMREGS;
+        codelem(cdb,e,&retxmm,FALSE);
         stackpush += sz;
         cdb.genadjesp(sz);
         cod3_stackadj(cdb, sz);
         unsigned op = xmmstore(tym);
-        unsigned r = findreg(retregs);
+        unsigned r = findreg(retxmm);
         cdb.gen2sib(op,modregxrm(0,r - XMM0,4),modregrm(0,4,SP));   // MOV [ESP],r
         checkSetVex(cdb.last(),tym);
         return;
@@ -4660,17 +4677,17 @@ void loaddata(CodeBuilder& cdb,elem *e,regm_t *pretregs)
                  * Not so efficient. We should at least do a PXOR for 0.
                  */
                 unsigned r;
-                targ_size_t value = e->EV.Vuns;
+                targ_size_t unsvalue = e->EV.Vuns;
                 if (sz == 8)
-                    value = e->EV.Vullong;
-                regwithvalue(cdb,ALLREGS, value,&r,flags);
+                    unsvalue = e->EV.Vullong;
+                regwithvalue(cdb,ALLREGS, unsvalue,&r,flags);
                 flags = 0;                          // flags are already set
                 cdb.genfltreg(0x89,r,0);            // MOV floatreg,r
                 if (sz == 8)
                     code_orrex(cdb.last(), REX_W);
                 assert(sz == 4 || sz == 8);         // float or double
-                unsigned op = xmmload(tym);
-                cdb.genxmmreg(op,reg,0,tym);        // MOVSS/MOVSD XMMreg,floatreg
+                unsigned opmv = xmmload(tym);
+                cdb.genxmmreg(opmv,reg,0,tym);        // MOVSS/MOVSD XMMreg,floatreg
             }
             else
             {
@@ -4721,8 +4738,8 @@ void loaddata(CodeBuilder& cdb,elem *e,regm_t *pretregs)
                     movregconst(cdb,r,p[1],0);
                     cdb.genfltreg(0x89,r,4);               // MOV floatreg+4,r
 
-                    unsigned op = xmmload(tym);
-                    cdb.genxmmreg(op,reg,0,tym);           // MOVSS/MOVSD XMMreg,floatreg
+                    unsigned opmv = xmmload(tym);
+                    cdb.genxmmreg(opmv,reg,0,tym);           // MOVSS/MOVSD XMMreg,floatreg
                 }
                 else
                 {
@@ -4784,10 +4801,10 @@ void loaddata(CodeBuilder& cdb,elem *e,regm_t *pretregs)
                 printf("forregs = %s\n", regm_str(forregs));
         }
 #endif
-        int op = 0x8A;                                  // byte MOV
+        unsigned opmv = 0x8A;                                  // byte MOV
 #if TARGET_OSX
         if (movOnly(e))
-            op = 0x8B;
+            opmv = 0x8B;
 #endif
         assert(forregs & BYTEREGS);
         if (!I16)
@@ -4798,17 +4815,17 @@ void loaddata(CodeBuilder& cdb,elem *e,regm_t *pretregs)
                 !(config.exe & EX_OSX64 && !(sytab[e->EV.sp.Vsym->Sclass] & SCSS))
                )
             {
-                op = tyuns(tym) ? 0x0FB6 : 0x0FBE;      // MOVZX/MOVSX
+                opmv = tyuns(tym) ? 0x0FB6 : 0x0FBE;      // MOVZX/MOVSX
             }
-            loadea(cdb,e,&cs,op,reg,0,0,0);     // MOV regL,data
+            loadea(cdb,e,&cs,opmv,reg,0,0,0);     // MOV regL,data
         }
         else
-        {   nregm = tyuns(tym) ? BYTEREGS : mAX;
+        {   nregm = tyuns(tym) ? BYTEREGS : (regm_t) mAX;
             if (*pretregs & nregm)
                 nreg = reg;                             // already allocated
             else
                 allocreg(cdb,&nregm,&nreg,tym);
-            loadea(cdb,e,&cs,op,nreg,0,0,0);    // MOV nregL,data
+            loadea(cdb,e,&cs,opmv,nreg,0,0,0);    // MOV nregL,data
             if (reg != nreg)
             {
                 genmovreg(cdb,reg,nreg);   // MOV reg,nreg
@@ -4821,29 +4838,29 @@ void loaddata(CodeBuilder& cdb,elem *e,regm_t *pretregs)
         // Can't load from registers directly to XMM regs
         //e->EV.sp.Vsym->Sflags &= ~GTregcand;
 
-        op = xmmload(tym, xmmIsAligned(e));
+        unsigned opmv = xmmload(tym, xmmIsAligned(e));
         if (e->Eoper == OPvar)
         {   symbol *s = e->EV.sp.Vsym;
             if (s->Sfl == FLreg && !(mask[s->Sreglsw] & XMMREGS))
-            {   op = LODD;          // MOVD/MOVQ
+            {   opmv = LODD;          // MOVD/MOVQ
                 /* getlvalue() will unwind this and unregister s; could use a better solution */
             }
         }
-        loadea(cdb,e,&cs,op,reg,0,RMload,0); // MOVSS/MOVSD reg,data
+        loadea(cdb,e,&cs,opmv,reg,0,RMload,0); // MOVSS/MOVSD reg,data
         checkSetVex(cdb.last(),tym);
     }
     else if (sz <= REGSIZE)
     {
-        unsigned op = 0x8B;                     // MOV reg,data
+        unsigned opmv = 0x8B;                     // MOV reg,data
         if (sz == 2 && !I16 && config.target_cpu >= TARGET_PentiumPro &&
             // Workaround for OSX linker bug:
             //   ld: GOT load reloc does not point to a movq instruction in test42 for x86_64
             !(config.exe & EX_OSX64 && !(sytab[e->EV.sp.Vsym->Sclass] & SCSS))
            )
         {
-            op = tyuns(tym) ? 0x0FB7 : 0x0FBF;  // MOVZX/MOVSX
+            opmv = tyuns(tym) ? 0x0FB7 : 0x0FBF;  // MOVZX/MOVSX
         }
-        loadea(cdb,e,&cs,op,reg,0,RMload,0);
+        loadea(cdb,e,&cs,opmv,reg,0,RMload,0);
     }
     else if (sz <= 2 * REGSIZE && forregs & mES)
     {

@@ -1,7 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (c) 1999-2016 by The D Language Foundation
- * All Rights Reserved
+ * Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -26,6 +25,11 @@ class LabelDsymbol;
 class Initializer;
 class Module;
 class ForeachStatement;
+struct Ensure
+{
+    Identifier *id;
+    Statement *ensure;
+};
 class FuncDeclaration;
 class ExpInitializer;
 class StructDeclaration;
@@ -130,36 +134,37 @@ public:
     const char *mangleOverride;      // overridden symbol with pragma(mangle, "...")
 
     const char *kind() const;
-    d_uns64 size(Loc loc);
-    int checkModify(Loc loc, Scope *sc, Type *t, Expression *e1, int flag);
+    d_uns64 size(const Loc &loc);
+    bool checkDisabled(Loc loc, Scope* sc, bool isAliasedDeclaration = false);
+    int checkModify(Loc loc, Scope *sc, Expression *e1, int flag);
 
     Dsymbol *search(Loc loc, Identifier *ident, int flags = SearchLocalsOnly);
 
-    bool isStatic() { return (storage_class & STCstatic) != 0; }
+    bool isStatic() const { return (storage_class & STCstatic) != 0; }
     virtual bool isDelete();
     virtual bool isDataseg();
     virtual bool isThreadlocal();
     virtual bool isCodeseg();
-    bool isCtorinit()     { return (storage_class & STCctorinit) != 0; }
-    bool isFinal()        { return (storage_class & STCfinal) != 0; }
-    virtual bool isAbstract()     { return (storage_class & STCabstract) != 0; }
-    bool isConst()        { return (storage_class & STCconst) != 0; }
-    bool isImmutable()    { return (storage_class & STCimmutable) != 0; }
-    bool isWild()         { return (storage_class & STCwild) != 0; }
-    bool isAuto()         { return (storage_class & STCauto) != 0; }
-    bool isScope()        { return (storage_class & STCscope) != 0; }
-    bool isSynchronized() { return (storage_class & STCsynchronized) != 0; }
-    bool isParameter()    { return (storage_class & STCparameter) != 0; }
-    bool isDeprecated()   { return (storage_class & STCdeprecated) != 0; }
-    bool isOverride()     { return (storage_class & STCoverride) != 0; }
-    bool isResult()       { return (storage_class & STCresult) != 0; }
-    bool isField()        { return (storage_class & STCfield) != 0; }
+    bool isCtorinit() const     { return (storage_class & STCctorinit) != 0; }
+    bool isFinal() const        { return (storage_class & STCfinal) != 0; }
+    virtual bool isAbstract()   { return (storage_class & STCabstract) != 0; }
+    bool isConst() const        { return (storage_class & STCconst) != 0; }
+    bool isImmutable() const    { return (storage_class & STCimmutable) != 0; }
+    bool isWild() const         { return (storage_class & STCwild) != 0; }
+    bool isAuto() const         { return (storage_class & STCauto) != 0; }
+    bool isScope() const        { return (storage_class & STCscope) != 0; }
+    bool isSynchronized() const { return (storage_class & STCsynchronized) != 0; }
+    bool isParameter() const    { return (storage_class & STCparameter) != 0; }
+    bool isDeprecated()         { return (storage_class & STCdeprecated) != 0; }
+    bool isOverride() const     { return (storage_class & STCoverride) != 0; }
+    bool isResult() const       { return (storage_class & STCresult) != 0; }
+    bool isField() const        { return (storage_class & STCfield) != 0; }
 
-    bool isIn()    { return (storage_class & STCin) != 0; }
-    bool isOut()   { return (storage_class & STCout) != 0; }
-    bool isRef()   { return (storage_class & STCref) != 0; }
+    bool isIn()  const  { return (storage_class & STCin) != 0; }
+    bool isOut() const  { return (storage_class & STCout) != 0; }
+    bool isRef() const  { return (storage_class & STCref) != 0; }
 
-    bool isFuture() { return (storage_class & STCfuture) != 0; }
+    bool isFuture() const { return (storage_class & STCfuture) != 0; }
 
     Prot prot();
 
@@ -198,7 +203,6 @@ public:
 
     static AliasDeclaration *create(Loc loc, Identifier *id, Type *type);
     Dsymbol *syntaxCopy(Dsymbol *);
-    void aliasSemantic(Scope *sc);
     bool overloadInsert(Dsymbol *s);
     const char *kind() const;
     Type *getType();
@@ -488,8 +492,10 @@ class FuncDeclaration : public Declaration
 {
 public:
     Types *fthrows;                     // Array of Type's of exceptions (not used)
-    Statement *frequire;
-    Statement *fensure;
+    Statements *frequires;              // in contracts
+    Ensures *fensures;                  // out contracts
+    Statement *frequire;                // lowered in contract
+    Statement *fensure;                 // lowered out contract
     Statement *fbody;
 
     FuncDeclarations foverrides;        // functions this function overrides
@@ -498,8 +504,7 @@ public:
 
     const char *mangleString;           // mangled symbol created from mangleExact()
 
-    Identifier *outId;                  // identifier for out statement
-    VarDeclaration *vresult;            // variable corresponding to outId
+    VarDeclaration *vresult;            // result variable for out contracts
     LabelDsymbol *returnLabel;          // where the return goes
 
     // used to prevent symbols in different
@@ -573,11 +578,11 @@ public:
 
     unsigned flags;                     // FUNCFLAGxxxxx
 
-    static FuncDeclaration *create(Loc loc, Loc endloc, Identifier *id, StorageClass storage_class, Type *type);
+    static FuncDeclaration *create(const Loc &loc, const Loc &endloc, Identifier *id, StorageClass storage_class, Type *type);
     Dsymbol *syntaxCopy(Dsymbol *);
     bool functionSemantic();
     bool functionSemantic3();
-    bool checkForwardRef(Loc loc);
+    bool checkForwardRef(const Loc &loc);
     // called from semantic3
     VarDeclaration *declareThis(Scope *sc, AggregateDeclaration *ad);
     bool equals(RootObject *o);
@@ -587,21 +592,21 @@ public:
     BaseClass *overrideInterface();
     bool overloadInsert(Dsymbol *s);
     FuncDeclaration *overloadExactMatch(Type *t);
-    FuncDeclaration *overloadModMatch(Loc loc, Type *tthis, bool &hasOverloads);
+    FuncDeclaration *overloadModMatch(const Loc &loc, Type *tthis, bool &hasOverloads);
     TemplateDeclaration *findTemplateDeclRoot();
     bool inUnittest();
     MATCH leastAsSpecialized(FuncDeclaration *g);
     LabelDsymbol *searchLabel(Identifier *ident);
-    int getLevel(Loc loc, Scope *sc, FuncDeclaration *fd); // lexical nesting level difference
+    int getLevel(const Loc &loc, Scope *sc, FuncDeclaration *fd); // lexical nesting level difference
     const char *toPrettyChars(bool QualifyTypes = false);
     const char *toFullSignature();  // for diagnostics, e.g. 'int foo(int x, int y) pure'
-    bool isMain();
-    bool isCMain();
-    bool isWinMain();
-    bool isDllMain();
-    bool isExport();
-    bool isImportedSymbol();
-    bool isCodeseg();
+    bool isMain() const;
+    bool isCMain() const;
+    bool isWinMain() const;
+    bool isDllMain() const;
+    bool isExport() const;
+    bool isImportedSymbol() const;
+    bool isCodeseg() const;
     bool isOverloadable();
     bool isAbstract();
     PURE isPure();
@@ -616,15 +621,15 @@ public:
     bool isNogcBypassingInference();
     bool setGC();
 
-    void printGCUsage(Loc loc, const char *warn);
+    void printGCUsage(const Loc &loc, const char *warn);
     bool isolateReturn();
     bool parametersIntersect(Type *t);
     virtual bool isNested();
     AggregateDeclaration *isThis();
     bool needThis();
     bool isVirtualMethod();
-    virtual bool isVirtual();
-    virtual bool isFinalFunc();
+    virtual bool isVirtual() const;
+    bool isFinalFunc() const;
     virtual bool addPreInvariant();
     virtual bool addPostInvariant();
     const char *kind() const;
@@ -648,7 +653,7 @@ public:
     void accept(Visitor *v) { v->visit(this); }
 };
 
-FuncDeclaration *resolveFuncCall(Loc loc, Scope *sc, Dsymbol *s,
+FuncDeclaration *resolveFuncCall(const Loc &loc, Scope *sc, Dsymbol *s,
         Objects *tiargs,
         Type *tthis,
         Expressions *arguments,
@@ -679,7 +684,7 @@ public:
     Dsymbol *syntaxCopy(Dsymbol *);
     bool isNested();
     AggregateDeclaration *isThis();
-    bool isVirtual();
+    bool isVirtual() const;
     bool addPreInvariant();
     bool addPostInvariant();
 
@@ -697,7 +702,7 @@ public:
     Dsymbol *syntaxCopy(Dsymbol *);
     const char *kind() const;
     const char *toChars();
-    bool isVirtual();
+    bool isVirtual() const;
     bool addPreInvariant();
     bool addPostInvariant();
 
@@ -709,7 +714,7 @@ class PostBlitDeclaration : public FuncDeclaration
 {
 public:
     Dsymbol *syntaxCopy(Dsymbol *);
-    bool isVirtual();
+    bool isVirtual() const;
     bool addPreInvariant();
     bool addPostInvariant();
     bool overloadInsert(Dsymbol *s);
@@ -724,7 +729,7 @@ public:
     Dsymbol *syntaxCopy(Dsymbol *);
     const char *kind() const;
     const char *toChars();
-    bool isVirtual();
+    bool isVirtual() const;
     bool addPreInvariant();
     bool addPostInvariant();
     bool overloadInsert(Dsymbol *s);
@@ -738,7 +743,7 @@ class StaticCtorDeclaration : public FuncDeclaration
 public:
     Dsymbol *syntaxCopy(Dsymbol *);
     AggregateDeclaration *isThis();
-    bool isVirtual();
+    bool isVirtual() const;
     bool addPreInvariant();
     bool addPostInvariant();
     bool hasStaticCtorOrDtor();
@@ -763,7 +768,7 @@ public:
 
     Dsymbol *syntaxCopy(Dsymbol *);
     AggregateDeclaration *isThis();
-    bool isVirtual();
+    bool isVirtual() const;
     bool hasStaticCtorOrDtor();
     bool addPreInvariant();
     bool addPostInvariant();
@@ -785,7 +790,7 @@ class InvariantDeclaration : public FuncDeclaration
 {
 public:
     Dsymbol *syntaxCopy(Dsymbol *);
-    bool isVirtual();
+    bool isVirtual() const;
     bool addPreInvariant();
     bool addPostInvariant();
 
@@ -803,7 +808,7 @@ public:
 
     Dsymbol *syntaxCopy(Dsymbol *);
     AggregateDeclaration *isThis();
-    bool isVirtual();
+    bool isVirtual() const;
     bool addPreInvariant();
     bool addPostInvariant();
 
@@ -819,7 +824,7 @@ public:
 
     Dsymbol *syntaxCopy(Dsymbol *);
     const char *kind() const;
-    bool isVirtual();
+    bool isVirtual() const;
     bool addPreInvariant();
     bool addPostInvariant();
 
@@ -836,7 +841,7 @@ public:
     Dsymbol *syntaxCopy(Dsymbol *);
     const char *kind() const;
     bool isDelete();
-    bool isVirtual();
+    bool isVirtual() const;
     bool addPreInvariant();
     bool addPostInvariant();
 

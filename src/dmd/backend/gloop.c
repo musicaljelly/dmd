@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1985-1998 by Symantec
- *              Copyright (c) 2000-2017 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2018 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/gloop.c, backend/gloop.c)
@@ -178,7 +178,7 @@ void loop::print()
         return;
   dbg_printf("\thead: B%d, tail: B%d, prehead: B%d\n",l->Lhead->Bdfoidx,
         l->Ltail->Bdfoidx,(l->Lpreheader ) ? l->Lpreheader->Bdfoidx :
-                                                        (unsigned)-1);
+                                                        (uint)-1);
   dbg_printf("\tLloop "); vec_println(l->Lloop);
   dbg_printf("\tLexit "); vec_println(l->Lexit);
 #endif
@@ -229,7 +229,7 @@ STATIC void freeloop(loop **pl)
  */
 
 int blockinit()
-{ unsigned i;
+{ uint i;
   block *b;
   int hasasm = 0;
 
@@ -252,7 +252,7 @@ int blockinit()
   }
   assert(numblks == i && maxblks);
   assert(i <= maxblks);
-  for (unsigned j = 0; j < dfotop; j++)
+  for (uint j = 0; j < dfotop; j++)
   {     assert(dfo[j]->Bdfoidx == j);
         dfo[j]->Bdom = vec_realloc(dfo[j]->Bdom, maxblks); /* alloc Bdom vectors */
         vec_clear(dfo[j]->Bdom);
@@ -273,7 +273,7 @@ int blockinit()
 
 void compdom()
 {
-  unsigned cntr;
+  uint cntr;
   vec_t t1;
   list_t bl;
   bool chgs;
@@ -336,9 +336,9 @@ STATIC void findloops(loop **ploops)
     freeloop(ploops);
 
     //printf("findloops()\n");
-    for (unsigned i = 0; i < dfotop; i++)
+    for (uint i = 0; i < dfotop; i++)
         dfo[i]->Bweight = 1;            // reset Bweights
-    for (unsigned i = dfotop; i--;)     // for each block (note reverse
+    for (uint i = dfotop; i--;)     // for each block (note reverse
                                         // dfo order, so most nested
                                         // loops are found first)
     {
@@ -426,7 +426,7 @@ L1:
    * successors outside the loop).
    */
 
-  unsigned i;
+  uint i;
   foreach (i,dfotop,l->Lloop)           /* for each block in this loop  */
   {     if (dfo[i]->BC == BCret || dfo[i]->BC == BCretexp || dfo[i]->BC == BCexit)
                 vec_setbit(i,l->Lexit); /* ret blocks are exit blocks */
@@ -807,7 +807,7 @@ restart:
     cmes("Starting loop invariants\n");
 
     for (loop *l = startloop; l; l = l->Lnext)
-    {   unsigned i,j;
+    {   uint i,j;
 
 #ifdef DEBUG
         //if (debugc) l->print();
@@ -926,7 +926,7 @@ restart:
 
 STATIC void markinvar(elem *n,vec_t rd)
 { vec_t tmp;
-  unsigned i;
+  uint i;
   symbol *v;
   elem *n1;
 
@@ -1283,7 +1283,7 @@ void fillInDNunambig(vec_t v, elem *e)
 
 
     // for all unambig defs in go.defnod[]
-    for (unsigned i = 0; i < go.deftop; i++)
+    for (uint i = 0; i < go.deftop; i++)
     {
         elem *tn = go.defnod[i].DNelem;
         elem *tn1;
@@ -1320,14 +1320,14 @@ void fillInDNunambig(vec_t v, elem *e)
 
 void updaterd(elem *n,vec_t GEN,vec_t KILL)
 {
-    unsigned op = n->Eoper;
+    uint op = n->Eoper;
     elem *t;
 
     assert(OTdef(op));
     assert(GEN);
     elem_debug(n);
 
-    unsigned ni = n->Edef;
+    uint ni = n->Edef;
     assert(ni != -1);
 
     // If unambiguous def
@@ -1343,7 +1343,7 @@ void updaterd(elem *n,vec_t GEN,vec_t KILL)
     else if (OTassign(op) && t->Eoper != OPvar && t->Ejty)
     {
         // for all unambig defs in go.defnod[]
-        for (unsigned i = 0; i < go.deftop; i++)
+        for (uint i = 0; i < go.deftop; i++)
         {   elem *tn = go.defnod[i].DNelem;
             elem *tn1;
 
@@ -1399,7 +1399,7 @@ static int refstop;                     /* flag to stop refs()                  
 
 STATIC bool refs(symbol *v,elem *n,elem *nstop)
 { bool f;
-  unsigned op;
+  uint op;
 
   symbol_debug(v);
   elem_debug(n);
@@ -1486,7 +1486,7 @@ Lnextlis:
   //if (isLI(n)) { printf("movelis("); WReqn(n); printf(")\n"); }
   assert(l && n);
   elem_debug(n);
-  const unsigned op = n->Eoper;
+  const uint op = n->Eoper;
   switch (op)
   {
         case OPvar:
@@ -1529,7 +1529,7 @@ Lnextlis:
 
                 if (!(*pdomexit & 1))                   // if not case 1
                 {
-                    unsigned i;
+                    uint i;
                     foreach (i,dfotop,l->Lexit)         // for each exit block
                     {
                         for (list_t bl = dfo[i]->Bsucc; bl; bl = list_next(bl))
@@ -1545,7 +1545,7 @@ Lnextlis:
                 }
 
                 tmp = vec_calloc(go.deftop);
-                unsigned i;
+                uint i;
                 foreach (i,dfotop,l->Lloop)     // for each block in loop
                 {
                         if (dfo[i] == b)        // except this one
@@ -1557,7 +1557,7 @@ Lnextlis:
 
                         //filterrd(tmp,dfo[i]->Binrd,v);
                         listrds(dfo[i]->Binrd,n->E1,tmp);
-                        unsigned j;
+                        uint j;
                         foreach (j,go.deftop,tmp)  // for each RD of v in Binrd
                         {   if (go.defnod[j].DNelem == n)
                                         continue;
@@ -1578,7 +1578,7 @@ Lnextlis:
 
                 //filterrd(tmp,b->Binrd,v);
                 listrds(b->Binrd,n->E1,tmp);
-                unsigned j;
+                uint j;
                 foreach (j,go.deftop,tmp)          // for each RD of v in Binrd
                 {   if (go.defnod[j].DNelem == n)
                             continue;
@@ -2056,7 +2056,7 @@ STATIC void findbasivs(loop *l)
 
   /* for each def in go.defnod[] that is within loop l     */
 
-  for (unsigned i = 0; i < go.deftop; i++)
+  for (uint i = 0; i < go.deftop; i++)
   {     if (!vec_testbit(go.defnod[i].DNblock->Bdfoidx,l->Lloop))
                 continue;               /* def is not in the loop       */
 
@@ -2093,7 +2093,7 @@ STATIC void findbasivs(loop *l)
                 /* this def as not possible                             */
 
                 if (!ambdone)           /* avoid redundant loops        */
-                {       for (unsigned j = 0; j < globsym.top; j++)
+                {       for (uint j = 0; j < globsym.top; j++)
                         {       if (!(globsym.tab[j]->Sflags & SFLunambig))
                                         vec_setbit(j,notposs);
                         }
@@ -2108,7 +2108,7 @@ STATIC void findbasivs(loop *l)
   vec_subass(poss,notposs);             /* poss = poss - notposs        */
 
   /* create list of IVs */
-  unsigned i;
+  uint i;
   foreach (i,globsym.top,poss)          /* for each basic IV            */
   {     Iv *biv;
         symbol *s;
@@ -2142,7 +2142,7 @@ STATIC void findbasivs(loop *l)
         /* the parent of the increment elem for it.                     */
 
         /* First find the go.defnod[]      */
-        unsigned j;
+        uint j;
         for (j = 0; j < go.deftop; j++)
         {       /* If go.defnod is a def of i and it is in the loop        */
                 if (go.defnod[j].DNelem->E1 &&     /* OPasm are def nodes  */
@@ -2186,7 +2186,7 @@ STATIC void findopeqs(loop *l)
 
     // for each def in go.defnod[] that is within loop l
 
-    for (unsigned i = 0; i < go.deftop; i++)
+    for (uint i = 0; i < go.deftop; i++)
     {   if (!vec_testbit(go.defnod[i].DNblock->Bdfoidx,l->Lloop))
                 continue;               // def is not in the loop
 
@@ -2217,7 +2217,7 @@ STATIC void findopeqs(loop *l)
                 // this def as not possible
 
                 if (!ambdone)           // avoid redundant loops
-                {       for (unsigned j = 0; j < globsym.top; j++)
+                {       for (uint j = 0; j < globsym.top; j++)
                         {       if (!(globsym.tab[j]->Sflags & SFLunambig))
                                         vec_setbit(j,notposs);
                         }
@@ -2242,7 +2242,7 @@ STATIC void findopeqs(loop *l)
     vec_subass(poss,notposs);           // poss = poss - notposs
 
     // create list of IVs
-    unsigned i;
+    uint i;
     foreach (i,globsym.top,poss)        // for each opeq IV
     {   Iv *biv;
         symbol *s;
@@ -2269,7 +2269,7 @@ STATIC void findopeqs(loop *l)
         // the parent of the increment elem for it.
 
         // First find the go.defnod[]
-        unsigned j;
+        uint j;
         for (j = 0; j < go.deftop; j++)
         {       // If go.defnod is a def of i and it is in the loop
                 if (go.defnod[j].DNelem->E1 &&     // OPasm are def nodes
@@ -2306,7 +2306,7 @@ STATIC void findivfams(loop *l)
     cmes2("findivfams(%p)\n",l);
     for (Iv *biv = l->Livlist; biv; biv = biv->IVnext)
     {
-        unsigned i;
+        uint i;
         foreach (i,dfotop,l->Lloop)     /* for each block in loop       */
             if (dfo[i]->Belem)
                 ivfamelems(biv,&(dfo[i]->Belem));
@@ -2325,7 +2325,7 @@ STATIC void findivfams(loop *l)
  */
 
 STATIC void ivfamelems(Iv *biv,elem **pn)
-{ unsigned op;
+{ uint op;
   tym_t ty,c2ty;
   elem *n,*n1,*n2;
 
@@ -2766,38 +2766,31 @@ STATIC bool funcprev(Iv *biv,famlist *fl)
  */
 
 STATIC void elimbasivs(loop *l)
-{ famlist *fl;
-  unsigned i;
-  tym_t ty;
-  elem **pref,*fofe,*C2;
-  symbol *X;
-  int refcount;
-
-  cmes2("elimbasivs(%p)\n",l);
-  for (Iv *biv = l->Livlist; biv; biv = biv->IVnext)        // for each basic IV
-  {
-
+{
+    cmes2("elimbasivs(%p)\n",l);
+    for (Iv *biv = l->Livlist; biv; biv = biv->IVnext)        // for each basic IV
+    {
         /* Can't eliminate this basic IV if we have a goal for the      */
         /* increment elem.                                              */
         // Be careful about Nflags being in a union...
-        if (!((*biv->IVincr)->Nflags & NFLnogoal))
+        elem* einc = *biv->IVincr;
+        if (!(einc->Nflags & NFLnogoal))
                 continue;
 
-        X = biv->IVbasic;
+        Symbol* X = biv->IVbasic;
         assert(symbol_isintab(X));
-        ty = X->ty();
-        pref = onlyref(X,l,*biv->IVincr,&refcount);
+        tym_t ty = X->ty();
+        int refcount;
+        elem** pref = onlyref(X,l,einc,&refcount);
 
         /* if only ref of X is of the form (X) or (X relop e) or (e relop X) */
         if (pref != NULL && refcount <= 1)
-        {       elem *ref;
-                tym_t flty;
-
-                fl = biv->IVfamily;
+        {
+                famlist* fl = biv->IVfamily;
                 if (!fl)                // if no elems in family of biv
                     continue;
 
-                ref = *pref;
+                elem* ref = *pref;
 
                 /* Replace (X) with (X != 0)                            */
                 if (ref->Eoper == OPvar)
@@ -2809,7 +2802,7 @@ STATIC void elimbasivs(loop *l)
 
                 // Don't do the replacement if we would replace a
                 // signed comparison with an unsigned one
-                flty = fl->FLty;
+                tym_t flty = fl->FLty;
                 if (tyuns(ref->E1->Ety) | tyuns(ref->E2->Ety))
                     flty = touns(flty);
 
@@ -2820,9 +2813,8 @@ STATIC void elimbasivs(loop *l)
 
                 /* if we have (e relop X), replace it with (X relop e)  */
                 if (ref->E2->Eoper == OPvar && ref->E2->EV.sp.Vsym == X)
-                {       elem *tmp;
-
-                        tmp = ref->E2;
+                {
+                        elem* tmp = ref->E2;
                         ref->E2 = ref->E1;
                         ref->E1 = tmp;
                         ref->Eoper = swaprel(ref->Eoper);
@@ -2832,11 +2824,8 @@ STATIC void elimbasivs(loop *l)
                 // then we can't do it
                 if (fl->c1->Eoper == OPconst)
                 {
-                    targ_llong c1;
-                    int sz;
-
-                    c1 = el_tolong(fl->c1);
-                    sz = tysize(ty);
+                    targ_llong c1 = el_tolong(fl->c1);
+                    const int sz = tysize(ty);
                     if (sz == SHORTSIZE &&
                         ((ref->E2->Eoper == OPconst &&
                         c1 * el_tolong(ref->E2) & ~0x7FFFL) ||
@@ -2857,6 +2846,15 @@ STATIC void elimbasivs(loop *l)
                        )
                         continue;
                 }
+
+                /* If the incr is a decrement, and the relational is < or <=,
+                 * and its unsigned, then don't do it because it could drop below 0.
+                 * https://issues.dlang.org/show_bug.cgi?id=16189
+                 */
+                if ((einc->Eoper == OPminass || einc->E2->Eoper == OPconst && el_tolong(einc->E2) < 0) &&
+                    (ref->Eoper == OPlt || ref->Eoper == OPle) &&
+                    (tyuns(ref->E1->Ety) | tyuns(ref->E2->Ety)))
+                    continue;
 
                 /* If loop started out with a signed conditional that was
                  * replaced with an unsigned one, don't do it if c2
@@ -2889,8 +2887,8 @@ STATIC void elimbasivs(loop *l)
                     refE2 = el_una(OP32_16,flty,refE2);
 
                 /* replace e with e*c1 + c2             */
-                C2 = el_copytree(fl->c2);
-                fofe = el_bin(OPadd,flty,
+                elem* C2 = el_copytree(fl->c2);
+                elem* fofe = el_bin(OPadd,flty,
                                 el_bin(OPmul,refE2->Ety,
                                         refE2,
                                         el_copytree(fl->c1)),
@@ -2922,7 +2920,7 @@ STATIC void elimbasivs(loop *l)
                 ref->E2 = refE2;
                 ref->Eoper = refEoper;
 
-                elimass(*biv->IVincr);          // dump the increment elem
+                elimass(einc);          // dump the increment elem
 
                 // replace X with T
                 assert(ref->E1->EV.sp.Voffset == 0);
@@ -2934,19 +2932,17 @@ STATIC void elimbasivs(loop *l)
                    Which can happen if we have (int)ptr==e
                  */
                 if (EBIN(fofe))         /* if didn't optimize it away   */
-                {   int sz;
-                    tym_t ty,ty1,ty2;
-
-                    ty = fofe->Ety;
-                    sz = tysize(ty);
-                    ty1 = fofe->E1->Ety;
-                    ty2 = fofe->E2->Ety;
+                {
+                    const tym_t fofety = fofe->Ety;
+                    const int sz = tysize(fofety);
+                    tym_t ty1 = fofe->E1->Ety;
+                    const tym_t ty2 = fofe->E2->Ety;
                     /* Sizes of + expression must all be the same       */
                     if (sz != tysize(ty1) &&
                         sz != tysize(ty2)
                        )
                     {
-                        if (tyuns(ty))          /* if unsigned comparison */
+                        if (tyuns(fofety))      // if unsigned comparison
                             ty1 = touns(ty1);   /* to unsigned type     */
                         fofe->Ety = ty1;
                         ref->E1->Ety = ty1;
@@ -2973,6 +2969,7 @@ STATIC void elimbasivs(loop *l)
                 /* if X is live on entry to any successor S outside loop */
                 /*      prepend elem X=(T-c2)/c1 to S.Belem     */
 
+                uint i;
                 foreach (i,dfotop,l->Lexit)     /* for each exit block  */
                 {       elem *ne;
                         block *b;
@@ -3050,6 +3047,7 @@ STATIC void elimbasivs(loop *l)
         }
         else if (refcount == 0)                 /* if no uses of IV in loop  */
         {       /* Eliminate the basic IV if it is not live on any successor */
+                uint i;
                 foreach (i,dfotop,l->Lexit)     /* for each exit block       */
                 {
                         for (list_t bl = dfo[i]->Bsucc; bl; bl = list_next(bl))
@@ -3106,7 +3104,7 @@ STATIC void elimopeqs(loop *l)
             ;
         else if (refcount == 0)                 // if no uses of IV in loop
         {   // Eliminate the basic IV if it is not live on any successor
-            unsigned i;
+            uint i;
             foreach (i,dfotop,l->Lexit) // for each exit block
             {
                 for (list_t bl = dfo[i]->Bsucc; bl; bl = list_next(bl))
@@ -3276,7 +3274,7 @@ static elem **nd,*sincn;
 static symbol *X;
 
 STATIC elem ** onlyref(symbol *x,loop *l,elem *incn,int *prefcount)
-{ unsigned i;
+{ uint i;
 
   //printf("onlyref('%s')\n", x->Sident);
   X = x;                                /* save some parameter passing  */
@@ -3374,7 +3372,7 @@ STATIC int countrefs2(elem *e)
  */
 
 STATIC void elimspec(loop *l)
-{ unsigned i;
+{ uint i;
 
   foreach (i,dfotop,l->Lloop)           /* for each block in loop       */
   {     block *b;
@@ -3485,7 +3483,7 @@ STATIC void elimspecwalk(elem **pn)
 
 struct UnrollWalker
 {
-    unsigned defnum;
+    uint defnum;
     int state;
     Symbol *v;
     targ_llong increment;
@@ -3699,7 +3697,7 @@ int el_length(elem *e)
 void UnrollWalker::walker(elem *e)
 {
     assert(e);
-    unsigned op = e->Eoper;
+    uint op = e->Eoper;
     if (ERTOL(e))
     {
         if (e->Edef != defnum)

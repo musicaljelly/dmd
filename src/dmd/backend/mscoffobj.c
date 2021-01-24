@@ -2,7 +2,7 @@
  * Compiler implementation of the
  * $(LINK2 http://www.dlang.org, D programming language).
  *
- * Copyright:   Copyright (c) 2009-2017 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 2009-2018 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/mscoffobj.c, backend/mscoffobj.c)
@@ -44,6 +44,11 @@ static char __file__[] = __FILE__;      // for tassert.h
 
 #define DEST_LEN (IDMAX + IDOHD + 1)
 char *obj_mangle2(Symbol *s,char *dest);
+
+#if MARS
+// C++ name mangling is handled by front end
+#define cpp_mangle(s) ((s)->Sident)
+#endif
 
 /******************************************
  */
@@ -584,7 +589,7 @@ void build_syment_table(bool bigobj)
             aux.x_section.length = pseg->SDoffset;
 
         if (pseg->SDrel)
-            aux.x_section.NumberOfRelocations = pseg->SDrel->size() / sizeof(struct Relocation);
+            aux.x_section.NumberOfRelocations = (unsigned short)(pseg->SDrel->size() / sizeof(struct Relocation));
 
         if (psechdr->Characteristics & IMAGE_SCN_LNK_COMDAT)
         {
@@ -634,11 +639,15 @@ void build_syment_table(bool bigobj)
         switch (s->Sclass)
         {
             case SCstatic:
+                if (s->Sflags & SFLhidden)
+                    goto Ldefault;
+                // fall-through
             case SClocstat:
                 sym.StorageClass = IMAGE_SYM_CLASS_STATIC;
                 sym.Value = s->Soffset;
                 break;
 
+            Ldefault:
             default:
                 sym.StorageClass = IMAGE_SYM_CLASS_EXTERNAL;
                 if (sym.SectionNumber != IMAGE_SYM_UNDEFINED)
@@ -1166,7 +1175,7 @@ void MsCoffObj::setModuleCtorDtor(Symbol *sfunc, bool isCtor)
  *      length of function
  */
 
-void MsCoffObj::ehtables(Symbol *sfunc,targ_size_t size,Symbol *ehsym)
+void MsCoffObj::ehtables(Symbol *sfunc,unsigned size,Symbol *ehsym)
 {
     //printf("MsCoffObj::ehtables(func = %s, handler table = %s) \n",sfunc->Sident, ehsym->Sident);
 
@@ -1734,7 +1743,6 @@ char *obj_mangle2(Symbol *s,char *dest)
             }
             // fall through
         case mTYman_cpp:
-        case mTYman_d:
         case mTYman_sys:
         case_mTYman_c64:
         case 0:
@@ -1744,6 +1752,7 @@ char *obj_mangle2(Symbol *s,char *dest)
             break;
 
         case mTYman_c:
+        case mTYman_d:
             if(I64)
                 goto case_mTYman_c64;
             // Prepend _ to identifier
@@ -2238,13 +2247,13 @@ void MsCoffObj::reftocodeseg(segidx_t seg,targ_size_t offset,targ_size_t val)
 int MsCoffObj::reftoident(segidx_t seg, targ_size_t offset, Symbol *s, targ_size_t val,
         int flags)
 {
-    int retsize = (flags & CFoffset64) ? 8 : 4;
+    int refsize = (flags & CFoffset64) ? 8 : 4;
     if (flags & CFseg)
-        retsize += 2;
+        refsize += 2;
 #if 0
     printf("\nMsCoffObj::reftoident('%s' seg %d, offset x%llx, val x%llx, flags x%x)\n",
         s->Sident,seg,(unsigned long long)offset,(unsigned long long)val,flags);
-    //printf("retsize = %d\n", retsize);
+    //printf("refsize = %d\n", refsize);
     //dbg_printf("Sseg = %d, Sxtrnnum = %d\n",s->Sseg,s->Sxtrnnum);
     //symbol_print(s);
 #endif
@@ -2252,7 +2261,7 @@ int MsCoffObj::reftoident(segidx_t seg, targ_size_t offset, Symbol *s, targ_size
     if (s->Sclass != SClocstat && !s->Sxtrnnum)
     {   // It may get defined later as public or local, so defer
         size_t numbyteswritten = addtofixlist(s, offset, seg, val, flags);
-        assert(numbyteswritten == retsize);
+        assert(numbyteswritten == refsize);
     }
     else
     {
@@ -2274,7 +2283,7 @@ int MsCoffObj::reftoident(segidx_t seg, targ_size_t offset, Symbol *s, targ_size
             {
                 MsCoffObj::addrel(seg, offset,     s, 0, RELaddr32, v);
                 MsCoffObj::addrel(seg, offset + 4, s, 0, RELseg, v);
-                retsize = 6;    // 4 bytes for offset, 2 for section
+                refsize = 6;    // 4 bytes for offset, 2 for section
             }
             else
             {
@@ -2335,21 +2344,21 @@ int MsCoffObj::reftoident(segidx_t seg, targ_size_t offset, Symbol *s, targ_size
         int save = buf->size();
         buf->setsize(offset);
         //printf("offset = x%llx, val = x%llx\n", offset, val);
-        if (retsize == 8)
+        if (refsize == 8)
             buf->write64(val);
-        else if (retsize == 4)
+        else if (refsize == 4)
             buf->write32(val);
-        else if (retsize == 6)
+        else if (refsize == 6)
         {
             buf->write32(val);
             buf->writeWord(0);
         }
         else
             assert(0);
-        if (save > offset + retsize)
+        if (save > offset + refsize)
             buf->setsize(save);
     }
-    return retsize;
+    return refsize;
 }
 
 /*****************************************

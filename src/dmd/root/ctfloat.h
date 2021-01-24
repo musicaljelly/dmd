@@ -1,5 +1,5 @@
 
-/* Copyright (c) 1999-2016 by The D Language Foundation
+/* Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
  * All Rights Reserved, written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -30,6 +30,23 @@ struct CTFloat
     static real_t sqrt(real_t x);
     static real_t fabs(real_t x);
     static real_t ldexp(real_t n, int exp);
+
+    static real_t round(real_t x);
+    static real_t floor(real_t x);
+    static real_t ceil(real_t x);
+    static real_t trunc(real_t x);
+    static real_t log(real_t x);
+    static real_t log2(real_t x);
+    static real_t log10(real_t x);
+    static real_t pow(real_t x, real_t y);
+    static real_t expm1(real_t x);
+    static real_t exp2(real_t x);
+
+    static real_t fmin(real_t x, real_t y);
+    static real_t fmax(real_t x, real_t y);
+    static real_t copysign(real_t x, real_t s);
+
+    static real_t fma(real_t x, real_t y, real_t z);
 
     static bool isIdentical(real_t a, real_t b);
     static bool isNaN(real_t r);

@@ -2,15 +2,15 @@
  * Compiler implementation of the
  * $(LINK2 http://www.dlang.org, D programming language).
  *
- * Copyright:   Copyright (c) 1999-2017 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/opover.d, _opover.d)
+ * Documentation:  https://dlang.org/phobos/dmd_opover.html
+ * Coverage:    https://codecov.io/gh/dlang/dmd/src/master/src/dmd/opover.d
  */
 
 module dmd.opover;
-
-// Online documentation: https://dlang.org/phobos/dmd_opover.html
 
 import core.stdc.stdio;
 import dmd.aggregate;
@@ -30,7 +30,6 @@ import dmd.globals;
 import dmd.id;
 import dmd.identifier;
 import dmd.mtype;
-import dmd.semantic;
 import dmd.statement;
 import dmd.tokens;
 import dmd.typesem;
@@ -44,19 +43,19 @@ extern (C++) bool isCommutative(TOK op)
 {
     switch (op)
     {
-    case TOKadd:
-    case TOKmul:
-    case TOKand:
-    case TOKor:
-    case TOKxor:
+    case TOK.add:
+    case TOK.mul:
+    case TOK.and:
+    case TOK.or:
+    case TOK.xor:
     // EqualExp
-    case TOKequal:
-    case TOKnotequal:
+    case TOK.equal:
+    case TOK.notEqual:
     // CmpExp
-    case TOKlt:
-    case TOKle:
-    case TOKgt:
-    case TOKge:
+    case TOK.lessThan:
+    case TOK.lessOrEqual:
+    case TOK.greaterThan:
+    case TOK.greaterOrEqual:
         return true;
     default:
         break;
@@ -107,7 +106,7 @@ private Identifier opId(Expression e)
 
         override void visit(PostExp e)
         {
-            id = (e.op == TOKplusplus) ? Id.postinc : Id.postdec;
+            id = (e.op == TOK.plusPlus) ? Id.postinc : Id.postdec;
         }
 
         override void visit(AddExp e)
@@ -391,49 +390,49 @@ extern (C++) Objects* opToArg(Scope* sc, TOK op)
      */
     switch (op)
     {
-    case TOKaddass:
-        op = TOKadd;
+    case TOK.addAssign:
+        op = TOK.add;
         break;
-    case TOKminass:
-        op = TOKmin;
+    case TOK.minAssign:
+        op = TOK.min;
         break;
-    case TOKmulass:
-        op = TOKmul;
+    case TOK.mulAssign:
+        op = TOK.mul;
         break;
-    case TOKdivass:
-        op = TOKdiv;
+    case TOK.divAssign:
+        op = TOK.div;
         break;
-    case TOKmodass:
-        op = TOKmod;
+    case TOK.modAssign:
+        op = TOK.mod;
         break;
-    case TOKandass:
-        op = TOKand;
+    case TOK.andAssign:
+        op = TOK.and;
         break;
-    case TOKorass:
-        op = TOKor;
+    case TOK.orAssign:
+        op = TOK.or;
         break;
-    case TOKxorass:
-        op = TOKxor;
+    case TOK.xorAssign:
+        op = TOK.xor;
         break;
-    case TOKshlass:
-        op = TOKshl;
+    case TOK.leftShiftAssign:
+        op = TOK.leftShift;
         break;
-    case TOKshrass:
-        op = TOKshr;
+    case TOK.rightShiftAssign:
+        op = TOK.rightShift;
         break;
-    case TOKushrass:
-        op = TOKushr;
+    case TOK.unsignedRightShiftAssign:
+        op = TOK.unsignedRightShift;
         break;
-    case TOKcatass:
-        op = TOKcat;
+    case TOK.concatenateAssign:
+        op = TOK.concatenate;
         break;
-    case TOKpowass:
-        op = TOKpow;
+    case TOK.powAssign:
+        op = TOK.pow;
         break;
     default:
         break;
     }
-    Expression e = new StringExp(Loc(), cast(char*)Token.toChars(op));
+    Expression e = new StringExp(Loc.initial, cast(char*)Token.toChars(op));
     e = e.expressionSemantic(sc);
     auto tiargs = new Objects();
     tiargs.push(e);
@@ -468,22 +467,22 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
         override void visit(UnaExp e)
         {
             //printf("UnaExp::op_overload() (%s)\n", e.toChars());
-            if (e.e1.op == TOKarray)
+            if (e.e1.op == TOK.array)
             {
                 ArrayExp ae = cast(ArrayExp)e.e1;
                 ae.e1 = ae.e1.expressionSemantic(sc);
                 ae.e1 = resolveProperties(sc, ae.e1);
                 Expression ae1old = ae.e1;
-                const(bool) maybeSlice = (ae.arguments.dim == 0 || ae.arguments.dim == 1 && (*ae.arguments)[0].op == TOKinterval);
+                const(bool) maybeSlice = (ae.arguments.dim == 0 || ae.arguments.dim == 1 && (*ae.arguments)[0].op == TOK.interval);
                 IntervalExp ie = null;
                 if (maybeSlice && ae.arguments.dim)
                 {
-                    assert((*ae.arguments)[0].op == TOKinterval);
+                    assert((*ae.arguments)[0].op == TOK.interval);
                     ie = cast(IntervalExp)(*ae.arguments)[0];
                 }
                 while (true)
                 {
-                    if (ae.e1.op == TOKerror)
+                    if (ae.e1.op == TOK.error)
                     {
                         result = ae.e1;
                         return;
@@ -501,7 +500,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                         result = resolveOpDollar(sc, ae, &e0);
                         if (!result) // op(a[i..j]) might be: a.opSliceUnary!(op)(i, j)
                             goto Lfallback;
-                        if (result.op == TOKerror)
+                        if (result.op == TOK.error)
                             return;
                         /* Rewrite op(a[arguments]) as:
                          *      a.opIndexUnary!(op)(arguments)
@@ -525,7 +524,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                     {
                         // Deal with $
                         result = resolveOpDollar(sc, ae, ie, &e0);
-                        if (result.op == TOKerror)
+                        if (result.op == TOK.error)
                             return;
                         /* Rewrite op(a[i..j]) as:
                          *      a.opSliceUnary!(op)(i, j)
@@ -562,7 +561,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
             }
             e.e1 = e.e1.expressionSemantic(sc);
             e.e1 = resolveProperties(sc, e.e1);
-            if (e.e1.op == TOKerror)
+            if (e.e1.op == TOK.error)
             {
                 result = e.e1;
                 return;
@@ -574,7 +573,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                 version (all)
                 {
                     // Old way, kept for compatibility with D1
-                    if (e.op != TOKpreplusplus && e.op != TOKpreminusminus)
+                    if (e.op != TOK.prePlusPlus && e.op != TOK.preMinusMinus)
                     {
                         fd = search_function(ad, opId(e));
                         if (fd)
@@ -621,16 +620,16 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
             ae.e1 = ae.e1.expressionSemantic(sc);
             ae.e1 = resolveProperties(sc, ae.e1);
             Expression ae1old = ae.e1;
-            const(bool) maybeSlice = (ae.arguments.dim == 0 || ae.arguments.dim == 1 && (*ae.arguments)[0].op == TOKinterval);
+            const(bool) maybeSlice = (ae.arguments.dim == 0 || ae.arguments.dim == 1 && (*ae.arguments)[0].op == TOK.interval);
             IntervalExp ie = null;
             if (maybeSlice && ae.arguments.dim)
             {
-                assert((*ae.arguments)[0].op == TOKinterval);
+                assert((*ae.arguments)[0].op == TOK.interval);
                 ie = cast(IntervalExp)(*ae.arguments)[0];
             }
             while (true)
             {
-                if (ae.e1.op == TOKerror)
+                if (ae.e1.op == TOK.error)
                 {
                     result = ae.e1;
                     return;
@@ -645,7 +644,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                     // If the non-aggregate expression ae.e1 is indexable or sliceable,
                     // convert it to the corresponding concrete expression.
                     if (t1b.ty == Tpointer || t1b.ty == Tsarray || t1b.ty == Tarray || t1b.ty == Taarray ||
-                        t1b.ty == Ttuple || t1b.ty == Tvector || ae.e1.op == TOKtype)
+                        t1b.ty == Ttuple || t1b.ty == Tvector || ae.e1.op == TOK.type)
                     {
                         // Convert to SliceExp
                         if (maybeSlice)
@@ -670,7 +669,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                     result = resolveOpDollar(sc, ae, &e0);
                     if (!result) // a[i..j] might be: a.opSlice(i, j)
                         goto Lfallback;
-                    if (result.op == TOKerror)
+                    if (result.op == TOK.error)
                         return;
                     /* Rewrite e1[arguments] as:
                      *      e1.opIndex(arguments)
@@ -689,7 +688,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                     }
                 }
             Lfallback:
-                if (maybeSlice && ae.e1.op == TOKtype)
+                if (maybeSlice && ae.e1.op == TOK.type)
                 {
                     result = new SliceExp(ae.loc, ae.e1, ie);
                     result = result.expressionSemantic(sc);
@@ -700,7 +699,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                 {
                     // Deal with $
                     result = resolveOpDollar(sc, ae, ie, &e0);
-                    if (result.op == TOKerror)
+                    if (result.op == TOK.error)
                         return;
                     /* Rewrite a[i..j] as:
                      *      a.opSlice(i, j)
@@ -795,7 +794,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
             int argsset = 0;
             AggregateDeclaration ad1 = isAggregate(e.e1.type);
             AggregateDeclaration ad2 = isAggregate(e.e2.type);
-            if (e.op == TOKassign && ad1 == ad2)
+            if (e.op == TOK.assign && ad1 == ad2)
             {
                 StructDeclaration sd = ad1.isStructDeclaration();
                 if (sd && !sd.hasIdentityAssign)
@@ -824,13 +823,13 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                 }
             }
             Objects* tiargs = null;
-            if (e.op == TOKplusplus || e.op == TOKminusminus)
+            if (e.op == TOK.plusPlus || e.op == TOK.minusMinus)
             {
                 // Bug4099 fix
                 if (ad1 && search_function(ad1, Id.opUnary))
                     return;
             }
-            if (!s && !s_r && e.op != TOKequal && e.op != TOKnotequal && e.op != TOKassign && e.op != TOKplusplus && e.op != TOKminusminus)
+            if (!s && !s_r && e.op != TOK.equal && e.op != TOK.notEqual && e.op != TOK.assign && e.op != TOK.plusPlus && e.op != TOK.minusMinus)
             {
                 /* Try the new D2 scheme, opBinary and opBinaryRight
                  */
@@ -839,7 +838,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                     s = search_function(ad1, Id.opBinary);
                     if (s && !s.isTemplateDeclaration())
                     {
-                        e.e1.error("%s.opBinary isn't a template", e.e1.toChars());
+                        e.e1.error("`%s.opBinary` isn't a template", e.e1.toChars());
                         result = new ErrorExp();
                         return;
                     }
@@ -849,7 +848,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                     s_r = search_function(ad2, Id.opBinaryRight);
                     if (s_r && !s_r.isTemplateDeclaration())
                     {
-                        e.e2.error("%s.opBinaryRight isn't a template", e.e2.toChars());
+                        e.e2.error("`%s.opBinaryRight` isn't a template", e.e2.toChars());
                         result = new ErrorExp();
                         return;
                     }
@@ -902,7 +901,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                 if (m.count > 1)
                 {
                     // Error, ambiguous
-                    e.error("overloads %s and %s both match argument list for %s", m.lastf.type.toChars(), m.nextf.type.toChars(), m.lastf.toChars());
+                    e.error("overloads `%s` and `%s` both match argument list for `%s`", m.lastf.type.toChars(), m.nextf.type.toChars(), m.lastf.toChars());
                 }
                 else if (m.last <= MATCH.nomatch)
                 {
@@ -910,7 +909,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                     if (tiargs)
                         goto L1;
                 }
-                if (e.op == TOKplusplus || e.op == TOKminusminus)
+                if (e.op == TOK.plusPlus || e.op == TOK.minusMinus)
                 {
                     // Kludge because operator overloading regards e++ and e--
                     // as unary, but it's implemented as a binary.
@@ -988,7 +987,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                         if (m.count > 1)
                         {
                             // Error, ambiguous
-                            e.error("overloads %s and %s both match argument list for %s", m.lastf.type.toChars(), m.nextf.type.toChars(), m.lastf.toChars());
+                            e.error("overloads `%s` and `%s` both match argument list for `%s`", m.lastf.type.toChars(), m.nextf.type.toChars(), m.lastf.toChars());
                         }
                         else if (m.last <= MATCH.nomatch)
                         {
@@ -1008,17 +1007,17 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                         // need to reverse the sense of the op
                         switch (e.op)
                         {
-                        case TOKlt:
-                            e.op = TOKgt;
+                        case TOK.lessThan:
+                            e.op = TOK.greaterThan;
                             break;
-                        case TOKgt:
-                            e.op = TOKlt;
+                        case TOK.greaterThan:
+                            e.op = TOK.lessThan;
                             break;
-                        case TOKle:
-                            e.op = TOKge;
+                        case TOK.lessOrEqual:
+                            e.op = TOK.greaterOrEqual;
                             break;
-                        case TOKge:
-                            e.op = TOKle;
+                        case TOK.greaterOrEqual:
+                            e.op = TOK.lessOrEqual;
                             break;
                         default:
                             break;
@@ -1028,7 +1027,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                 }
             }
             // Try alias this on first operand
-            if (ad1 && ad1.aliasthis && !(e.op == TOKassign && ad2 && ad1 == ad2)) // https://issues.dlang.org/show_bug.cgi?id=2943
+            if (ad1 && ad1.aliasthis && !(e.op == TOK.assign && ad2 && ad1 == ad2)) // https://issues.dlang.org/show_bug.cgi?id=2943
             {
                 /* Rewrite (e1 op e2) as:
                  *      (e1.aliasthis op e2)
@@ -1049,7 +1048,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
              * make sure that when we're copying the struct, we don't
              * just copy the alias this member
              */
-            if (ad2 && ad2.aliasthis && !(e.op == TOKassign && ad1 && ad1 == ad2))
+            if (ad2 && ad2.aliasthis && !(e.op == TOK.assign && ad1 && ad1 == ad2))
             {
                 /* Rewrite (e1 op e2) as:
                  *      (e1 op e2.aliasthis)
@@ -1076,8 +1075,8 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
 
             /* Check for array equality.
              */
-            if ((t1.ty == Tarray || t1.ty == Tsarray)
-                && (t2.ty == Tarray || t2.ty == Tsarray))
+            if ((t1.ty == Tarray || t1.ty == Tsarray) &&
+                (t2.ty == Tarray || t2.ty == Tsarray))
             {
                 bool needsDirectEq()
                 {
@@ -1105,16 +1104,16 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                 if (needsDirectEq() && !(t1.ty == Tarray && t2.ty == Tarray))
                 {
                     /* Rewrite as:
-                     *      _ArrayEq(e1, e2)
+                     *      __ArrayEq(e1, e2)
                      */
-                    Expression eeq = new IdentifierExp(e.loc, Id._ArrayEq);
+                    Expression eeq = new IdentifierExp(e.loc, Id.__ArrayEq);
                     result = new CallExp(e.loc, eeq, e.e1, e.e2);
-                    if (e.op == TOKnotequal)
+                    if (e.op == TOK.notEqual)
                         result = new NotExp(e.loc, result);
                     result = result.trySemantic(sc); // for better error message
                     if (!result)
                     {
-                        e.error("cannot compare %s and %s", t1.toChars(), t2.toChars());
+                        e.error("cannot compare `%s` and `%s`", t1.toChars(), t2.toChars());
                         result = new ErrorExp();
                     }
                     return;
@@ -1123,11 +1122,11 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
 
             /* Check for class equality with null literal or typeof(null).
              */
-            if (t1.ty == Tclass && e.e2.op == TOKnull ||
-                t2.ty == Tclass && e.e1.op == TOKnull)
+            if (t1.ty == Tclass && e.e2.op == TOK.null_ ||
+                t2.ty == Tclass && e.e1.op == TOK.null_)
             {
-                e.error("use '%s' instead of '%s' when comparing with null",
-                    Token.toChars(e.op == TOKequal ? TOKidentity : TOKnotidentity),
+                e.error("use `%s` instead of `%s` when comparing with `null`",
+                    Token.toChars(e.op == TOK.equal ? TOK.identity : TOK.notIdentity),
                     Token.toChars(e.op));
                 result = new ErrorExp();
                 return;
@@ -1166,7 +1165,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                     result = new DotIdExp(e.loc, result, Id.object);
                     result = new DotIdExp(e.loc, result, Id.eq);
                     result = new CallExp(e.loc, result, e1x, e2x);
-                    if (e.op == TOKnotequal)
+                    if (e.op == TOK.notEqual)
                         result = new NotExp(e.loc, result);
                     result = result.expressionSemantic(sc);
                     return;
@@ -1176,7 +1175,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
             result = compare_overload(e, sc, Id.eq);
             if (result)
             {
-                if (result.op == TOKcall && e.op == TOKnotequal)
+                if (result.op == TOK.call && e.op == TOK.notEqual)
                 {
                     result = new NotExp(result.loc, result);
                     result = result.expressionSemantic(sc);
@@ -1199,7 +1198,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                  * This is just a rewriting for deterministic AST representation
                  * as the backend input.
                  */
-                auto op2 = e.op == TOKequal ? TOKidentity : TOKnotidentity;
+                auto op2 = e.op == TOK.equal ? TOK.identity : TOK.notIdentity;
                 result = new IdentityExp(op2, e.loc, e.e1, e.e2);
                 result = result.expressionSemantic(sc);
                 return;
@@ -1217,7 +1216,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                 if (!needOpEquals(sd))
                 {
                     // Use bitwise equality.
-                    auto op2 = e.op == TOKequal ? TOKidentity : TOKnotidentity;
+                    auto op2 = e.op == TOK.equal ? TOK.identity : TOK.notIdentity;
                     result = new IdentityExp(op2, e.loc, e.e1, e.e2);
                     result = result.expressionSemantic(sc);
                     return;
@@ -1250,7 +1249,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                 if (result.op == e.op &&
                     (cast(EqualExp)result).e1.type.toBasetype() == t1)
                 {
-                    e.error("cannot compare %s because its auto generated member-wise equality has recursive definition",
+                    e.error("cannot compare `%s` because its auto generated member-wise equality has recursive definition",
                         t1.toChars());
                     result = new ErrorExp();
                 }
@@ -1259,14 +1258,14 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
 
             /* Check for tuple equality.
              */
-            if (e.e1.op == TOKtuple && e.e2.op == TOKtuple)
+            if (e.e1.op == TOK.tuple && e.e2.op == TOK.tuple)
             {
                 auto tup1 = cast(TupleExp)e.e1;
                 auto tup2 = cast(TupleExp)e.e2;
                 size_t dim = tup1.exps.dim;
                 if (dim != tup2.exps.dim)
                 {
-                    e.error("mismatched tuple lengths, %d and %d",
+                    e.error("mismatched tuple lengths, `%d` and `%d`",
                         cast(int)dim, cast(int)tup2.exps.dim);
                     result = new ErrorExp();
                     return;
@@ -1275,7 +1274,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                 if (dim == 0)
                 {
                     // zero-length tuple comparison should always return true or false.
-                    result = new IntegerExp(e.loc, (e.op == TOKequal), Type.tbool);
+                    result = new IntegerExp(e.loc, (e.op == TOK.equal), Type.tbool);
                 }
                 else
                 {
@@ -1289,10 +1288,10 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
 
                         if (!result)
                             result = eeq;
-                        else if (e.op == TOKequal)
-                            result = new LogicalExp(e.loc, TOKandand, result, eeq);
+                        else if (e.op == TOK.equal)
+                            result = new LogicalExp(e.loc, TOK.andAnd, result, eeq);
                         else
-                            result = new LogicalExp(e.loc, TOKoror, result, eeq);
+                            result = new LogicalExp(e.loc, TOK.orOr, result, eeq);
                     }
                     assert(result);
                 }
@@ -1315,22 +1314,22 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
         override void visit(BinAssignExp e)
         {
             //printf("BinAssignExp::op_overload() (%s)\n", e.toChars());
-            if (e.e1.op == TOKarray)
+            if (e.e1.op == TOK.array)
             {
                 ArrayExp ae = cast(ArrayExp)e.e1;
                 ae.e1 = ae.e1.expressionSemantic(sc);
                 ae.e1 = resolveProperties(sc, ae.e1);
                 Expression ae1old = ae.e1;
-                const(bool) maybeSlice = (ae.arguments.dim == 0 || ae.arguments.dim == 1 && (*ae.arguments)[0].op == TOKinterval);
+                const(bool) maybeSlice = (ae.arguments.dim == 0 || ae.arguments.dim == 1 && (*ae.arguments)[0].op == TOK.interval);
                 IntervalExp ie = null;
                 if (maybeSlice && ae.arguments.dim)
                 {
-                    assert((*ae.arguments)[0].op == TOKinterval);
+                    assert((*ae.arguments)[0].op == TOK.interval);
                     ie = cast(IntervalExp)(*ae.arguments)[0];
                 }
                 while (true)
                 {
-                    if (ae.e1.op == TOKerror)
+                    if (ae.e1.op == TOK.error)
                     {
                         result = ae.e1;
                         return;
@@ -1348,10 +1347,10 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                         result = resolveOpDollar(sc, ae, &e0);
                         if (!result) // (a[i..j] op= e2) might be: a.opSliceOpAssign!(op)(e2, i, j)
                             goto Lfallback;
-                        if (result.op == TOKerror)
+                        if (result.op == TOK.error)
                             return;
                         result = e.e2.expressionSemantic(sc);
-                        if (result.op == TOKerror)
+                        if (result.op == TOK.error)
                             return;
                         e.e2 = result;
                         /* Rewrite a[arguments] op= e2 as:
@@ -1377,10 +1376,10 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                     {
                         // Deal with $
                         result = resolveOpDollar(sc, ae, ie, &e0);
-                        if (result.op == TOKerror)
+                        if (result.op == TOK.error)
                             return;
                         result = e.e2.expressionSemantic(sc);
-                        if (result.op == TOKerror)
+                        if (result.op == TOK.error)
                             return;
                         e.e2 = result;
                         /* Rewrite (a[i..j] op= e2) as:
@@ -1448,7 +1447,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                     s = search_function(ad1, Id.opOpAssign);
                     if (s && !s.isTemplateDeclaration())
                     {
-                        e.error("%s.opOpAssign isn't a template", e.e1.toChars());
+                        e.error("`%s.opOpAssign` isn't a template", e.e1.toChars());
                         result = new ErrorExp();
                         return;
                     }
@@ -1482,7 +1481,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
                 if (m.count > 1)
                 {
                     // Error, ambiguous
-                    e.error("overloads %s and %s both match argument list for %s", m.lastf.type.toChars(), m.nextf.type.toChars(), m.lastf.toChars());
+                    e.error("overloads `%s` and `%s` both match argument list for `%s`", m.lastf.type.toChars(), m.nextf.type.toChars(), m.lastf.toChars());
                 }
                 else if (m.last <= MATCH.nomatch)
                 {
@@ -1541,7 +1540,7 @@ extern (C++) Expression op_overload(Expression e, Scope* sc)
 /******************************************
  * Common code for overloading of EqualExp and CmpExp
  */
-extern (C++) Expression compare_overload(BinExp e, Scope* sc, Identifier id)
+private Expression compare_overload(BinExp e, Scope* sc, Identifier id)
 {
     //printf("BinExp::compare_overload(id = %s) %s\n", id.toChars(), e.toChars());
     AggregateDeclaration ad1 = isAggregate(e.e1.type);
@@ -1611,7 +1610,7 @@ extern (C++) Expression compare_overload(BinExp e, Scope* sc, Identifier id)
             if (!(m.lastf == lastf && m.count == 2 && count == 1))
             {
                 // Error, ambiguous
-                e.error("overloads %s and %s both match argument list for %s", m.lastf.type.toChars(), m.nextf.type.toChars(), m.lastf.toChars());
+                e.error("overloads `%s` and `%s` both match argument list for `%s`", m.lastf.type.toChars(), m.nextf.type.toChars(), m.lastf.toChars());
             }
         }
         else if (m.last <= MATCH.nomatch)
@@ -1632,17 +1631,17 @@ extern (C++) Expression compare_overload(BinExp e, Scope* sc, Identifier id)
             // need to reverse the sense of the op
             switch (e.op)
             {
-            case TOKlt:
-                e.op = TOKgt;
+            case TOK.lessThan:
+                e.op = TOK.greaterThan;
                 break;
-            case TOKgt:
-                e.op = TOKlt;
+            case TOK.greaterThan:
+                e.op = TOK.lessThan;
                 break;
-            case TOKle:
-                e.op = TOKge;
+            case TOK.lessOrEqual:
+                e.op = TOK.greaterOrEqual;
                 break;
-            case TOKge:
-                e.op = TOKle;
+            case TOK.greaterOrEqual:
+                e.op = TOK.lessOrEqual;
                 break;
             default:
                 break;
@@ -1688,7 +1687,7 @@ extern (C++) Expression compare_overload(BinExp e, Scope* sc, Identifier id)
 /***********************************
  * Utility to build a function call out of this reference and argument.
  */
-extern (C++) Expression build_overload(Loc loc, Scope* sc, Expression ethis, Expression earg, Dsymbol d)
+extern (C++) Expression build_overload(const ref Loc loc, Scope* sc, Expression ethis, Expression earg, Dsymbol d)
 {
     assert(d);
     Expression e;
@@ -1710,7 +1709,7 @@ extern (C++) Expression build_overload(Loc loc, Scope* sc, Expression ethis, Exp
  */
 extern (C++) Dsymbol search_function(ScopeDsymbol ad, Identifier funcid)
 {
-    Dsymbol s = ad.search(Loc(), funcid);
+    Dsymbol s = ad.search(Loc.initial, funcid);
     if (s)
     {
         //printf("search_function: s = '%s'\n", s.kind());
@@ -1726,141 +1725,162 @@ extern (C++) Dsymbol search_function(ScopeDsymbol ad, Identifier funcid)
     return null;
 }
 
-extern (C++) bool inferAggregate(ForeachStatement fes, Scope* sc, ref Dsymbol sapply)
+/**************************************
+ * Figure out what is being foreach'd over by looking at the ForeachAggregate.
+ * Params:
+ *      sc = context
+ *      isForeach = true for foreach, false for foreach_reverse
+ *      feaggr = ForeachAggregate
+ *      sapply = set to function opApply/opApplyReverse, or delegate, or null.
+ *               Overload resolution is not done.
+ * Returns:
+ *      true if successfully figured it out; feaggr updated with semantic analysis.
+ *      false for failed, which is an error.
+ */
+bool inferForeachAggregate(Scope* sc, bool isForeach, ref Expression feaggr, out Dsymbol sapply)
 {
-    //printf("inferAggregate(%s)\n", fes.aggr.toChars());
-    Identifier idapply = (fes.op == TOKforeach) ? Id.apply : Id.applyReverse;
-    Identifier idfront = (fes.op == TOKforeach) ? Id.Ffront : Id.Fback;
-    int sliced = 0;
-    Type tab;
+    //printf("inferForeachAggregate(%s)\n", feaggr.toChars());
+    bool sliced;
     Type att = null;
-    Expression aggr = fes.aggr;
-    AggregateDeclaration ad;
+    auto aggr = feaggr;
     while (1)
     {
         aggr = aggr.expressionSemantic(sc);
         aggr = resolveProperties(sc, aggr);
         aggr = aggr.optimize(WANTvalue);
-        if (!aggr.type || aggr.op == TOKerror)
-            goto Lerr;
-        tab = aggr.type.toBasetype();
+        if (!aggr.type || aggr.op == TOK.error)
+            return false;
+        Type tab = aggr.type.toBasetype();
         switch (tab.ty)
         {
-        case Tarray:
-        case Tsarray:
-        case Ttuple:
-        case Taarray:
+        case Tarray:            // https://dlang.org/spec/statement.html#foreach_over_arrays
+        case Tsarray:           // https://dlang.org/spec/statement.html#foreach_over_arrays
+        case Ttuple:            // https://dlang.org/spec/statement.html#foreach_over_tuples
+        case Taarray:           // https://dlang.org/spec/statement.html#foreach_over_associative_arrays
             break;
+
         case Tclass:
-            ad = (cast(TypeClass)tab).sym;
-            goto Laggr;
         case Tstruct:
-            ad = (cast(TypeStruct)tab).sym;
-            goto Laggr;
-        Laggr:
+        {
+            AggregateDeclaration ad = (tab.ty == Tclass) ? (cast(TypeClass)tab).sym
+                                                         : (cast(TypeStruct)tab).sym;
             if (!sliced)
             {
-                sapply = search_function(ad, idapply);
+                sapply = search_function(ad, isForeach ? Id.apply : Id.applyReverse);
                 if (sapply)
                 {
+                    // https://dlang.org/spec/statement.html#foreach_over_struct_and_classes
                     // opApply aggregate
                     break;
                 }
-                if (fes.aggr.op != TOKtype)
+                if (feaggr.op != TOK.type)
                 {
-                    Expression rinit = new ArrayExp(aggr.loc, fes.aggr);
+                    /* See if rewriting `aggr` to `aggr[]` will work
+                     */
+                    Expression rinit = new ArrayExp(aggr.loc, feaggr);
                     rinit = rinit.trySemantic(sc);
-                    if (rinit) // if application of [] succeeded
+                    if (rinit) // if it worked
                     {
                         aggr = rinit;
-                        sliced = 1;
+                        sliced = true;  // only try it once
                         continue;
                     }
                 }
             }
-            if (ad.search(Loc(), idfront))
+            if (ad.search(Loc.initial, isForeach ? Id.Ffront : Id.Fback))
             {
+                // https://dlang.org/spec/statement.html#foreach-with-ranges
                 // range aggregate
                 break;
             }
             if (ad.aliasthis)
             {
-                if (att == tab)
-                    goto Lerr;
+                if (att == tab)         // error, circular alias this
+                    return false;
                 if (!att && tab.checkAliasThisRec())
                     att = tab;
                 aggr = resolveAliasThis(sc, aggr);
                 continue;
             }
-            goto Lerr;
-        case Tdelegate:
-            if (aggr.op == TOKdelegate)
+            return false;
+        }
+
+        case Tdelegate:        // https://dlang.org/spec/statement.html#foreach_over_delegates
+            if (aggr.op == TOK.delegate_)
             {
                 sapply = (cast(DelegateExp)aggr).func;
             }
             break;
+
         case Terror:
             break;
+
         default:
-            goto Lerr;
+            return false;
         }
-        break;
+        feaggr = aggr;
+        return true;
     }
-    fes.aggr = aggr;
-    return true;
-Lerr:
-    return false;
+    assert(0);
 }
 
 /*****************************************
- * Given array of parameters and an aggregate type,
+ * Given array of foreach parameters and an aggregate type,
+ * find best opApply overload,
  * if any of the parameter types are missing, attempt to infer
  * them from the aggregate type.
+ * Params:
+ *      fes = the foreach statement
+ *      sc = context
+ *      sapply = null or opApply or delegate
+ * Returns:
+ *      false for errors
  */
-extern (C++) bool inferApplyArgTypes(ForeachStatement fes, Scope* sc, ref Dsymbol sapply)
+bool inferApplyArgTypes(ForeachStatement fes, Scope* sc, ref Dsymbol sapply)
 {
     if (!fes.parameters || !fes.parameters.dim)
         return false;
     if (sapply) // prefer opApply
     {
-        for (size_t u = 0; u < fes.parameters.dim; u++)
+        foreach (Parameter p; *fes.parameters)
         {
-            Parameter p = (*fes.parameters)[u];
             if (p.type)
             {
                 p.type = p.type.typeSemantic(fes.loc, sc);
                 p.type = p.type.addStorageClass(p.storageClass);
             }
         }
+
+        // Determine ethis for sapply
         Expression ethis;
         Type tab = fes.aggr.type.toBasetype();
         if (tab.ty == Tclass || tab.ty == Tstruct)
             ethis = fes.aggr;
         else
         {
-            assert(tab.ty == Tdelegate && fes.aggr.op == TOKdelegate);
+            assert(tab.ty == Tdelegate && fes.aggr.op == TOK.delegate_);
             ethis = (cast(DelegateExp)fes.aggr).e1;
         }
+
         /* Look for like an
          *  int opApply(int delegate(ref Type [, ...]) dg);
          * overload
          */
-        FuncDeclaration fd = sapply.isFuncDeclaration();
-        if (fd)
+        if (FuncDeclaration fd = sapply.isFuncDeclaration())
         {
-            sapply = inferApplyArgTypesX(ethis, fd, fes.parameters);
+            auto fdapply = findBestOpApplyMatch(ethis, fd, fes.parameters);
+            if (fdapply)
+            {
+                // Fill in any missing types on foreach parameters[]
+                matchParamsToOpApply(cast(TypeFunction)fdapply.type, fes.parameters, true);
+                sapply = fdapply;
+                return true;
+            }
+            return false;
         }
         return sapply !is null;
     }
-    /* Return if no parameters need types.
-     */
-    for (size_t u = 0; u < fes.parameters.dim; u++)
-    {
-        Parameter p = (*fes.parameters)[u];
-        if (!p.type)
-            break;
-    }
-    AggregateDeclaration ad;
+
     Parameter p = (*fes.parameters)[0];
     Type taggr = fes.aggr.type;
     assert(taggr);
@@ -1885,6 +1905,7 @@ extern (C++) bool inferApplyArgTypes(ForeachStatement fes, Scope* sc, ref Dsymbo
             p.type = p.type.addStorageClass(p.storageClass);
         }
         break;
+
     case Taarray:
         {
             TypeAArray taa = cast(TypeAArray)tab;
@@ -1894,8 +1915,8 @@ extern (C++) bool inferApplyArgTypes(ForeachStatement fes, Scope* sc, ref Dsymbo
                 {
                     p.type = taa.index; // key type
                     p.type = p.type.addStorageClass(p.storageClass);
-                    if (p.storageClass & STCref) // key must not be mutated via ref
-                        p.type = p.type.addMod(MODconst);
+                    if (p.storageClass & STC.ref_) // key must not be mutated via ref
+                        p.type = p.type.addMod(MODFlags.const_);
                 }
                 p = (*fes.parameters)[1];
             }
@@ -1906,21 +1927,20 @@ extern (C++) bool inferApplyArgTypes(ForeachStatement fes, Scope* sc, ref Dsymbo
             }
             break;
         }
+
     case Tclass:
-        ad = (cast(TypeClass)tab).sym;
-        goto Laggr;
     case Tstruct:
-        ad = (cast(TypeStruct)tab).sym;
-        goto Laggr;
-    Laggr:
+    {
+        AggregateDeclaration ad = (tab.ty == Tclass) ? (cast(TypeClass)tab).sym
+                                                     : (cast(TypeStruct)tab).sym;
         if (fes.parameters.dim == 1)
         {
             if (!p.type)
             {
                 /* Look for a front() or back() overload
                  */
-                Identifier id = (fes.op == TOKforeach) ? Id.Ffront : Id.Fback;
-                Dsymbol s = ad.search(Loc(), id);
+                Identifier id = (fes.op == TOK.foreach_) ? Id.Ffront : Id.Fback;
+                Dsymbol s = ad.search(Loc.initial, id);
                 FuncDeclaration fd = s ? s.isFuncDeclaration() : null;
                 if (fd)
                 {
@@ -1943,29 +1963,40 @@ extern (C++) bool inferApplyArgTypes(ForeachStatement fes, Scope* sc, ref Dsymbo
             break;
         }
         break;
+    }
+
     case Tdelegate:
-        {
-            if (!inferApplyArgTypesY(cast(TypeFunction)tab.nextOf(), fes.parameters))
-                return false;
-            break;
-        }
+        if (!matchParamsToOpApply(cast(TypeFunction)tab.nextOf(), fes.parameters, true))
+            return false;
+        break;
+
     default:
         break; // ignore error, caught later
     }
     return true;
 }
 
-private Dsymbol inferApplyArgTypesX(Expression ethis, FuncDeclaration fstart, Parameters* parameters)
+/*********************************************
+ * Find best overload match on fstart given ethis and parameters[].
+ * Params:
+ *      ethis = expression to use for `this`
+ *      fstart = opApply or foreach delegate
+ *      parameters = ForeachTypeList (i.e. foreach parameters)
+ * Returns:
+ *      best match if there is one, null if error
+ */
+private FuncDeclaration findBestOpApplyMatch(Expression ethis, FuncDeclaration fstart, Parameters* parameters)
 {
     MOD mod = ethis.type.mod;
     MATCH match = MATCH.nomatch;
     FuncDeclaration fd_best;
     FuncDeclaration fd_ambig;
+
     overloadApply(fstart, (Dsymbol s)
     {
         auto f = s.isFuncDeclaration();
         if (!f)
-            return 0;
+            return 0;           // continue
         auto tf = cast(TypeFunction)f.type;
         MATCH m = MATCH.exact;
         if (f.isThis())
@@ -1975,7 +2006,7 @@ private Dsymbol inferApplyArgTypesX(Expression ethis, FuncDeclaration fstart, Pa
             else if (mod != tf.mod)
                 m = MATCH.constant;
         }
-        if (!inferApplyArgTypesY(tf, parameters, 1))
+        if (!matchParamsToOpApply(tf, parameters, false))
             m = MATCH.nomatch;
         if (m > match)
         {
@@ -1983,67 +2014,82 @@ private Dsymbol inferApplyArgTypesX(Expression ethis, FuncDeclaration fstart, Pa
             fd_ambig = null;
             match = m;
         }
-        else if (m == match)
-            fd_ambig = f;
-        return 0;
+        else if (m == match && m > MATCH.nomatch)
+        {
+            assert(fd_best);
+            /* Ignore covariant matches, as later on it can be redone
+             * after the opApply delegate has its attributes inferred.
+             */
+            if (tf.covariant(fd_best.type) != 1 &&
+                fd_best.type.covariant(tf) != 1)
+                fd_ambig = f;                           // not covariant, so ambiguous
+        }
+        return 0;               // continue
     });
 
-    if (fd_best)
+    if (fd_ambig)
     {
-        inferApplyArgTypesY(cast(TypeFunction)fd_best.type, parameters);
-        if (fd_ambig)
-        {
-            .error(ethis.loc, "%s.%s matches more than one declaration:\n%s:     %s\nand:\n%s:     %s",
-                ethis.toChars(), fstart.ident.toChars(),
-                fd_best.loc.toChars(), fd_best.type.toChars(),
-                fd_ambig.loc.toChars(), fd_ambig.type.toChars());
-            fd_best = null;
-        }
+        .error(ethis.loc, "`%s.%s` matches more than one declaration:\n`%s`:     `%s`\nand:\n`%s`:     `%s`",
+            ethis.toChars(), fstart.ident.toChars(),
+            fd_best.loc.toChars(), fd_best.type.toChars(),
+            fd_ambig.loc.toChars(), fd_ambig.type.toChars());
+        return null;
     }
+
     return fd_best;
 }
 
 /******************************
- * Infer parameters from type of function.
+ * Determine if foreach parameters match opApply parameters.
+ * Infer missing foreach parameter types from type of opApply delegate.
+ * Params:
+ *      tf = type of opApply or delegate
+ *      parameters = foreach parameters
+ *      infer = infer missing parameter types
  * Returns:
- *      1 match for this function
- *      0 no match for this function
+ *      true for match for this function
+ *      false for no match for this function
  */
-private int inferApplyArgTypesY(TypeFunction tf, Parameters* parameters, int flags = 0)
+private bool matchParamsToOpApply(TypeFunction tf, Parameters* parameters, bool infer)
 {
-    size_t nparams;
-    Parameter p;
-    if (Parameter.dim(tf.parameters) != 1)
-        goto Lnomatch;
-    p = Parameter.getNth(tf.parameters, 0);
-    if (p.type.ty != Tdelegate)
-        goto Lnomatch;
-    tf = cast(TypeFunction)p.type.nextOf();
-    assert(tf.ty == Tfunction);
-    /* We now have tf, the type of the delegate. Match it against
-     * the parameters, filling in missing parameter types.
+    enum nomatch = false;
+
+    /* opApply/delegate has exactly one parameter, and that parameter
+     * is a delegate that looks like:
+     *     int opApply(int delegate(ref Type [, ...]) dg);
      */
-    nparams = Parameter.dim(tf.parameters);
-    if (nparams == 0 || tf.varargs)
-        goto Lnomatch; // not enough parameters
-    if (parameters.dim != nparams)
-        goto Lnomatch; // not enough parameters
-    for (size_t u = 0; u < nparams; u++)
+    if (Parameter.dim(tf.parameters) != 1)
+        return nomatch;
+
+    /* Get the type of opApply's dg parameter
+     */
+    Parameter p0 = Parameter.getNth(tf.parameters, 0);
+    if (p0.type.ty != Tdelegate)
+        return nomatch;
+    TypeFunction tdg = cast(TypeFunction)p0.type.nextOf();
+    assert(tdg.ty == Tfunction);
+
+    /* We now have tdg, the type of the delegate.
+     * tdg's parameters must match that of the foreach arglist (i.e. parameters).
+     * Fill in missing types in parameters.
+     */
+    const nparams = Parameter.dim(tdg.parameters);
+    if (nparams == 0 || nparams != parameters.dim || tdg.varargs)
+        return nomatch; // parameter mismatch
+
+    foreach (u, p; *parameters)
     {
-        p = (*parameters)[u];
-        Parameter param = Parameter.getNth(tf.parameters, u);
+        Parameter param = Parameter.getNth(tdg.parameters, u);
         if (p.type)
         {
             if (!p.type.equals(param.type))
-                goto Lnomatch;
+                return nomatch;
         }
-        else if (!flags)
+        else if (infer)
         {
             p.type = param.type;
             p.type = p.type.addStorageClass(p.storageClass);
         }
     }
-    return 1;
-Lnomatch:
-    return 0;
+    return true;
 }

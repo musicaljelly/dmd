@@ -2,15 +2,17 @@
  * Compiler implementation of the
  * $(LINK2 http://www.dlang.org, D programming language).
  *
- * Copyright:   Copyright (c) 1999-2017 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/libomf.d, _libomf.d)
+ * Documentation:  https://dlang.org/phobos/dmd_libomf.html
+ * Coverage:    https://codecov.io/gh/dlang/dmd/src/master/src/dmd/libomf.d
  */
 
 module dmd.libomf;
 
-// Online documentation: https://dlang.org/phobos/dmd_libomf.html
+version(Windows):
 
 import core.stdc.stdio;
 import core.stdc.string;
@@ -77,7 +79,7 @@ final class LibOMF : Library
         {
             assert(module_name);
             File* file = File.create(cast(char*)module_name);
-            readFile(Loc(), file);
+            readFile(Loc.initial, file);
             buf = file.buffer;
             buflen = file.len;
             file._ref = 1;
@@ -225,14 +227,12 @@ private:
         ushort bucksForHash;
         ushort bucksForSize;
         uint symSize = 0;
-        for (size_t i = 0; i < objsymbols.dim; i++)
+        foreach (s; objsymbols)
         {
-            OmfObjSymbol* s = objsymbols[i];
             symSize += (strlen(s.name) + 4) & ~1;
         }
-        for (size_t i = 0; i < objmodules.dim; i++)
+        foreach (om; objmodules)
         {
-            OmfObjModule* om = objmodules[i];
             size_t len = om.name.length;
             if (len > 0xFF)
                 len += 2; // Digital Mars long name extension
@@ -299,9 +299,8 @@ private:
         ubyte[4 + LIBIDMAX + 2 + 1] entry;
         //printf("FillDict()\n");
         // Add each of the module names
-        for (size_t i = 0; i < objmodules.dim; i++)
+        foreach (om; objmodules)
         {
-            OmfObjModule* om = objmodules[i];
             ushort n = cast(ushort)om.name.length;
             if (n > 255)
             {
@@ -326,9 +325,8 @@ private:
         // Sort the symbols
         qsort(objsymbols.tdata(), objsymbols.dim, (objsymbols[0]).sizeof, cast(_compare_fp_t)&NameCompare);
         // Add each of the symbols
-        for (size_t i = 0; i < objsymbols.dim; i++)
+        foreach (os; objsymbols)
         {
-            OmfObjSymbol* os = objsymbols[i];
             ushort n = cast(ushort)strlen(os.name);
             if (n > 255)
             {
@@ -367,9 +365,8 @@ private:
         /* Scan each of the object modules for symbols
          * to go into the dictionary
          */
-        for (size_t i = 0; i < objmodules.dim; i++)
+        foreach (om; objmodules)
         {
-            OmfObjModule* om = objmodules[i];
             scanObjModule(om);
         }
         uint g_page_size = 16;
@@ -385,9 +382,8 @@ private:
                 printf("g_page_size = %d\n", g_page_size);
             }
             uint offset = g_page_size;
-            for (size_t i = 0; i < objmodules.dim; i++)
+            foreach (om; objmodules)
             {
-                OmfObjModule* om = objmodules[i];
                 uint page = offset / g_page_size;
                 if (page > 0xFFFF)
                 {
@@ -410,9 +406,8 @@ private:
         libbuf.fill0(g_page_size);
         /* Write each object module into the library
          */
-        for (size_t i = 0; i < objmodules.dim; i++)
+        foreach (om; objmodules)
         {
-            OmfObjModule* om = objmodules[i];
             uint page = cast(uint)(libbuf.offset / g_page_size);
             assert(page <= 0xFFFF);
             om.page = cast(ushort)page;

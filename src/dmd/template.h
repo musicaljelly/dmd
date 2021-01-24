@@ -1,7 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (c) 1999-2016 by The D Language Foundation
- * All Rights Reserved
+ * Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -80,6 +79,7 @@ public:
     bool ismixin;               // template declaration is only to be used as a mixin
     bool isstatic;              // this is static template declaration
     Prot protection;
+    int inuse;                  // for recursive expansion detection
 
     TemplatePrevious *previous;         // threaded list of previous instantiation attempts on stack
 
@@ -206,8 +206,6 @@ public:
     Expression *specValue;
     Expression *defaultValue;
 
-    static AA *edummies;
-
     TemplateValueParameter *isTemplateValueParameter();
     TemplateParameter *syntaxCopy();
     bool declareParameter(Scope *sc);
@@ -322,7 +320,7 @@ public:
     // Internal
     bool findTempDecl(Scope *sc, WithScopeSymbol **pwithsym);
     bool updateTempDecl(Scope *sc, Dsymbol *s);
-    static bool semanticTiargs(Loc loc, Scope *sc, Objects *tiargs, int flags);
+    static bool semanticTiargs(const Loc &loc, Scope *sc, Objects *tiargs, int flags);
     bool semanticTiargs(Scope *sc);
     bool findBestMatch(Scope *sc, Expressions *fargs);
     bool needsTypeInference(Scope *sc, int flag = 0);
@@ -344,7 +342,6 @@ public:
     TypeQualified *tqual;
 
     Dsymbol *syntaxCopy(Dsymbol *s);
-    void semantic2(Scope *sc);
     const char *kind() const;
     bool oneMember(Dsymbol **ps, Identifier *ident);
     int apply(Dsymbol_apply_ft_t fp, void *param);

@@ -29,16 +29,16 @@
     <WholeProgramOptimization Condition="'$(Configuration)'=='Release'">false</WholeProgramOptimization>
   </PropertyGroup>
   <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -50,7 +50,7 @@
   <PropertyGroup>
     <_ProjectFileVersion>10.0.30319.1</_ProjectFileVersion>
     <OutDir>..\..\generated\Windows\$(Configuration)\$(PlatformName)\</OutDir>
-    <IntDir>$(OutDir)</IntDir>
+    <IntDir>$(OutDir)\backend\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" />
   <ItemDefinitionGroup>
@@ -96,7 +96,6 @@
     <ClCompile Include="..\dmd\backend\varstats.c" />
     <ClCompile Include="..\dmd\backend\tk.c" />
     <ClCompile Include="..\dmd\backend\aa.c" />
-    <ClCompile Include="..\dmd\backend\bcomplex.c" />
     <ClCompile Include="..\dmd\backend\blockopt.c" />
     <ClCompile Include="..\dmd\backend\cg.c" />
     <ClCompile Include="..\dmd\backend\cg87.c" />
@@ -116,13 +115,12 @@
     <ClCompile Include="..\dmd\backend\cod5.c" />
     <ClCompile Include="..\dmd\backend\code.c" />
     <ClCompile Include="..\dmd\backend\debug.c" />
-    <ClCompile Include="..\dmd\backend\divcoeff.c" />
     <ClCompile Include="..\dmd\backend\dt.c" />
     <ClCompile Include="..\dmd\backend\dwarf.c" />
     <ClCompile Include="..\dmd\backend\ee.c" />
     <ClCompile Include="..\dmd\backend\el.c" />
     <ClCompile Include="..\dmd\backend\elfobj.c" />
-    <ClCompile Include="..\dmd\backend\evalu8.c" />
+    <ClCompile Include="..\dmd\backend\fp.c" />
     <ClCompile Include="..\dmd\backend\gdag.c" />
     <ClCompile Include="..\dmd\backend\gflow.c" />
     <ClCompile Include="..\dmd\backend\glocal.c" />
@@ -157,7 +155,6 @@
     <ClCompile Include="..\dmd\tk\vec.c">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="..\dmd\root\longdouble.c" />
     <ClCompile Include="..\dmd\root\newdelete.c" />
     <CustomBuild Include="..\dmd\backend\optabgen.c">
       <Message>Building and running $(IntDir)%(Filename).exe</Message>
@@ -244,14 +241,6 @@ popd</Command>
     <ClInclude Include="..\vcbuild\fenv.h" />
     <ClInclude Include="..\vcbuild\stdint.h" />
     <ClInclude Include="..\vcbuild\warnings.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <CustomBuild Include="..\vcbuild\ldfpu.asm">
-      <ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild>
-      <Message>Assembling $(IntDir)%(Filename)%(Extension)</Message>
-      <Command>ml64 -c -Zi "-Fl$(IntDir)%(Filename).lst" "-Fo$(IntDir)%(Filename).obj" "%(FullPath)"</Command>
-      <Outputs>$(IntDir)%(Filename).obj;%(Outputs)</Outputs>
-    </CustomBuild>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

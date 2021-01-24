@@ -2,15 +2,15 @@
  * Compiler implementation of the
  * $(LINK2 http://www.dlang.org, D programming language).
  *
- * Copyright:   Copyright (c) 1999-2017 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/dinterpret.d, _dinterpret.d)
+ * Documentation:  https://dlang.org/phobos/dmd_dinterpret.html
+ * Coverage:    https://codecov.io/gh/dlang/dmd/src/master/src/dmd/dinterpret.d
  */
 
 module dmd.dinterpret;
-
-// Online documentation: https://dlang.org/phobos/dmd_dinterpret.html
 
 import core.stdc.stdio;
 import core.stdc.string;
@@ -38,11 +38,125 @@ import dmd.initsem;
 import dmd.mtype;
 import dmd.root.array;
 import dmd.root.rootobject;
-import dmd.semantic;
 import dmd.statement;
 import dmd.tokens;
 import dmd.utf;
 import dmd.visitor;
+
+/*************************************
+ * Entry point for CTFE.
+ * A compile-time result is required. Give an error if not possible.
+ *
+ * `e` must be semantically valid expression. In other words, it should not
+ * contain any `ErrorExp`s in it. But, CTFE interpretation will cross over
+ * functions and may invoke a function that contains `ErrorStatement` in its body.
+ * If that, the "CTFE failed because of previous errors" error is raised.
+ */
+public extern (C++) Expression ctfeInterpret(Expression e)
+{
+    if (e.op == TOK.error)
+        return e;
+    assert(e.type); // https://issues.dlang.org/show_bug.cgi?id=14642
+    //assert(e.type.ty != Terror);    // FIXME
+    if (e.type.ty == Terror)
+        return new ErrorExp();
+
+    // This code is outside a function, but still needs to be compiled
+    // (there are compiler-generated temporary variables such as __dollar).
+    // However, this will only be run once and can then be discarded.
+    auto ctfeCodeGlobal = CompiledCtfeFunction(null);
+    ctfeCodeGlobal.callingloc = e.loc;
+    ctfeCodeGlobal.onExpression(e);
+
+    Expression result = interpret(e, null);
+
+    if (!CTFEExp.isCantExp(result))
+        result = scrubReturnValue(e.loc, result);
+    if (CTFEExp.isCantExp(result))
+        result = new ErrorExp();
+
+    return result;
+}
+
+/* Run CTFE on the expression, but allow the expression to be a TypeExp
+ *  or a tuple containing a TypeExp. (This is required by pragma(msg)).
+ */
+public extern (C++) Expression ctfeInterpretForPragmaMsg(Expression e)
+{
+    if (e.op == TOK.error || e.op == TOK.type)
+        return e;
+
+    // It's also OK for it to be a function declaration (happens only with
+    // __traits(getOverloads))
+    if (e.op == TOK.variable && (cast(VarExp)e).var.isFuncDeclaration())
+    {
+        return e;
+    }
+
+    if (e.op != TOK.tuple)
+        return e.ctfeInterpret();
+
+    // Tuples need to be treated separately, since they are
+    // allowed to contain a TypeExp in this case.
+
+    TupleExp tup = cast(TupleExp)e;
+    Expressions* expsx = null;
+    for (size_t i = 0; i < tup.exps.dim; ++i)
+    {
+        Expression g = (*tup.exps)[i];
+        Expression h = g;
+        h = ctfeInterpretForPragmaMsg(g);
+        if (h != g)
+        {
+            if (!expsx)
+            {
+                expsx = new Expressions();
+                expsx.setDim(tup.exps.dim);
+                for (size_t j = 0; j < tup.exps.dim; j++)
+                    (*expsx)[j] = (*tup.exps)[j];
+            }
+            (*expsx)[i] = h;
+        }
+    }
+    if (expsx)
+    {
+        auto te = new TupleExp(e.loc, expsx);
+        expandTuples(te.exps);
+        te.type = new TypeTuple(te.exps);
+        return te;
+    }
+    return e;
+}
+
+public extern (C++) Expression getValue(VarDeclaration vd)
+{
+    return ctfeStack.getValue(vd);
+}
+
+
+// CTFE diagnostic information
+public extern (C++) void printCtfePerformanceStats()
+{
+    debug (SHOWPERFORMANCE)
+    {
+        printf("        ---- CTFE Performance ----\n");
+        printf("max call depth = %d\tmax stack = %d\n", CtfeStatus.maxCallDepth, ctfeStack.maxStackUsage());
+        printf("array allocs = %d\tassignments = %d\n\n", CtfeStatus.numArrayAllocs, CtfeStatus.numAssignments);
+    }
+}
+
+/*********
+ * Typesafe PIMPL idiom so we can keep CompiledCtfeFunction private.
+ */
+struct CompiledCtfeFunctionPimpl
+{
+    private CompiledCtfeFunction* pimpl;
+    private alias pimpl this;
+}
+
+/* ================================================ Implementation ======================================= */
+
+private:
 
 enum CtfeGoal : int
 {
@@ -142,7 +256,7 @@ public:
 
     extern (C++) Expression getValue(VarDeclaration v)
     {
-        if ((v.isDataseg() || v.storage_class & STCmanifest) && !v.isCTFE())
+        if ((v.isDataseg() || v.storage_class & STC.manifest) && !v.isCTFE())
         {
             assert(v.ctfeAdrOnStack >= 0 && v.ctfeAdrOnStack < globalValues.dim);
             return globalValues[v.ctfeAdrOnStack];
@@ -176,7 +290,7 @@ public:
     extern (C++) void pop(VarDeclaration v)
     {
         assert(!v.isDataseg() || v.isCTFE());
-        assert(!(v.storage_class & (STCref | STCout)));
+        assert(!(v.storage_class & (STC.ref_ | STC.out_)));
         int oldid = v.ctfeAdrOnStack;
         v.ctfeAdrOnStack = cast(int)cast(size_t)savedId[oldid];
         if (v.ctfeAdrOnStack == values.dim - 1)
@@ -204,7 +318,7 @@ public:
 
     extern (C++) void saveGlobalConstant(VarDeclaration v, Expression e)
     {
-        assert(v._init && (v.isConst() || v.isImmutable() || v.storage_class & STCmanifest) && !v.isCTFE());
+        assert(v._init && (v.isConst() || v.isImmutable() || v.storage_class & STC.manifest) && !v.isCTFE());
         v.ctfeAdrOnStack = cast(int)globalValues.dim;
         globalValues.push(e);
     }
@@ -224,17 +338,6 @@ private struct InterState
 }
 
 extern (C++) __gshared CtfeStack ctfeStack;
-
-// CTFE diagnostic information
-extern (C++) void printCtfePerformanceStats()
-{
-    debug (SHOWPERFORMANCE)
-    {
-        printf("        ---- CTFE Performance ----\n");
-        printf("max call depth = %d\tmax stack = %d\n", CtfeStatus.maxCallDepth, ctfeStack.maxStackUsage());
-        printf("array allocs = %d\tassignments = %d\n\n", CtfeStatus.numArrayAllocs, CtfeStatus.numAssignments);
-    }
-}
 
 /***********************************************************
  * CTFE-object code for a single function
@@ -262,7 +365,7 @@ struct CompiledCtfeFunction
     {
         extern (C++) final class VarWalker : StoppableVisitor
         {
-            alias visit = super.visit;
+            alias visit = typeof(super).visit;
         public:
             CompiledCtfeFunction* ccf;
 
@@ -285,7 +388,7 @@ struct CompiledCtfeFunction
                     stop = 1;
                     return;
                 }
-                .error(e.loc, "CTFE internal error: ErrorExp in %s\n", ccf.func ? ccf.func.loc.toChars() : ccf.callingloc.toChars());
+                .error(e.loc, "CTFE internal error: ErrorExp in `%s`\n", ccf.func ? ccf.func.loc.toChars() : ccf.callingloc.toChars());
                 assert(0);
             }
 
@@ -303,7 +406,7 @@ struct CompiledCtfeFunction
                     {
                         RootObject o = td.objects.tdata()[i];
                         Expression ex = isExpression(o);
-                        DsymbolExp s = (ex && ex.op == TOKdsymbol) ? cast(DsymbolExp)ex : null;
+                        DsymbolExp s = (ex && ex.op == TOK.dSymbol) ? cast(DsymbolExp)ex : null;
                         assert(s);
                         VarDeclaration v2 = s.s.isVarDeclaration();
                         assert(v2);
@@ -311,7 +414,7 @@ struct CompiledCtfeFunction
                             ccf.onDeclaration(v2);
                     }
                 }
-                else if (!(v.isDataseg() || v.storage_class & STCmanifest) || v.isCTFE())
+                else if (!(v.isDataseg() || v.storage_class & STC.manifest) || v.isCTFE())
                     ccf.onDeclaration(v);
                 Dsymbol s = v.toAlias();
                 if (s == v && !v.isStatic() && v._init)
@@ -524,7 +627,7 @@ public:
             printf("%s WithStatement::ctfeCompile\n", s.loc.toChars());
         }
         // If it is with(Enum) {...}, just execute the body.
-        if (s.exp.op == TOKscope || s.exp.op == TOKtype)
+        if (s.exp.op == TOK.scope_ || s.exp.op == TOK.type)
         {
         }
         else
@@ -617,7 +720,7 @@ private void ctfeCompile(FuncDeclaration fd)
     }
     assert(!fd.ctfeCode);
     assert(!fd.semantic3Errors);
-    assert(fd.semanticRun == PASSsemantic3done);
+    assert(fd.semanticRun == PASS.semantic3done);
 
     fd.ctfeCode = new CompiledCtfeFunction(fd);
     if (fd.parameters)
@@ -637,114 +740,29 @@ private void ctfeCompile(FuncDeclaration fd)
 }
 
 /*************************************
- * Entry point for CTFE.
- * A compile-time result is required. Give an error if not possible.
- *
- * `e` must be semantically valid expression. In other words, it should not
- * contain any `ErrorExp`s in it. But, CTFE interpretation will cross over
- * functions and may invoke a function that contains `ErrorStatement` in its body.
- * If that, the "CTFE failed because of previous errors" error is raised.
- */
-extern (C++) Expression ctfeInterpret(Expression e)
-{
-    if (e.op == TOKerror)
-        return e;
-    assert(e.type); // https://issues.dlang.org/show_bug.cgi?id=14642
-    //assert(e.type.ty != Terror);    // FIXME
-    if (e.type.ty == Terror)
-        return new ErrorExp();
-
-    // This code is outside a function, but still needs to be compiled
-    // (there are compiler-generated temporary variables such as __dollar).
-    // However, this will only be run once and can then be discarded.
-    auto ctfeCodeGlobal = CompiledCtfeFunction(null);
-    ctfeCodeGlobal.callingloc = e.loc;
-    ctfeCodeGlobal.onExpression(e);
-
-    Expression result = interpret(e, null);
-
-    if (!CTFEExp.isCantExp(result))
-        result = scrubReturnValue(e.loc, result);
-    if (CTFEExp.isCantExp(result))
-        result = new ErrorExp();
-
-    return result;
-}
-
-/* Run CTFE on the expression, but allow the expression to be a TypeExp
- *  or a tuple containing a TypeExp. (This is required by pragma(msg)).
- */
-extern (C++) Expression ctfeInterpretForPragmaMsg(Expression e)
-{
-    if (e.op == TOKerror || e.op == TOKtype)
-        return e;
-
-    // It's also OK for it to be a function declaration (happens only with
-    // __traits(getOverloads))
-    if (e.op == TOKvar && (cast(VarExp)e).var.isFuncDeclaration())
-    {
-        return e;
-    }
-
-    if (e.op != TOKtuple)
-        return e.ctfeInterpret();
-
-    // Tuples need to be treated separately, since they are
-    // allowed to contain a TypeExp in this case.
-
-    TupleExp tup = cast(TupleExp)e;
-    Expressions* expsx = null;
-    for (size_t i = 0; i < tup.exps.dim; ++i)
-    {
-        Expression g = (*tup.exps)[i];
-        Expression h = g;
-        h = ctfeInterpretForPragmaMsg(g);
-        if (h != g)
-        {
-            if (!expsx)
-            {
-                expsx = new Expressions();
-                expsx.setDim(tup.exps.dim);
-                for (size_t j = 0; j < tup.exps.dim; j++)
-                    (*expsx)[j] = (*tup.exps)[j];
-            }
-            (*expsx)[i] = h;
-        }
-    }
-    if (expsx)
-    {
-        auto te = new TupleExp(e.loc, expsx);
-        expandTuples(te.exps);
-        te.type = new TypeTuple(te.exps);
-        return te;
-    }
-    return e;
-}
-
-/*************************************
  * Attempt to interpret a function given the arguments.
  * Input:
  *      istate     state for calling function (NULL if none)
  *      arguments  function arguments
  *      thisarg    'this', if a needThis() function, NULL if not.
  *
- * Return result expression if successful, TOKcantexp if not,
+ * Return result expression if successful, TOK.cantExpression if not,
  * or CTFEExp if function returned void.
  */
-private Expression interpret(FuncDeclaration fd, InterState* istate, Expressions* arguments, Expression thisarg)
+private Expression interpretFunction(FuncDeclaration fd, InterState* istate, Expressions* arguments, Expression thisarg)
 {
     debug (LOG)
     {
         printf("\n********\n%s FuncDeclaration::interpret(istate = %p) %s\n", fd.loc.toChars(), istate, fd.toChars());
     }
-    if (fd.semanticRun == PASSsemantic3)
+    if (fd.semanticRun == PASS.semantic3)
     {
         fd.error("circular dependency. Functions cannot be interpreted while being compiled");
         return CTFEExp.cantexp;
     }
     if (!fd.functionSemantic3())
         return CTFEExp.cantexp;
-    if (fd.semanticRun < PASSsemantic3done)
+    if (fd.semanticRun < PASS.semantic3done)
         return CTFEExp.cantexp;
 
     // CTFE-compile the function
@@ -771,7 +789,7 @@ private Expression interpret(FuncDeclaration fd, InterState* istate, Expressions
     {
         // error, no this. Prevent segfault.
         // Here should be unreachable by the strict 'this' check in front-end.
-        fd.error("need 'this' to access member %s", fd.toChars());
+        fd.error("need `this` to access member `%s`", fd.toChars());
         return CTFEExp.cantexp;
     }
 
@@ -790,12 +808,12 @@ private Expression interpret(FuncDeclaration fd, InterState* istate, Expressions
         Expression earg = (*arguments)[i];
         Parameter fparam = Parameter.getNth(tf.parameters, i);
 
-        if (fparam.storageClass & (STCout | STCref))
+        if (fparam.storageClass & (STC.out_ | STC.ref_))
         {
-            if (!istate && (fparam.storageClass & STCout))
+            if (!istate && (fparam.storageClass & STC.out_))
             {
                 // initializing an out parameter involves writing to it.
-                earg.error("global %s cannot be passed as an 'out' parameter at compile time", earg.toChars());
+                earg.error("global `%s` cannot be passed as an `out` parameter at compile time", earg.toChars());
                 return CTFEExp.cantexp;
             }
             // Convert all reference arguments into lvalue references
@@ -803,7 +821,7 @@ private Expression interpret(FuncDeclaration fd, InterState* istate, Expressions
             if (CTFEExp.isCantExp(earg))
                 return earg;
         }
-        else if (fparam.storageClass & STClazy)
+        else if (fparam.storageClass & STC.lazy_)
         {
         }
         else
@@ -811,7 +829,7 @@ private Expression interpret(FuncDeclaration fd, InterState* istate, Expressions
             /* Value parameters
              */
             Type ta = fparam.type.toBasetype();
-            if (ta.ty == Tsarray && earg.op == TOKaddress)
+            if (ta.ty == Tsarray && earg.op == TOK.address)
             {
                 /* Static arrays are passed by a simple pointer.
                  * Skip past this to get at the actual arg.
@@ -825,10 +843,10 @@ private Expression interpret(FuncDeclaration fd, InterState* istate, Expressions
             /* Struct literals are passed by value, but we don't need to
              * copy them if they are passed as const
              */
-            if (earg.op == TOKstructliteral && !(fparam.storageClass & (STCconst | STCimmutable)))
+            if (earg.op == TOK.structLiteral && !(fparam.storageClass & (STC.const_ | STC.immutable_)))
                 earg = copyLiteral(earg).copy();
         }
-        if (earg.op == TOKthrownexception)
+        if (earg.op == TOK.thrownException)
         {
             if (istate)
                 return earg;
@@ -861,12 +879,12 @@ private Expression interpret(FuncDeclaration fd, InterState* istate, Expressions
         }
         ctfeStack.push(v);
 
-        if ((fparam.storageClass & (STCout | STCref)) && earg.op == TOKvar && (cast(VarExp)earg).var.toParent2() == fd)
+        if ((fparam.storageClass & (STC.out_ | STC.ref_)) && earg.op == TOK.variable && (cast(VarExp)earg).var.toParent2() == fd)
         {
             VarDeclaration vx = (cast(VarExp)earg).var.isVarDeclaration();
             if (!vx)
             {
-                fd.error("cannot interpret %s as a ref parameter", earg.toChars());
+                fd.error("cannot interpret `%s` as a `ref` parameter", earg.toChars());
                 return CTFEExp.cantexp;
             }
 
@@ -940,7 +958,7 @@ private Expression interpret(FuncDeclaration fd, InterState* istate, Expressions
 
         if (istatex.start)
         {
-            fd.error("CTFE internal error: failed to resume at statement %s", istatex.start.toChars());
+            fd.error("CTFE internal error: failed to resume at statement `%s`", istatex.start.toChars());
             return CTFEExp.cantexp;
         }
 
@@ -957,14 +975,14 @@ private Expression interpret(FuncDeclaration fd, InterState* istate, Expressions
         }
         else
         {
-            assert(!e || (e.op != TOKcontinue && e.op != TOKbreak));
+            assert(!e || (e.op != TOK.continue_ && e.op != TOK.break_));
             break;
         }
     }
     // If fell off the end of a void function, return void
     if (!e && tf.next.ty == Tvoid)
         e = CTFEExp.voidexp;
-    if (tf.isref && e.op == TOKvar && (cast(VarExp)e).var == fd.vthis)
+    if (tf.isref && e.op == TOK.variable && (cast(VarExp)e).var == fd.vthis)
         e = thisarg;
     assert(e !is null);
 
@@ -974,7 +992,7 @@ private Expression interpret(FuncDeclaration fd, InterState* istate, Expressions
     ctfeStack.endFrame();
 
     // If it generated an uncaught exception, report error.
-    if (!istate && e.op == TOKthrownexception)
+    if (!istate && e.op == TOK.thrownException)
     {
         (cast(ThrownExceptionExp)e).generateUncaughtError();
         e = CTFEExp.cantexp;
@@ -990,20 +1008,23 @@ public:
     InterState* istate;
     CtfeGoal goal;
     Expression result;
+    UnionExp* pue;              // storage for `result`
 
-    extern (D) this(InterState* istate, CtfeGoal goal)
+    extern (D) this(UnionExp* pue, InterState* istate, CtfeGoal goal)
     {
+        this.pue = pue;
         this.istate = istate;
         this.goal = goal;
     }
 
-    // If e is TOKthrowexception or TOKcantexp,
+    // If e is TOK.throw_exception or TOK.cantExpression,
     // set it to 'result' and returns true.
     bool exceptionOrCant(Expression e)
     {
         if (exceptionOrCantInterpret(e))
         {
-            result = e;
+            // Make sure e is not pointing to a stack temporary
+            result = (e.op == TOK.cantExpression) ? CTFEExp.cantexp : e;
             return true;
         }
         return false;
@@ -1037,7 +1058,7 @@ public:
             istate.start = null;
         }
 
-        s.error("statement %s cannot be interpreted at compile time", s.toChars());
+        s.error("statement `%s` cannot be interpreted at compile time", s.toChars());
         result = CTFEExp.cantexp;
     }
 
@@ -1054,7 +1075,7 @@ public:
             istate.start = null;
         }
 
-        Expression e = interpret(s.exp, istate, ctfeNeedNothing);
+        Expression e = interpret(pue, s.exp, istate, ctfeNeedNothing);
         if (exceptionOrCant(e))
             return;
     }
@@ -1068,11 +1089,11 @@ public:
         if (istate.start == s)
             istate.start = null;
 
-        size_t dim = s.statements ? s.statements.dim : 0;
-        for (size_t i = 0; i < dim; i++)
+        const dim = s.statements ? s.statements.dim : 0;
+        foreach (i; 0 .. dim)
         {
             Statement sx = (*s.statements)[i];
-            result = interpret(sx, istate);
+            result = interpret(pue, sx, istate);
             if (result)
                 break;
         }
@@ -1091,16 +1112,16 @@ public:
         if (istate.start == s)
             istate.start = null;
 
-        size_t dim = s.statements ? s.statements.dim : 0;
-        for (size_t i = 0; i < dim; i++)
+        const dim = s.statements ? s.statements.dim : 0;
+        foreach (i; 0 .. dim)
         {
             Statement sx = (*s.statements)[i];
-            Expression e = interpret(sx, istate);
+            Expression e = interpret(pue, sx, istate);
             if (!e) // succeeds to interpret, or goto target was not found
                 continue;
             if (exceptionOrCant(e))
                 return;
-            if (e.op == TOKbreak)
+            if (e.op == TOK.break_)
             {
                 if (istate.gotoTarget && istate.gotoTarget != s)
                 {
@@ -1111,7 +1132,7 @@ public:
                 result = null;
                 return;
             }
-            if (e.op == TOKcontinue)
+            if (e.op == TOK.continue_)
             {
                 if (istate.gotoTarget && istate.gotoTarget != s)
                 {
@@ -1146,15 +1167,16 @@ public:
             return;
         }
 
-        Expression e = interpret(s.condition, istate);
+        UnionExp ue = void;
+        Expression e = interpret(&ue, s.condition, istate);
         assert(e);
         if (exceptionOrCant(e))
             return;
 
         if (isTrueBool(e))
-            result = interpret(s.ifbody, istate);
+            result = interpret(pue, s.ifbody, istate);
         else if (e.isBool(false))
-            result = interpret(s.elsebody, istate);
+            result = interpret(pue, s.elsebody, istate);
         else
         {
             // no error, or assert(0)?
@@ -1171,34 +1193,35 @@ public:
         if (istate.start == s)
             istate.start = null;
 
-        result = interpret(s.statement, istate);
+        result = interpret(pue, s.statement, istate);
     }
 
     /**
      Given an expression e which is about to be returned from the current
      function, generate an error if it contains pointers to local variables.
-     Return true if it is safe to return, false if an error was generated.
 
      Only checks expressions passed by value (pointers to local variables
      may already be stored in members of classes, arrays, or AAs which
      were passed as mutable function parameters).
+     Returns:
+        true if it is safe to return, false if an error was generated.
      */
-    static bool stopPointersEscaping(Loc loc, Expression e)
+    static bool stopPointersEscaping(const ref Loc loc, Expression e)
     {
         if (!e.type.hasPointers())
             return true;
         if (isPointer(e.type))
         {
             Expression x = e;
-            if (e.op == TOKaddress)
+            if (e.op == TOK.address)
                 x = (cast(AddrExp)e).e1;
             VarDeclaration v;
-            while (x.op == TOKvar && (v = (cast(VarExp)x).var.isVarDeclaration()) !is null)
+            while (x.op == TOK.variable && (v = (cast(VarExp)x).var.isVarDeclaration()) !is null)
             {
-                if (v.storage_class & STCref)
+                if (v.storage_class & STC.ref_)
                 {
                     x = getValue(v);
-                    if (e.op == TOKaddress)
+                    if (e.op == TOK.address)
                         (cast(AddrExp)e).e1 = x;
                     continue;
                 }
@@ -1210,19 +1233,19 @@ public:
                 else
                     break;
             }
-            // TODO: If it is a TOKdotvar or TOKindex, we should check that it is not
+            // TODO: If it is a TOK.dotVariable or TOK.index, we should check that it is not
             // pointing to a local struct or static array.
         }
-        if (e.op == TOKstructliteral)
+        if (e.op == TOK.structLiteral)
         {
             StructLiteralExp se = cast(StructLiteralExp)e;
             return stopPointersEscapingFromArray(loc, se.elements);
         }
-        if (e.op == TOKarrayliteral)
+        if (e.op == TOK.arrayLiteral)
         {
             return stopPointersEscapingFromArray(loc, (cast(ArrayLiteralExp)e).elements);
         }
-        if (e.op == TOKassocarrayliteral)
+        if (e.op == TOK.assocArrayLiteral)
         {
             AssocArrayLiteralExp aae = cast(AssocArrayLiteralExp)e;
             if (!stopPointersEscapingFromArray(loc, aae.keys))
@@ -1233,7 +1256,7 @@ public:
     }
 
     // Check all members of an array for escaping local variables. Return false if error
-    static bool stopPointersEscapingFromArray(Loc loc, Expressions* elems)
+    static bool stopPointersEscapingFromArray(const ref Loc loc, Expressions* elems)
     {
         for (size_t i = 0; i < elems.dim; i++)
         {
@@ -1273,7 +1296,7 @@ public:
          */
         if (tf.isref)
         {
-            result = interpret(s.exp, istate, ctfeNeedLvalue);
+            result = interpret(pue, s.exp, istate, ctfeNeedLvalue);
             return;
         }
         if (tf.next && tf.next.ty == Tdelegate && istate.fd.closureVars.dim > 0)
@@ -1285,9 +1308,9 @@ public:
             return;
         }
 
-        // We need to treat pointers specially, because TOKsymoff can be used to
+        // We need to treat pointers specially, because TOK.symbolOffset can be used to
         // return a value OR a pointer
-        Expression e = interpret(s.exp, istate);
+        Expression e = interpret(pue, s.exp, istate);
         if (exceptionOrCant(e))
             return;
 
@@ -1382,7 +1405,7 @@ public:
 
             if (exceptionOrCant(e))
                 return;
-            if (e && e.op == TOKbreak)
+            if (e && e.op == TOK.break_)
             {
                 if (istate.gotoTarget && istate.gotoTarget != s)
                 {
@@ -1392,7 +1415,7 @@ public:
                 istate.gotoTarget = null;
                 break;
             }
-            if (e && e.op == TOKcontinue)
+            if (e && e.op == TOK.continue_)
             {
                 if (istate.gotoTarget && istate.gotoTarget != s)
                 {
@@ -1408,7 +1431,8 @@ public:
                 return;
             }
 
-            e = interpret(s.condition, istate);
+            UnionExp ue = void;
+            e = interpret(&ue, s.condition, istate);
             if (exceptionOrCant(e))
                 return;
             if (!e.isConst())
@@ -1432,7 +1456,8 @@ public:
         if (istate.start == s)
             istate.start = null;
 
-        Expression ei = interpret(s._init, istate);
+        UnionExp ueinit = void;
+        Expression ei = interpret(&ueinit, s._init, istate);
         if (exceptionOrCant(ei))
             return;
         assert(!ei); // s.init never returns from function, or jumps out from it
@@ -1441,7 +1466,8 @@ public:
         {
             if (s.condition && !istate.start)
             {
-                Expression e = interpret(s.condition, istate);
+                UnionExp ue = void;
+                Expression e = interpret(&ue, s.condition, istate);
                 if (exceptionOrCant(e))
                     return;
                 if (e.isBool(false))
@@ -1449,14 +1475,14 @@ public:
                 assert(isTrueBool(e));
             }
 
-            Expression e = interpret(s._body, istate);
+            Expression e = interpret(pue, s._body, istate);
             if (!e && istate.start) // goto target was not found
                 return;
             assert(!istate.start);
 
             if (exceptionOrCant(e))
                 return;
-            if (e && e.op == TOKbreak)
+            if (e && e.op == TOK.break_)
             {
                 if (istate.gotoTarget && istate.gotoTarget != s)
                 {
@@ -1466,7 +1492,7 @@ public:
                 istate.gotoTarget = null;
                 break;
             }
-            if (e && e.op == TOKcontinue)
+            if (e && e.op == TOK.continue_)
             {
                 if (istate.gotoTarget && istate.gotoTarget != s)
                 {
@@ -1482,7 +1508,8 @@ public:
                 return;
             }
 
-            e = interpret(s.increment, istate, ctfeNeedNothing);
+            UnionExp uei = void;
+            e = interpret(&uei, s.increment, istate, ctfeNeedNothing);
             if (exceptionOrCant(e))
                 return;
         }
@@ -1514,7 +1541,7 @@ public:
                 return;
             if (exceptionOrCant(e))
                 return;
-            if (e && e.op == TOKbreak)
+            if (e && e.op == TOK.break_)
             {
                 if (istate.gotoTarget && istate.gotoTarget != s)
                 {
@@ -1528,7 +1555,8 @@ public:
             return;
         }
 
-        Expression econdition = interpret(s.condition, istate);
+        UnionExp uecond = void;
+        Expression econdition = interpret(&uecond, s.condition, istate);
         if (exceptionOrCant(econdition))
             return;
 
@@ -1537,10 +1565,11 @@ public:
         for (size_t i = 0; i < dim; i++)
         {
             CaseStatement cs = (*s.cases)[i];
-            Expression ecase = interpret(cs.exp, istate);
+            UnionExp uecase = void;
+            Expression ecase = interpret(&uecase, cs.exp, istate);
             if (exceptionOrCant(ecase))
                 return;
-            if (ctfeEqual(cs.exp.loc, TOKequal, econdition, ecase))
+            if (ctfeEqual(cs.exp.loc, TOK.equal, econdition, ecase))
             {
                 scase = cs;
                 break;
@@ -1549,7 +1578,7 @@ public:
         if (!scase)
         {
             if (s.hasNoDefault)
-                s.error("no default or case for %s in switch statement", econdition.toChars());
+                s.error("no `default` or `case` for `%s` in `switch` statement", econdition.toChars());
             scase = s.sdefault;
         }
 
@@ -1558,9 +1587,9 @@ public:
         /* Jump to scase
          */
         istate.start = scase;
-        Expression e = interpret(s._body, istate);
+        Expression e = interpret(pue, s._body, istate);
         assert(!istate.start); // jump must not fail
-        if (e && e.op == TOKbreak)
+        if (e && e.op == TOK.break_)
         {
             if (istate.gotoTarget && istate.gotoTarget != s)
             {
@@ -1582,7 +1611,7 @@ public:
         if (istate.start == s)
             istate.start = null;
 
-        result = interpret(s.statement, istate);
+        result = interpret(pue, s.statement, istate);
     }
 
     override void visit(DefaultStatement s)
@@ -1594,7 +1623,7 @@ public:
         if (istate.start == s)
             istate.start = null;
 
-        result = interpret(s.statement, istate);
+        result = interpret(pue, s.statement, istate);
     }
 
     override void visit(GotoStatement s)
@@ -1660,7 +1689,7 @@ public:
         if (istate.start == s)
             istate.start = null;
 
-        result = interpret(s.statement, istate);
+        result = interpret(pue, s.statement, istate);
     }
 
     override void visit(TryCatchStatement s)
@@ -1674,13 +1703,13 @@ public:
         if (istate.start)
         {
             Expression e = null;
-            e = interpret(s._body, istate);
+            e = interpret(pue, s._body, istate);
             for (size_t i = 0; i < s.catches.dim; i++)
             {
                 if (e || !istate.start) // goto target was found
                     break;
                 Catch ca = (*s.catches)[i];
-                e = interpret(ca.handler, istate);
+                e = interpret(pue, ca.handler, istate);
             }
             result = e;
             return;
@@ -1689,7 +1718,7 @@ public:
         Expression e = interpret(s._body, istate);
 
         // An exception was thrown
-        if (e && e.op == TOKthrownexception)
+        if (e && e.op == TOK.thrownException)
         {
             ThrownExceptionExp ex = cast(ThrownExceptionExp)e;
             Type extype = ex.thrown.originalClass().type;
@@ -1762,7 +1791,7 @@ public:
             (*collateral.value.elements)[bypass] = boss;
             return newest;
         }
-        while ((*boss.value.elements)[next].op == TOKclassreference)
+        while ((*boss.value.elements)[next].op == TOK.classReference)
         {
             boss = cast(ClassReferenceExp)(*boss.value.elements)[next];
         }
@@ -1781,7 +1810,7 @@ public:
         if (istate.start)
         {
             Expression e = null;
-            e = interpret(s._body, istate);
+            e = interpret(pue, s._body, istate);
             // Jump into/out from finalbody is disabled in semantic analysis.
             // and jump inside will be handled by the ScopeStatement == finalbody.
             result = e;
@@ -1823,10 +1852,10 @@ public:
             result = ey;
             return;
         }
-        if (ey && ey.op == TOKthrownexception)
+        if (ey && ey.op == TOK.thrownException)
         {
             // Check for collided exceptions
-            if (ex && ex.op == TOKthrownexception)
+            if (ex && ex.op == TOK.thrownException)
                 ex = chainExceptions(cast(ThrownExceptionExp)ex, cast(ThrownExceptionExp)ey);
             else
                 ex = ey;
@@ -1851,7 +1880,7 @@ public:
         if (exceptionOrCant(e))
             return;
 
-        assert(e.op == TOKclassreference);
+        assert(e.op == TOK.classReference);
         result = new ThrownExceptionExp(s.loc, cast(ClassReferenceExp)e);
     }
 
@@ -1875,9 +1904,9 @@ public:
         }
 
         // If it is with(Enum) {...}, just execute the body.
-        if (s.exp.op == TOKscope || s.exp.op == TOKtype)
+        if (s.exp.op == TOK.scope_ || s.exp.op == TOK.type)
         {
-            result = interpret(s._body, istate);
+            result = interpret(pue, s._body, istate);
             return;
         }
 
@@ -1887,8 +1916,7 @@ public:
 
         if (s.wthis.type.ty == Tpointer && s.exp.type.ty != Tpointer)
         {
-            e = new AddrExp(s.loc, e);
-            e.type = s.wthis.type;
+            e = new AddrExp(s.loc, e, s.wthis.type);
         }
         ctfeStack.push(s.wthis);
         setValue(s.wthis, e);
@@ -1927,7 +1955,7 @@ public:
                 return;
             istate.start = null;
         }
-        s.error("asm statements cannot be interpreted at compile time");
+        s.error("`asm` statements cannot be interpreted at compile time");
         result = CTFEExp.cantexp;
     }
 
@@ -1955,7 +1983,7 @@ public:
             printf("type = %s\n", e.type.toChars());
             e.print();
         }
-        e.error("cannot interpret %s at compile time", e.toChars());
+        e.error("cannot interpret `%s` at compile time", e.toChars());
         result = CTFEExp.cantexp;
     }
 
@@ -1982,10 +2010,10 @@ public:
         result = ctfeStack.getThis();
         if (result)
         {
-            assert(result.op == TOKstructliteral || result.op == TOKclassreference);
+            assert(result.op == TOK.structLiteral || result.op == TOK.classReference);
             return;
         }
-        e.error("value of 'this' is not known at compile time");
+        e.error("value of `this` is not known at compile time");
         result = CTFEExp.cantexp;
     }
 
@@ -2057,7 +2085,7 @@ public:
         if (e.type.ty != Tpointer)
         {
             // Probably impossible
-            e.error("cannot interpret %s at compile time", e.toChars());
+            e.error("cannot interpret `%s` at compile time", e.toChars());
             result = CTFEExp.cantexp;
             return;
         }
@@ -2093,8 +2121,8 @@ public:
             // It's OK to cast from fixed length to dynamic array, eg &int[3] to int[]*
             if (val.type.ty == Tsarray && pointee.ty == Tarray && elemsize == pointee.nextOf().size())
             {
-                result = new AddrExp(e.loc, val);
-                result.type = e.type;
+                emplaceExp!(AddrExp)(pue, e.loc, val, e.type);
+                result = pue.exp();
                 return;
             }
 
@@ -2106,10 +2134,10 @@ public:
                 Expression eupr = new IntegerExp(e.loc, e.offset / elemsize + d, Type.tsize_t);
 
                 // Create a CTFE pointer &val[ofs..ofs+d]
-                result = new SliceExp(e.loc, val, elwr, eupr);
-                result.type = pointee;
-                result = new AddrExp(e.loc, result);
-                result.type = e.type;
+                auto se = new SliceExp(e.loc, val, elwr, eupr);
+                se.type = pointee;
+                emplaceExp!(AddrExp)(pue, e.loc, se, e.type);
+                result = pue.exp();
                 return;
             }
 
@@ -2119,39 +2147,40 @@ public:
                 if (e.offset == 0 && isSafePointerCast(e.var.type, pointee))
                 {
                     // Create a CTFE pointer &var
-                    result = new VarExp(e.loc, e.var);
-                    result.type = elemtype;
-                    result = new AddrExp(e.loc, result);
-                    result.type = e.type;
+                    auto ve = new VarExp(e.loc, e.var);
+                    ve.type = elemtype;
+                    emplaceExp!(AddrExp)(pue, e.loc, ve, e.type);
+                    result = pue.exp();
                     return;
                 }
-                e.error("reinterpreting cast from %s to %s is not supported in CTFE", val.type.toChars(), e.type.toChars());
+                e.error("reinterpreting cast from `%s` to `%s` is not supported in CTFE", val.type.toChars(), e.type.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
 
-            dinteger_t sz = pointee.size();
+            const dinteger_t sz = pointee.size();
             dinteger_t indx = e.offset / sz;
             assert(sz * indx == e.offset);
             Expression aggregate = null;
-            if (val.op == TOKarrayliteral || val.op == TOKstring)
+            if (val.op == TOK.arrayLiteral || val.op == TOK.string_)
             {
                 aggregate = val;
             }
-            else if (val.op == TOKslice)
+            else if (val.op == TOK.slice)
             {
                 aggregate = (cast(SliceExp)val).e1;
-                Expression lwr = interpret((cast(SliceExp)val).lwr, istate);
+                UnionExp uelwr = void;
+                Expression lwr = interpret(&uelwr, (cast(SliceExp)val).lwr, istate);
                 indx += lwr.toInteger();
             }
             if (aggregate)
             {
                 // Create a CTFE pointer &aggregate[ofs]
                 auto ofs = new IntegerExp(e.loc, indx, Type.tsize_t);
-                result = new IndexExp(e.loc, aggregate, ofs);
-                result.type = elemtype;
-                result = new AddrExp(e.loc, result);
-                result.type = e.type;
+                auto ei = new IndexExp(e.loc, aggregate, ofs);
+                ei.type = elemtype;
+                emplaceExp!(AddrExp)(pue, e.loc, ei, e.type);
+                result = pue.exp();
                 return;
             }
         }
@@ -2160,12 +2189,12 @@ public:
             // Create a CTFE pointer &var
             auto ve = new VarExp(e.loc, e.var);
             ve.type = e.var.type;
-            result = new AddrExp(e.loc, ve);
-            result.type = e.type;
+            emplaceExp!(AddrExp)(pue, e.loc, ve, e.type);
+            result = pue.exp();
             return;
         }
 
-        e.error("cannot convert &%s to %s at compile time", e.var.type.toChars(), e.type.toChars());
+        e.error("cannot convert `&%s` to `%s` at compile time", e.var.type.toChars(), e.type.toChars());
         result = CTFEExp.cantexp;
     }
 
@@ -2175,7 +2204,7 @@ public:
         {
             printf("%s AddrExp::interpret() %s\n", e.loc.toChars(), e.toChars());
         }
-        if (e.e1.op == TOKvar)
+        if (e.e1.op == TOK.variable)
         {
             Declaration decl = (cast(VarExp)e.e1).var;
 
@@ -2194,15 +2223,15 @@ public:
                 return;
             }
         }
-        result = interpret(e.e1, istate, ctfeNeedLvalue);
-        if (result.op == TOKvar && (cast(VarExp)result).var == istate.fd.vthis)
-            result = interpret(result, istate);
-        if (exceptionOrCant(result))
+        auto er = interpret(e.e1, istate, ctfeNeedLvalue);
+        if (er.op == TOK.variable && (cast(VarExp)er).var == istate.fd.vthis)
+            er = interpret(er, istate);
+        if (exceptionOrCant(er))
             return;
 
         // Return a simplified address expression
-        result = new AddrExp(e.loc, result);
-        result.type = e.type;
+        emplaceExp!(AddrExp)(pue, e.loc, er, e.type);
+        result = pue.exp();
     }
 
     override void visit(DelegateExp e)
@@ -2216,28 +2245,29 @@ public:
 
         // If it is &nestedfunc, just return it
         // TODO: We should save the context pointer
-        if (e.e1.op == TOKvar && (cast(VarExp)e.e1).var == e.func)
+        if (e.e1.op == TOK.variable && (cast(VarExp)e.e1).var == e.func)
         {
             result = e;
             return;
         }
 
-        result = interpret(e.e1, istate);
-        if (exceptionOrCant(result))
+        auto er = interpret(e.e1, istate);
+        if (exceptionOrCant(er))
             return;
-        if (result == e.e1)
+        if (er == e.e1)
         {
             // If it has already been CTFE'd, just return it
             result = e;
         }
         else
         {
-            result = new DelegateExp(e.loc, result, e.func, false);
+            emplaceExp!(DelegateExp)(pue, e.loc, er, e.func, false);
+            result = pue.exp();
             result.type = e.type;
         }
     }
 
-    static Expression getVarExp(Loc loc, InterState* istate, Declaration d, CtfeGoal goal)
+    static Expression getVarExp(const ref Loc loc, InterState* istate, Declaration d, CtfeGoal goal)
     {
         Expression e = CTFEExp.cantexp;
         if (VarDeclaration v = d.isVarDeclaration())
@@ -2247,18 +2277,18 @@ public:
             if (v.ident == Id.ctfe)
                 return new IntegerExp(loc, 1, Type.tbool);
 
-            if (!v.originalType && v.semanticRun < PASSsemanticdone) // semantic() not yet run
+            if (!v.originalType && v.semanticRun < PASS.semanticdone) // semantic() not yet run
             {
                 v.dsymbolSemantic(null);
                 if (v.type.ty == Terror)
                     return CTFEExp.cantexp;
             }
 
-            if ((v.isConst() || v.isImmutable() || v.storage_class & STCmanifest) && !hasValue(v) && v._init && !v.isCTFE())
+            if ((v.isConst() || v.isImmutable() || v.storage_class & STC.manifest) && !hasValue(v) && v._init && !v.isCTFE())
             {
                 if (v.inuse)
                 {
-                    error(loc, "circular initialization of %s '%s'", v.kind(), v.toPrettyChars());
+                    error(loc, "circular initialization of %s `%s`", v.kind(), v.toPrettyChars());
                     return CTFEExp.cantexp;
                 }
                 if (v._scope)
@@ -2272,17 +2302,17 @@ public:
                     return CTFEExp.cantexp;
                 assert(e.type);
 
-                if (e.op == TOKconstruct || e.op == TOKblit)
+                if (e.op == TOK.construct || e.op == TOK.blit)
                 {
                     AssignExp ae = cast(AssignExp)e;
                     e = ae.e2;
                 }
 
-                if (e.op == TOKerror)
+                if (e.op == TOK.error)
                 {
                     // FIXME: Ultimately all errors should be detected in prior semantic analysis stage.
                 }
-                else if (v.isDataseg() || (v.storage_class & STCmanifest))
+                else if (v.isDataseg() || (v.storage_class & STC.manifest))
                 {
                     /* https://issues.dlang.org/show_bug.cgi?id=14304
                      * e is a value that is not yet owned by CTFE.
@@ -2319,9 +2349,9 @@ public:
 
                 e = interpret(e, istate);
             }
-            else if (!(v.isDataseg() || v.storage_class & STCmanifest) && !v.isCTFE() && !istate)
+            else if (!(v.isDataseg() || v.storage_class & STC.manifest) && !v.isCTFE() && !istate)
             {
-                error(loc, "variable %s cannot be read at compile time", v.toChars());
+                error(loc, "variable `%s` cannot be read at compile time", v.toChars());
                 return CTFEExp.cantexp;
             }
             else
@@ -2329,21 +2359,21 @@ public:
                 e = hasValue(v) ? getValue(v) : null;
                 if (!e && !v.isCTFE() && v.isDataseg())
                 {
-                    error(loc, "static variable %s cannot be read at compile time", v.toChars());
+                    error(loc, "static variable `%s` cannot be read at compile time", v.toChars());
                     return CTFEExp.cantexp;
                 }
                 if (!e)
                 {
                     assert(!(v._init && v._init.isVoidInitializer()));
                     // CTFE initiated from inside a function
-                    error(loc, "variable %s cannot be read at compile time", v.toChars());
+                    error(loc, "variable `%s` cannot be read at compile time", v.toChars());
                     return CTFEExp.cantexp;
                 }
-                if (e.op == TOKvoid)
+                if (e.op == TOK.void_)
                 {
                     VoidInitExp ve = cast(VoidInitExp)e;
-                    error(loc, "cannot read uninitialized variable %s in ctfe", v.toPrettyChars());
-                    errorSupplemental(ve.var.loc, "%s was uninitialized and used before set", ve.var.toChars());
+                    error(loc, "cannot read uninitialized variable `%s` in ctfe", v.toPrettyChars());
+                    errorSupplemental(ve.var.loc, "`%s` was uninitialized and used before set", ve.var.toChars());
                     return CTFEExp.cantexp;
                 }
                 if (goal != ctfeNeedLvalue && (v.isRef() || v.isOut()))
@@ -2356,16 +2386,16 @@ public:
         {
             // Struct static initializers, for example
             e = s.dsym.type.defaultInitLiteral(loc);
-            if (e.op == TOKerror)
-                error(loc, "CTFE failed because of previous errors in %s.init", s.toChars());
+            if (e.op == TOK.error)
+                error(loc, "CTFE failed because of previous errors in `%s.init`", s.toChars());
             e = e.expressionSemantic(null);
-            if (e.op == TOKerror)
+            if (e.op == TOK.error)
                 e = CTFEExp.cantexp;
             else // Convert NULL to CTFEExp
                 e = interpret(e, istate, goal);
         }
         else
-            error(loc, "cannot interpret declaration %s at compile time", d.toChars());
+            error(loc, "cannot interpret declaration `%s` at compile time", d.toChars());
         return e;
     }
 
@@ -2373,7 +2403,7 @@ public:
     {
         debug (LOG)
         {
-            printf("%s VarExp::interpret() %s, goal = %d\n", e.loc.toChars(), e.toChars(), goal);
+            printf("%s VarExp::interpret() `%s`, goal = %d\n", e.loc.toChars(), e.toChars(), goal);
         }
         if (e.var.isFuncDeclaration())
         {
@@ -2386,26 +2416,26 @@ public:
             VarDeclaration v = e.var.isVarDeclaration();
             if (v && !v.isDataseg() && !v.isCTFE() && !istate)
             {
-                e.error("variable %s cannot be read at compile time", v.toChars());
+                e.error("variable `%s` cannot be read at compile time", v.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
             if (v && !hasValue(v))
             {
                 if (!v.isCTFE() && v.isDataseg())
-                    e.error("static variable %s cannot be read at compile time", v.toChars());
+                    e.error("static variable `%s` cannot be read at compile time", v.toChars());
                 else // CTFE initiated from inside a function
-                    e.error("variable %s cannot be read at compile time", v.toChars());
+                    e.error("variable `%s` cannot be read at compile time", v.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
-            if (v && (v.storage_class & (STCout | STCref)) && hasValue(v))
+            if (v && (v.storage_class & (STC.out_ | STC.ref_)) && hasValue(v))
             {
                 // Strip off the nest of ref variables
                 Expression ev = getValue(v);
-                if (ev.op == TOKvar || ev.op == TOKindex || ev.op == TOKdotvar)
+                if (ev.op == TOK.variable || ev.op == TOK.index || ev.op == TOK.dotVariable)
                 {
-                    result = interpret(ev, istate, goal);
+                    result = interpret(pue, ev, istate, goal);
                     return;
                 }
             }
@@ -2415,9 +2445,9 @@ public:
         result = getVarExp(e.loc, istate, e.var, goal);
         if (exceptionOrCant(result))
             return;
-        if ((e.var.storage_class & (STCref | STCout)) == 0 && e.type.baseElemOf().ty != Tstruct)
+        if ((e.var.storage_class & (STC.ref_ | STC.out_)) == 0 && e.type.baseElemOf().ty != Tstruct)
         {
-            /* Ultimately, STCref|STCout check should be enough to see the
+            /* Ultimately, STC.ref_|STC.out_ check should be enough to see the
              * necessity of type repainting. But currently front-end paints
              * non-ref struct variables by the const type.
              *
@@ -2450,7 +2480,7 @@ public:
                 {
                     RootObject o = (*td.objects)[i];
                     Expression ex = isExpression(o);
-                    DsymbolExp ds = (ex && ex.op == TOKdsymbol) ? cast(DsymbolExp)ex : null;
+                    DsymbolExp ds = (ex && ex.op == TOK.dSymbol) ? cast(DsymbolExp)ex : null;
                     VarDeclaration v2 = ds ? ds.s.isVarDeclaration() : null;
                     assert(v2);
                     if (v2.isDataseg() && !v2.isCTFE())
@@ -2472,7 +2502,7 @@ public:
                         }
                         else
                         {
-                            e.error("declaration %s is not yet implemented in CTFE", e.toChars());
+                            e.error("declaration `%s` is not yet implemented in CTFE", e.toChars());
                             result = CTFEExp.cantexp;
                             return;
                         }
@@ -2487,7 +2517,7 @@ public:
                 result = null;
                 return;
             }
-            if (!(v.isDataseg() || v.storage_class & STCmanifest) || v.isCTFE())
+            if (!(v.isDataseg() || v.storage_class & STC.manifest) || v.isCTFE())
                 ctfeStack.push(v);
             if (v._init)
             {
@@ -2504,7 +2534,7 @@ public:
                 }
                 else
                 {
-                    e.error("declaration %s is not yet implemented in CTFE", e.toChars());
+                    e.error("declaration `%s` is not yet implemented in CTFE", e.toChars());
                     result = CTFEExp.cantexp;
                 }
             }
@@ -2515,7 +2545,7 @@ public:
             }
             else
             {
-                e.error("variable %s cannot be modified at compile time", v.toChars());
+                e.error("variable `%s` cannot be modified at compile time", v.toChars());
                 result = CTFEExp.cantexp;
             }
             return;
@@ -2535,7 +2565,7 @@ public:
             }
 
             // These can be made to work, too lazy now
-            e.error("declaration %s is not yet implemented in CTFE", e.toChars());
+            e.error("declaration `%s` is not yet implemented in CTFE", e.toChars());
             result = CTFEExp.cantexp;
             return;
         }
@@ -2565,13 +2595,13 @@ public:
             if (exceptionOrCant(ex))
                 return;
 
-            if (result.op == TOKnull)
+            if (result.op == TOK.null_)
             {
-                e.error("null pointer dereference evaluating typeid. '%s' is null", ex.toChars());
+                e.error("null pointer dereference evaluating typeid. `%s` is `null`", ex.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
-            if (result.op != TOKclassreference)
+            if (result.op != TOK.classReference)
             {
                 e.error("CTFE internal error: determining classinfo");
                 result = CTFEExp.cantexp;
@@ -2581,7 +2611,8 @@ public:
             ClassDeclaration cd = (cast(ClassReferenceExp)result).originalClass();
             assert(cd);
 
-            result = new TypeidExp(e.loc, cd.type);
+            emplaceExp!(TypeidExp)(pue, e.loc, cd.type);
+            result = pue.exp();
             result.type = e.type;
             return;
         }
@@ -2608,9 +2639,9 @@ public:
             // A tuple of assignments can contain void (Bug 5676).
             if (goal == ctfeNeedNothing)
                 continue;
-            if (ex.op == TOKvoidexp)
+            if (ex.op == TOK.voidExpression)
             {
-                e.error("CTFE internal error: void element %s in tuple", exp.toChars());
+                e.error("CTFE internal error: void element `%s` in tuple", exp.toChars());
                 assert(0);
             }
 
@@ -2626,9 +2657,9 @@ public:
         if (expsx !is e.exps)
         {
             expandTuples(expsx);
-            auto te = new TupleExp(e.loc, expsx);
-            te.type = new TypeTuple(te.exps);
-            result = te;
+            emplaceExp!(TupleExp)(pue, e.loc, expsx);
+            result = pue.exp();
+            result.type = new TypeTuple(expsx);
         }
         else
             result = e;
@@ -2640,7 +2671,7 @@ public:
         {
             printf("%s ArrayLiteralExp::interpret() %s\n", e.loc.toChars(), e.toChars());
         }
-        if (e.ownedByCtfe >= OWNEDctfe) // We've already interpreted all the elements
+        if (e.ownedByCtfe >= OwnedBy.ctfe) // We've already interpreted all the elements
         {
             result = e;
             return;
@@ -2666,7 +2697,7 @@ public:
             else
             {
                 // segfault bug 6250
-                assert(exp.op != TOKindex || (cast(IndexExp)exp).e1 != e);
+                assert(exp.op != TOK.index || (cast(IndexExp)exp).e1 != e);
 
                 ex = interpret(exp, istate);
                 if (exceptionOrCant(ex))
@@ -2699,12 +2730,13 @@ public:
                 result = CTFEExp.cantexp;
                 return;
             }
-            auto ale = new ArrayLiteralExp(e.loc, basis, expsx);
+            emplaceExp!(ArrayLiteralExp)(pue, e.loc, basis, expsx);
+            auto ale = cast(ArrayLiteralExp)pue.exp();
             ale.type = e.type;
-            ale.ownedByCtfe = OWNEDctfe;
+            ale.ownedByCtfe = OwnedBy.ctfe;
             result = ale;
         }
-        else if ((cast(TypeNext)e.type).next.mod & (MODconst | MODimmutable))
+        else if ((cast(TypeNext)e.type).next.mod & (MODFlags.const_ | MODFlags.immutable_))
         {
             // If it's immutable, we don't need to dup it
             result = e;
@@ -2719,7 +2751,7 @@ public:
         {
             printf("%s AssocArrayLiteralExp::interpret() %s\n", e.loc.toChars(), e.toChars());
         }
-        if (e.ownedByCtfe >= OWNEDctfe) // We've already interpreted all the elements
+        if (e.ownedByCtfe >= OwnedBy.ctfe) // We've already interpreted all the elements
         {
             result = e;
             return;
@@ -2769,7 +2801,7 @@ public:
             for (size_t j = i; j < keysx.dim; j++)
             {
                 auto ekey2 = (*keysx)[j];
-                if (!ctfeEqual(e.loc, TOKequal, ekey, ekey2))
+                if (!ctfeEqual(e.loc, TOK.equal, ekey, ekey2))
                     continue;
 
                 // Remove ekey
@@ -2790,7 +2822,7 @@ public:
                    valuesx !is e.values);
             auto aae = new AssocArrayLiteralExp(e.loc, keysx, valuesx);
             aae.type = e.type;
-            aae.ownedByCtfe = OWNEDctfe;
+            aae.ownedByCtfe = OwnedBy.ctfe;
             result = aae;
         }
         else
@@ -2803,7 +2835,7 @@ public:
         {
             printf("%s StructLiteralExp::interpret() %s ownedByCtfe = %d\n", e.loc.toChars(), e.toChars(), e.ownedByCtfe);
         }
-        if (e.ownedByCtfe >= OWNEDctfe)
+        if (e.ownedByCtfe >= OwnedBy.ctfe)
         {
             result = e;
             return;
@@ -2870,9 +2902,11 @@ public:
                 result = CTFEExp.cantexp;
                 return;
             }
-            auto sle = new StructLiteralExp(e.loc, e.sd, expsx);
+            emplaceExp!(StructLiteralExp)(pue, e.loc, e.sd, expsx);
+            auto sle = cast(StructLiteralExp)pue.exp();
             sle.type = e.type;
-            sle.ownedByCtfe = OWNEDctfe;
+            sle.ownedByCtfe = OwnedBy.ctfe;
+            sle.origin = e.origin;
             result = sle;
         }
         else
@@ -2881,7 +2915,7 @@ public:
 
     // Create an array literal of type 'newtype' with dimensions given by
     // 'arguments'[argnum..$]
-    static Expression recursivelyCreateArrayLiteral(Loc loc, Type newtype, InterState* istate, Expressions* arguments, int argnum)
+    static Expression recursivelyCreateArrayLiteral(const ref Loc loc, Type newtype, InterState* istate, Expressions* arguments, int argnum)
     {
         Expression lenExpr = interpret((*arguments)[argnum], istate);
         if (exceptionOrCantInterpret(lenExpr))
@@ -2900,7 +2934,7 @@ public:
                 (*elements)[i] = copyLiteral(elem).copy();
             auto ae = new ArrayLiteralExp(loc, elements);
             ae.type = newtype;
-            ae.ownedByCtfe = OWNEDctfe;
+            ae.ownedByCtfe = OwnedBy.ctfe;
             return ae;
         }
         assert(argnum == arguments.dim - 1);
@@ -2947,7 +2981,7 @@ public:
                 se = interpret(se, istate);
                 if (exceptionOrCant(se))
                     return;
-                result = interpret(e.member, istate, e.arguments, se);
+                result = interpretFunction(e.member, istate, e.arguments, se);
 
                 // Repaint as same as CallExp::interpret() does.
                 result.loc = e.loc;
@@ -2973,13 +3007,13 @@ public:
 
                 auto se = new StructLiteralExp(e.loc, sd, exps, e.newtype);
                 se.type = e.newtype;
-                se.ownedByCtfe = OWNEDctfe;
+                se.ownedByCtfe = OwnedBy.ctfe;
                 result = interpret(se, istate);
             }
             if (exceptionOrCant(result))
                 return;
-            result = new AddrExp(e.loc, result);
-            result.type = e.type;
+            emplaceExp!(AddrExp)(pue, e.loc, result, e.type);
+            result = pue.exp();
             return;
         }
         if (e.newtype.toBasetype().ty == Tclass)
@@ -2999,7 +3033,7 @@ public:
                     VarDeclaration v = c.fields[i];
                     if (v.inuse)
                     {
-                        e.error("circular reference to '%s'", v.toPrettyChars());
+                        e.error("circular reference to `%s`", v.toPrettyChars());
                         result = CTFEExp.cantexp;
                         return;
                     }
@@ -3021,7 +3055,7 @@ public:
             // Hack: we store a ClassDeclaration instead of a StructDeclaration.
             // We probably won't get away with this.
             auto se = new StructLiteralExp(e.loc, cast(StructDeclaration)cd, elems, e.newtype);
-            se.ownedByCtfe = OWNEDctfe;
+            se.ownedByCtfe = OwnedBy.ctfe;
             Expression eref = new ClassReferenceExp(e.loc, se, e.type);
             if (e.member)
             {
@@ -3036,11 +3070,11 @@ public:
                         result = eref;
                         return;
                     }
-                    e.member.error("%s cannot be constructed at compile time, because the constructor has no available source code", e.newtype.toChars());
+                    e.member.error("`%s` cannot be constructed at compile time, because the constructor has no available source code", e.newtype.toChars());
                     result = CTFEExp.cantexp;
                     return;
                 }
-                Expression ctorfail = interpret(e.member, istate, e.arguments, eref);
+                Expression ctorfail = interpretFunction(e.member, istate, e.arguments, eref);
                 if (exceptionOrCant(ctorfail))
                     return;
 
@@ -3071,15 +3105,15 @@ public:
             (*elements)[0] = newval;
             auto ae = new ArrayLiteralExp(e.loc, elements);
             ae.type = e.newtype.arrayOf();
-            ae.ownedByCtfe = OWNEDctfe;
+            ae.ownedByCtfe = OwnedBy.ctfe;
 
-            result = new IndexExp(e.loc, ae, new IntegerExp(Loc(), 0, Type.tsize_t));
-            result.type = e.newtype;
-            result = new AddrExp(e.loc, result);
-            result.type = e.type;
+            auto ei = new IndexExp(e.loc, ae, new IntegerExp(Loc.initial, 0, Type.tsize_t));
+            ei.type = e.newtype;
+            emplaceExp!(AddrExp)(pue, e.loc, ei, e.type);
+            result = pue.exp();
             return;
         }
-        e.error("cannot interpret %s at compile time", e.toChars());
+        e.error("cannot interpret `%s` at compile time", e.toChars());
         result = CTFEExp.cantexp;
     }
 
@@ -3089,32 +3123,32 @@ public:
         {
             printf("%s UnaExp::interpret() %s\n", e.loc.toChars(), e.toChars());
         }
-        Expression e1 = interpret(e.e1, istate);
+        UnionExp ue = void;
+        Expression e1 = interpret(&ue, e.e1, istate);
         if (exceptionOrCant(e1))
             return;
-        UnionExp ue;
         switch (e.op)
         {
-        case TOKneg:
-            ue = Neg(e.type, e1);
+        case TOK.negate:
+            *pue = Neg(e.type, e1);
             break;
 
-        case TOKtilde:
-            ue = Com(e.type, e1);
+        case TOK.tilde:
+            *pue = Com(e.type, e1);
             break;
 
-        case TOKnot:
-            ue = Not(e.type, e1);
+        case TOK.not:
+            *pue = Not(e.type, e1);
             break;
 
-        case TOKvector:
+        case TOK.vector:
             result = e;
             return; // do nothing
 
         default:
             assert(0);
         }
-        result = ue.copy();
+        result = (*pue).exp();
     }
 
     override void visit(DotTypeExp e)
@@ -3123,15 +3157,17 @@ public:
         {
             printf("%s DotTypeExp::interpret() %s\n", e.loc.toChars(), e.toChars());
         }
-        Expression e1 = interpret(e.e1, istate);
+        UnionExp ue = void;
+        Expression e1 = interpret(&ue, e.e1, istate);
         if (exceptionOrCant(e1))
             return;
         if (e1 == e.e1)
             result = e; // optimize: reuse this CTFE reference
         else
         {
-            result = e.copy();
-            (cast(DotTypeExp)result).e1 = e1;
+            auto edt = cast(DotTypeExp)e.copy();
+            edt.e1 = (e1 == ue.exp()) ? e1.copy() : e1; // don't return pointer to ue
+            result = edt;
         }
     }
 
@@ -3141,76 +3177,87 @@ public:
         {
             printf("%s BinExp::interpretCommon() %s\n", e.loc.toChars(), e.toChars());
         }
-        if (e.e1.type.ty == Tpointer && e.e2.type.ty == Tpointer && e.op == TOKmin)
+        if (e.e1.type.ty == Tpointer && e.e2.type.ty == Tpointer && e.op == TOK.min)
         {
-            Expression e1 = interpret(e.e1, istate);
+            UnionExp ue1 = void;
+            Expression e1 = interpret(&ue1, e.e1, istate);
             if (exceptionOrCant(e1))
                 return;
-            Expression e2 = interpret(e.e2, istate);
+            UnionExp ue2 = void;
+            Expression e2 = interpret(&ue2, e.e2, istate);
             if (exceptionOrCant(e2))
                 return;
-            result = pointerDifference(e.loc, e.type, e1, e2).copy();
+            *pue = pointerDifference(e.loc, e.type, e1, e2);
+            result = (*pue).exp();
             return;
         }
         if (e.e1.type.ty == Tpointer && e.e2.type.isintegral())
         {
-            Expression e1 = interpret(e.e1, istate);
+            UnionExp ue1 = void;
+            Expression e1 = interpret(&ue1, e.e1, istate);
             if (exceptionOrCant(e1))
                 return;
-            Expression e2 = interpret(e.e2, istate);
+            UnionExp ue2 = void;
+            Expression e2 = interpret(&ue2, e.e2, istate);
             if (exceptionOrCant(e2))
                 return;
-            result = pointerArithmetic(e.loc, e.op, e.type, e1, e2).copy();
+            *pue = pointerArithmetic(e.loc, e.op, e.type, e1, e2);
+            result = (*pue).exp();
             return;
         }
-        if (e.e2.type.ty == Tpointer && e.e1.type.isintegral() && e.op == TOKadd)
+        if (e.e2.type.ty == Tpointer && e.e1.type.isintegral() && e.op == TOK.add)
         {
-            Expression e1 = interpret(e.e1, istate);
+            UnionExp ue1 = void;
+            Expression e1 = interpret(&ue1, e.e1, istate);
             if (exceptionOrCant(e1))
                 return;
-            Expression e2 = interpret(e.e2, istate);
+            UnionExp ue2 = void;
+            Expression e2 = interpret(&ue2, e.e2, istate);
             if (exceptionOrCant(e2))
                 return;
-            result = pointerArithmetic(e.loc, e.op, e.type, e2, e1).copy();
+            *pue = pointerArithmetic(e.loc, e.op, e.type, e2, e1);
+            result = (*pue).exp();
             return;
         }
         if (e.e1.type.ty == Tpointer || e.e2.type.ty == Tpointer)
         {
-            e.error("pointer expression %s cannot be interpreted at compile time", e.toChars());
+            e.error("pointer expression `%s` cannot be interpreted at compile time", e.toChars());
             result = CTFEExp.cantexp;
             return;
         }
 
-        bool evalOperand(Expression ex, out Expression er)
+        bool evalOperand(UnionExp* pue, Expression ex, out Expression er)
         {
-            er = interpret(ex, istate);
+            er = interpret(pue, ex, istate);
             if (exceptionOrCant(er))
                 return false;
             if (er.isConst() != 1)
             {
-                if (er.op == TOKarrayliteral)
+                if (er.op == TOK.arrayLiteral)
                     // Until we get it to work, issue a reasonable error message
-                    e.error("cannot interpret array literal expression %s at compile time", e.toChars());
+                    e.error("cannot interpret array literal expression `%s` at compile time", e.toChars());
                 else
-                    e.error("CTFE internal error: non-constant value %s", ex.toChars());
+                    e.error("CTFE internal error: non-constant value `%s`", ex.toChars());
                 result = CTFEExp.cantexp;
                 return false;
             }
             return true;
         }
 
+        UnionExp ue1 = void;
         Expression e1;
-        if (!evalOperand(e.e1, e1))
+        if (!evalOperand(&ue1, e.e1, e1))
             return;
 
+        UnionExp ue2 = void;
         Expression e2;
-        if (!evalOperand(e.e2, e2))
+        if (!evalOperand(&ue2, e.e2, e2))
             return;
 
-        if (e.op == TOKshr || e.op == TOKshl || e.op == TOKushr)
+        if (e.op == TOK.rightShift || e.op == TOK.leftShift || e.op == TOK.unsignedRightShift)
         {
-            sinteger_t i2 = e2.toInteger();
-            d_uns64 sz = e1.type.size() * 8;
+            const sinteger_t i2 = e2.toInteger();
+            const d_uns64 sz = e1.type.size() * 8;
             if (i2 < 0 || i2 >= sz)
             {
                 e.error("shift by %lld is outside the range 0..%llu", i2, cast(ulong)sz - 1);
@@ -3218,9 +3265,10 @@ public:
                 return;
             }
         }
-        result = (*fp)(e.loc, e.type, e1, e2).copy();
+        *pue = (*fp)(e.loc, e.type, e1, e2);
+        result = (*pue).exp();
         if (CTFEExp.isCantExp(result))
-            e.error("%s cannot be interpreted at compile time", e.toChars());
+            e.error("`%s` cannot be interpreted at compile time", e.toChars());
     }
 
     private void interpretCompareCommon(BinExp e, fp2_t fp)
@@ -3229,12 +3277,14 @@ public:
         {
             printf("%s BinExp::interpretCompareCommon() %s\n", e.loc.toChars(), e.toChars());
         }
+        UnionExp ue1 = void;
+        UnionExp ue2 = void;
         if (e.e1.type.ty == Tpointer && e.e2.type.ty == Tpointer)
         {
-            Expression e1 = interpret(e.e1, istate);
+            Expression e1 = interpret(&ue1, e.e1, istate);
             if (exceptionOrCant(e1))
                 return;
-            Expression e2 = interpret(e.e2, istate);
+            Expression e2 = interpret(&ue2, e.e2, istate);
             if (exceptionOrCant(e2))
                 return;
             //printf("e1 = %s %s, e2 = %s %s\n", e1.type.toChars(), e1.toChars(), e2.type.toChars(), e2.toChars());
@@ -3242,105 +3292,107 @@ public:
             Expression agg1 = getAggregateFromPointer(e1, &ofs1);
             Expression agg2 = getAggregateFromPointer(e2, &ofs2);
             //printf("agg1 = %p %s, agg2 = %p %s\n", agg1, agg1.toChars(), agg2, agg2.toChars());
-            int cmp = comparePointers(e.loc, e.op, e.type, agg1, ofs1, agg2, ofs2);
+            const cmp = comparePointers(e.op, agg1, ofs1, agg2, ofs2);
             if (cmp == -1)
             {
-                char dir = (e.op == TOKgt || e.op == TOKge) ? '<' : '>';
-                e.error("the ordering of pointers to unrelated memory blocks is indeterminate in CTFE. To check if they point to the same memory block, use both > and < inside && or ||, eg (%s && %s %c= %s + 1)", e.toChars(), e.e1.toChars(), dir, e.e2.toChars());
+                char dir = (e.op == TOK.greaterThan || e.op == TOK.greaterOrEqual) ? '<' : '>';
+                e.error("the ordering of pointers to unrelated memory blocks is indeterminate in CTFE. To check if they point to the same memory block, use both `>` and `<` inside `&&` or `||`, eg `%s && %s %c= %s + 1`", e.toChars(), e.e1.toChars(), dir, e.e2.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
-            result = new IntegerExp(e.loc, cmp, e.type);
+            emplaceExp!(IntegerExp)(pue, e.loc, cmp, e.type);
+            result = (*pue).exp();
             return;
         }
-        Expression e1 = interpret(e.e1, istate);
+        Expression e1 = interpret(&ue1, e.e1, istate);
         if (exceptionOrCant(e1))
             return;
         if (!isCtfeComparable(e1))
         {
-            e.error("cannot compare %s at compile time", e1.toChars());
+            e.error("cannot compare `%s` at compile time", e1.toChars());
             result = CTFEExp.cantexp;
             return;
         }
-        Expression e2 = interpret(e.e2, istate);
+        Expression e2 = interpret(&ue2, e.e2, istate);
         if (exceptionOrCant(e2))
             return;
         if (!isCtfeComparable(e2))
         {
-            e.error("cannot compare %s at compile time", e2.toChars());
+            e.error("cannot compare `%s` at compile time", e2.toChars());
             result = CTFEExp.cantexp;
             return;
         }
-        int cmp = (*fp)(e.loc, e.op, e1, e2);
-        result = new IntegerExp(e.loc, cmp, e.type);
+        const cmp = (*fp)(e.loc, e.op, e1, e2);
+        emplaceExp!(IntegerExp)(pue, e.loc, cmp, e.type);
+        result = (*pue).exp();
     }
 
     override void visit(BinExp e)
     {
         switch (e.op)
         {
-        case TOKadd:
+        case TOK.add:
             interpretCommon(e, &Add);
             return;
 
-        case TOKmin:
+        case TOK.min:
             interpretCommon(e, &Min);
             return;
 
-        case TOKmul:
+        case TOK.mul:
             interpretCommon(e, &Mul);
             return;
 
-        case TOKdiv:
+        case TOK.div:
             interpretCommon(e, &Div);
             return;
 
-        case TOKmod:
+        case TOK.mod:
             interpretCommon(e, &Mod);
             return;
 
-        case TOKshl:
+        case TOK.leftShift:
             interpretCommon(e, &Shl);
             return;
 
-        case TOKshr:
+        case TOK.rightShift:
             interpretCommon(e, &Shr);
             return;
 
-        case TOKushr:
+        case TOK.unsignedRightShift:
             interpretCommon(e, &Ushr);
             return;
 
-        case TOKand:
+        case TOK.and:
             interpretCommon(e, &And);
             return;
 
-        case TOKor:
+        case TOK.or:
             interpretCommon(e, &Or);
             return;
 
-        case TOKxor:
+        case TOK.xor:
             interpretCommon(e, &Xor);
             return;
 
-        case TOKpow:
+        case TOK.pow:
             interpretCommon(e, &Pow);
             return;
 
-        case TOKequal:
-        case TOKnotequal:
+        case TOK.equal:
+        case TOK.notEqual:
             interpretCompareCommon(e, &ctfeEqual);
             return;
 
-        case TOKidentity:
-        case TOKnotidentity:
+        case TOK.identity:
+        case TOK.notIdentity:
             interpretCompareCommon(e, &ctfeIdentity);
             return;
 
-        case TOKlt:
-        case TOKle:
-        case TOKgt:
-        case TOKge:
+        case TOK.lessThan:
+        case TOK.lessOrEqual:
+        case TOK.greaterThan:
+        case TOK.greaterOrEqual:
             interpretCompareCommon(e, &ctfeCmp);
             return;
 
@@ -3358,15 +3410,15 @@ public:
     {
         for (;;)
         {
-            if (e.op == TOKvar)
+            if (e.op == TOK.variable)
                 break;
-            if (e.op == TOKindex)
+            if (e.op == TOK.index)
                 e = (cast(IndexExp)e).e1;
-            else if (e.op == TOKdotvar)
+            else if (e.op == TOK.dotVariable)
                 e = (cast(DotVarExp)e).e1;
-            else if (e.op == TOKdotti)
+            else if (e.op == TOK.dotTemplateInstance)
                 e = (cast(DotTemplateInstanceExp)e).e1;
-            else if (e.op == TOKslice)
+            else if (e.op == TOK.slice)
                 e = (cast(SliceExp)e).e1;
             else
                 return null;
@@ -3387,7 +3439,7 @@ public:
         Expression e1 = e.e1;
         if (!istate)
         {
-            e.error("value of %s is not known at compile time", e1.toChars());
+            e.error("value of `%s` is not known at compile time", e1.toChars());
             return;
         }
 
@@ -3402,7 +3454,7 @@ public:
          * So we need to recurse to determine if it is a block assignment.
          */
         bool isBlockAssignment = false;
-        if (e1.op == TOKslice)
+        if (e1.op == TOK.slice)
         {
             // a[] = e can have const e. So we compare the naked types.
             Type tdst = e1.type.toBasetype();
@@ -3422,7 +3474,7 @@ public:
         //      Deal with reference assignment
         // ---------------------------------------
         // If it is a construction of a ref variable, it is a ref assignment
-        if ((e.op == TOKconstruct || e.op == TOKblit) &&
+        if ((e.op == TOK.construct || e.op == TOK.blit) &&
             ((cast(AssignExp)e).memset & MemorySet.referenceInit))
         {
             assert(!fp);
@@ -3445,7 +3497,7 @@ public:
 
         if (fp)
         {
-            while (e1.op == TOKcast)
+            while (e1.op == TOK.cast_)
             {
                 CastExp ce = cast(CastExp)e1;
                 e1 = ce.e1;
@@ -3458,7 +3510,7 @@ public:
         AssocArrayLiteralExp existingAA = null;
         Expression lastIndex = null;
         Expression oldval = null;
-        if (e1.op == TOKindex && (cast(IndexExp)e1).e1.type.toBasetype().ty == Taarray)
+        if (e1.op == TOK.index && (cast(IndexExp)e1).e1.type.toBasetype().ty == Taarray)
         {
             // ---------------------------------------
             //      Deal with AA index assignment
@@ -3472,7 +3524,7 @@ public:
              */
             IndexExp ie = cast(IndexExp)e1;
             int depth = 0; // how many nested AA indices are there?
-            while (ie.e1.op == TOKindex && (cast(IndexExp)ie.e1).e1.type.toBasetype().ty == Taarray)
+            while (ie.e1.op == TOK.index && (cast(IndexExp)ie.e1).e1.type.toBasetype().ty == Taarray)
             {
                 assert(ie.modifiable);
                 ie = cast(IndexExp)ie.e1;
@@ -3483,7 +3535,7 @@ public:
             Expression aggregate = interpret(ie.e1, istate);
             if (exceptionOrCant(aggregate))
                 return;
-            if (aggregate.op == TOKassocarrayliteral)
+            if (aggregate.op == TOK.assocArrayLiteral)
             {
                 existingAA = cast(AssocArrayLiteralExp)aggregate;
 
@@ -3505,7 +3557,8 @@ public:
                     Expression ekey = interpret(xe.e2, istate);
                     if (exceptionOrCant(ekey))
                         return;
-                    ekey = resolveSlice(ekey); // only happens with AA assignment
+                    UnionExp ekeyTmp = void;
+                    ekey = resolveSlice(ekey, &ekeyTmp); // only happens with AA assignment
 
                     // Look up this index in it up in the existing AA, to get the next level of AA.
                     AssocArrayLiteralExp newAA = cast(AssocArrayLiteralExp)findKeyInAA(e.loc, existingAA, ekey);
@@ -3518,7 +3571,7 @@ public:
                         auto valuesx = new Expressions();
                         newAA = new AssocArrayLiteralExp(e.loc, keysx, valuesx);
                         newAA.type = xe.type;
-                        newAA.ownedByCtfe = OWNEDctfe;
+                        newAA.ownedByCtfe = OwnedBy.ctfe;
                         //... and insert it into the existing AA.
                         existingAA.keys.push(ekey);
                         existingAA.values.push(newAA);
@@ -3547,7 +3600,7 @@ public:
                 oldval = copyLiteral(e.e1.type.defaultInitLiteral(e.loc)).copy();
 
                 Expression newaae = oldval;
-                while (e1.op == TOKindex && (cast(IndexExp)e1).e1.type.toBasetype().ty == Taarray)
+                while (e1.op == TOK.index && (cast(IndexExp)e1).e1.type.toBasetype().ty == Taarray)
                 {
                     Expression ekey = interpret((cast(IndexExp)e1).e2, istate);
                     if (exceptionOrCant(ekey))
@@ -3561,7 +3614,7 @@ public:
 
                     auto aae = new AssocArrayLiteralExp(e.loc, keysx, valuesx);
                     aae.type = (cast(IndexExp)e1).e1.type;
-                    aae.ownedByCtfe = OWNEDctfe;
+                    aae.ownedByCtfe = OwnedBy.ctfe;
                     if (!existingAA)
                     {
                         existingAA = aae;
@@ -3582,23 +3635,23 @@ public:
             assert(existingAA && lastIndex);
             e1 = null; // stomp
         }
-        else if (e1.op == TOKarraylength)
+        else if (e1.op == TOK.arrayLength)
         {
             oldval = interpret(e1, istate);
             if (exceptionOrCant(oldval))
                 return;
         }
-        else if (e.op == TOKconstruct || e.op == TOKblit)
+        else if (e.op == TOK.construct || e.op == TOK.blit)
         {
             // Unless we have a simple var assignment, we're
             // only modifying part of the variable. So we need to make sure
             // that the parent variable exists.
             VarDeclaration ultimateVar = findParentVar(e1);
-            if (e1.op == TOKvar)
+            if (e1.op == TOK.variable)
             {
                 VarDeclaration v = (cast(VarExp)e1).var.isVarDeclaration();
                 assert(v);
-                if (v.storage_class & STCout)
+                if (v.storage_class & STC.out_)
                     goto L1;
             }
             else if (ultimateVar && !getValue(ultimateVar))
@@ -3618,10 +3671,10 @@ public:
             if (exceptionOrCant(e1))
                 return;
 
-            if (e1.op == TOKindex && (cast(IndexExp)e1).e1.type.toBasetype().ty == Taarray)
+            if (e1.op == TOK.index && (cast(IndexExp)e1).e1.type.toBasetype().ty == Taarray)
             {
                 IndexExp ie = cast(IndexExp)e1;
-                assert(ie.e1.op == TOKassocarrayliteral);
+                assert(ie.e1.op == TOK.assocArrayLiteral);
                 existingAA = cast(AssocArrayLiteralExp)ie.e1;
                 lastIndex = ie.e2;
             }
@@ -3633,7 +3686,7 @@ public:
         Expression newval = interpret(e.e2, istate);
         if (exceptionOrCant(newval))
             return;
-        if (e.op == TOKblit && newval.op == TOKint64)
+        if (e.op == TOK.blit && newval.op == TOK.int64)
         {
             Type tbn = e.type.baseElemOf();
             if (tbn.ty == Tstruct)
@@ -3641,7 +3694,7 @@ public:
                 /* Look for special case of struct being initialized with 0.
                  */
                 newval = e.type.defaultInitLiteral(e.loc);
-                if (newval.op == TOKerror)
+                if (newval.op == TOK.error)
                 {
                     result = CTFEExp.cantexp;
                     return;
@@ -3671,7 +3724,7 @@ public:
             if (e.e1.type.ty != Tpointer)
             {
                 // ~= can create new values (see bug 6052)
-                if (e.op == TOKcatass || e.op == TOKcatelemass || e.op == TOKcatdcharass)
+                if (e.op == TOK.concatenateAssign || e.op == TOK.concatenateElemAssign || e.op == TOK.concatenateDcharAssign)
                 {
                     // We need to dup it and repaint the type. For a dynamic array
                     // we can skip duplication, because it gets copied later anyway.
@@ -3691,32 +3744,32 @@ public:
                 newval = (*fp)(e.loc, e.type, oldval, newval).copy();
             }
             else if (e.e2.type.isintegral() &&
-                     (e.op == TOKaddass ||
-                      e.op == TOKminass ||
-                      e.op == TOKplusplus ||
-                      e.op == TOKminusminus))
+                     (e.op == TOK.addAssign ||
+                      e.op == TOK.minAssign ||
+                      e.op == TOK.plusPlus ||
+                      e.op == TOK.minusMinus))
             {
                 newval = pointerArithmetic(e.loc, e.op, e.type, oldval, newval).copy();
             }
             else
             {
-                e.error("pointer expression %s cannot be interpreted at compile time", e.toChars());
+                e.error("pointer expression `%s` cannot be interpreted at compile time", e.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
             if (exceptionOrCant(newval))
             {
                 if (CTFEExp.isCantExp(newval))
-                    e.error("cannot interpret %s at compile time", e.toChars());
+                    e.error("cannot interpret `%s` at compile time", e.toChars());
                 return;
             }
         }
 
         if (existingAA)
         {
-            if (existingAA.ownedByCtfe != OWNEDctfe)
+            if (existingAA.ownedByCtfe != OwnedBy.ctfe)
             {
-                e.error("cannot modify read-only constant %s", existingAA.toChars());
+                e.error("cannot modify read-only constant `%s`", existingAA.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
@@ -3729,7 +3782,7 @@ public:
             result = ctfeCast(e.loc, e.type, e.type, fp && post ? oldval : newval);
             return;
         }
-        if (e1.op == TOKarraylength)
+        if (e1.op == TOK.arrayLength)
         {
             /* Change the assignment from:
              *  arr.length = n;
@@ -3753,7 +3806,7 @@ public:
             Type t = e1.type.toBasetype();
             if (t.ty != Tarray)
             {
-                e.error("%s is not yet supported at compile time", e.toChars());
+                e.error("`%s` is not yet supported at compile time", e.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
@@ -3797,26 +3850,26 @@ public:
 
         /* Block assignment or element-wise assignment.
          */
-        if (e1.op == TOKslice ||
-            e1.op == TOKvector ||
-            e1.op == TOKarrayliteral ||
-            e1.op == TOKstring ||
-            e1.op == TOKnull && e1.type.toBasetype().ty == Tarray)
+        if (e1.op == TOK.slice ||
+            e1.op == TOK.vector ||
+            e1.op == TOK.arrayLiteral ||
+            e1.op == TOK.string_ ||
+            e1.op == TOK.null_ && e1.type.toBasetype().ty == Tarray)
         {
             // Note that slice assignments don't support things like ++, so
             // we don't need to remember 'returnValue'.
             result = interpretAssignToSlice(e, e1, newval, isBlockAssignment);
             if (exceptionOrCant(result))
                 return;
-            if (e.e1.op == TOKslice)
+            if (e.e1.op == TOK.slice)
             {
                 Expression e1x = interpret((cast(SliceExp)e.e1).e1, istate, ctfeNeedLvalue);
-                if (e1x.op == TOKdotvar)
+                if (e1x.op == TOK.dotVariable)
                 {
                     auto dve = cast(DotVarExp)e1x;
                     auto ex = dve.e1;
-                    auto sle = ex.op == TOKstructliteral ? (cast(StructLiteralExp)ex)
-                             : ex.op == TOKclassreference ? (cast(ClassReferenceExp)ex).value
+                    auto sle = ex.op == TOK.structLiteral ? (cast(StructLiteralExp)ex)
+                             : ex.op == TOK.classReference ? (cast(ClassReferenceExp)ex).value
                              : null;
                     auto v = dve.var.isVarDeclaration();
                     if (!sle || !v)
@@ -3851,7 +3904,7 @@ public:
             if (v is v2 || !v.isOverlappedWith(v2))
                 continue;
             auto e = (*sle.elements)[i];
-            if (e.op != TOKvoid)
+            if (e.op != TOK.void_)
                 (*sle.elements)[i] = voidInitLiteral(e.type, v).copy();
         }
     }
@@ -3862,19 +3915,19 @@ public:
         Expression* payload = null; // dead-store to prevent spurious warning
         Expression oldval;
 
-        if (e1.op == TOKvar)
+        if (e1.op == TOK.variable)
         {
             vd = (cast(VarExp)e1).var.isVarDeclaration();
             oldval = getValue(vd);
         }
-        else if (e1.op == TOKdotvar)
+        else if (e1.op == TOK.dotVariable)
         {
             /* Assignment to member variable of the form:
              *  e.v = newval
              */
             auto ex = (cast(DotVarExp)e1).e1;
-            auto sle = ex.op == TOKstructliteral ? (cast(StructLiteralExp)ex)
-                     : ex.op == TOKclassreference ? (cast(ClassReferenceExp)ex).value
+            auto sle = ex.op == TOK.structLiteral ? (cast(StructLiteralExp)ex)
+                     : ex.op == TOK.classReference ? (cast(ClassReferenceExp)ex).value
                      : null;
             auto v = (cast(DotVarExp)e1).var.isVarDeclaration();
             if (!sle || !v)
@@ -3882,17 +3935,17 @@ public:
                 e.error("CTFE internal error: dotvar assignment");
                 return CTFEExp.cantexp;
             }
-            if (sle.ownedByCtfe != OWNEDctfe)
+            if (sle.ownedByCtfe != OwnedBy.ctfe)
             {
-                e.error("cannot modify read-only constant %s", sle.toChars());
+                e.error("cannot modify read-only constant `%s`", sle.toChars());
                 return CTFEExp.cantexp;
             }
 
-            int fieldi = ex.op == TOKstructliteral ? findFieldIndexByName(sle.sd, v)
+            int fieldi = ex.op == TOK.structLiteral ? findFieldIndexByName(sle.sd, v)
                        : (cast(ClassReferenceExp)ex).findFieldIndexByName(v);
             if (fieldi == -1)
             {
-                e.error("CTFE internal error: cannot find field %s in %s", v.toChars(), ex.toChars());
+                e.error("CTFE internal error: cannot find field `%s` in `%s`", v.toChars(), ex.toChars());
                 return CTFEExp.cantexp;
             }
             assert(0 <= fieldi && fieldi < sle.elements.dim);
@@ -3903,7 +3956,7 @@ public:
             payload = &(*sle.elements)[fieldi];
             oldval = *payload;
         }
-        else if (e1.op == TOKindex)
+        else if (e1.op == TOK.index)
         {
             IndexExp ie = cast(IndexExp)e1;
             assert(ie.e1.type.toBasetype().ty != Taarray);
@@ -3916,27 +3969,27 @@ public:
             }
             size_t index = cast(size_t)indexToModify;
 
-            if (aggregate.op == TOKstring)
+            if (aggregate.op == TOK.string_)
             {
                 StringExp existingSE = cast(StringExp)aggregate;
-                if (existingSE.ownedByCtfe != OWNEDctfe)
+                if (existingSE.ownedByCtfe != OwnedBy.ctfe)
                 {
-                    e.error("cannot modify read-only string literal %s", ie.e1.toChars());
+                    e.error("cannot modify read-only string literal `%s`", ie.e1.toChars());
                     return CTFEExp.cantexp;
                 }
                 existingSE.setCodeUnit(index, cast(dchar)newval.toInteger());
                 return null;
             }
-            if (aggregate.op != TOKarrayliteral)
+            if (aggregate.op != TOK.arrayLiteral)
             {
-                e.error("index assignment %s is not yet supported in CTFE ", e.toChars());
+                e.error("index assignment `%s` is not yet supported in CTFE ", e.toChars());
                 return CTFEExp.cantexp;
             }
 
             ArrayLiteralExp existingAE = cast(ArrayLiteralExp)aggregate;
-            if (existingAE.ownedByCtfe != OWNEDctfe)
+            if (existingAE.ownedByCtfe != OwnedBy.ctfe)
             {
-                e.error("cannot modify read-only constant %s", existingAE.toChars());
+                e.error("cannot modify read-only constant `%s`", existingAE.toChars());
                 return CTFEExp.cantexp;
             }
 
@@ -3945,19 +3998,19 @@ public:
         }
         else
         {
-            e.error("%s cannot be evaluated at compile time", e.toChars());
+            e.error("`%s` cannot be evaluated at compile time", e.toChars());
             return CTFEExp.cantexp;
         }
 
         Type t1b = e1.type.toBasetype();
         bool wantCopy = t1b.baseElemOf().ty == Tstruct;
 
-        if (newval.op == TOKstructliteral && oldval)
+        if (newval.op == TOK.structLiteral && oldval)
         {
             newval = copyLiteral(newval).copy();
             assignInPlace(oldval, newval);
         }
-        else if (wantCopy && e.op == TOKassign)
+        else if (wantCopy && e.op == TOK.assign)
         {
             // Currently postblit/destructor calls on static array are done
             // in the druntime internal functions so they don't appear in AST.
@@ -3969,12 +4022,12 @@ public:
                 newval = resolveSlice(newval);
                 if (CTFEExp.isCantExp(newval))
                 {
-                    e.error("CTFE internal error: assignment %s", e.toChars());
+                    e.error("CTFE internal error: assignment `%s`", e.toChars());
                     return CTFEExp.cantexp;
                 }
             }
-            assert(oldval.op == TOKarrayliteral);
-            assert(newval.op == TOKarrayliteral);
+            assert(oldval.op == TOK.arrayLiteral);
+            assert(newval.op == TOK.arrayLiteral);
 
             Expressions* oldelems = (cast(ArrayLiteralExp)oldval).elements;
             Expressions* newelems = (cast(ArrayLiteralExp)newval).elements;
@@ -4003,7 +4056,7 @@ public:
             if (wantCopy)
                 newval = copyLiteral(newval).copy();
 
-            if (t1b.ty == Tsarray && e.op == TOKconstruct && e.e2.isLvalue())
+            if (t1b.ty == Tsarray && e.op == TOK.construct && e.e2.isLvalue())
             {
                 // https://issues.dlang.org/show_bug.cgi?id=9245
                 if (Expression ex = evaluatePostblit(istate, newval))
@@ -4019,7 +4072,7 @@ public:
             *payload = oldval;
 
         // Blit assignment should return the newly created value.
-        if (e.op == TOKblit)
+        if (e.op == TOK.blit)
             return oldval;
 
         return null;
@@ -4034,7 +4087,7 @@ public:
      * This could be a slice assignment or a block assignment, and
      * dest could be either an array literal, or a string.
      *
-     * Returns TOKcantexp on failure. If there are no errors,
+     * Returns TOK.cantExpression on failure. If there are no errors,
      * it returns aggregate[low..upp], except that as an optimisation,
      * if goal == ctfeNeedNothing, it will return NULL
      */
@@ -4046,9 +4099,9 @@ public:
 
         Expression aggregate;
 
-        if (e1.op == TOKvector)
+        if (e1.op == TOK.vector)
             e1 = (cast(VectorExp)e1).e1;
-        if (e1.op == TOKslice)
+        if (e1.op == TOK.slice)
         {
             // ------------------------------
             //   aggregate[] = newval
@@ -4090,7 +4143,7 @@ public:
 
                 if (lowerbound < 0 || dim < upperbound)
                 {
-                    e.error("array bounds [0..%llu] exceeded in slice [%llu..%llu]",
+                    e.error("array bounds `[0..%llu]` exceeded in slice `[%llu..%llu]`",
                         ulong(dim), ulong(lowerbound), ulong(upperbound));
                     return CTFEExp.cantexp;
                 }
@@ -4098,13 +4151,13 @@ public:
             aggregate = oldval;
             firstIndex = lowerbound;
 
-            if (aggregate.op == TOKslice)
+            if (aggregate.op == TOK.slice)
             {
                 // Slice of a slice --> change the bounds
                 SliceExp oldse = cast(SliceExp)aggregate;
                 if (oldse.upr.toInteger() < upperbound + oldse.lwr.toInteger())
                 {
-                    e.error("slice [%llu..%llu] exceeds array bounds [0..%llu]",
+                    e.error("slice `[%llu..%llu]` exceeds array bounds `[0..%llu]`",
                         ulong(lowerbound), ulong(upperbound), oldse.upr.toInteger() - oldse.lwr.toInteger());
                     return CTFEExp.cantexp;
                 }
@@ -4114,17 +4167,17 @@ public:
         }
         else
         {
-            if (e1.op == TOKarrayliteral)
+            if (e1.op == TOK.arrayLiteral)
             {
                 lowerbound = 0;
                 upperbound = (cast(ArrayLiteralExp)e1).elements.dim;
             }
-            else if (e1.op == TOKstring)
+            else if (e1.op == TOK.string_)
             {
                 lowerbound = 0;
                 upperbound = (cast(StringExp)e1).len;
             }
-            else if (e1.op == TOKnull)
+            else if (e1.op == TOK.null_)
             {
                 lowerbound = 0;
                 upperbound = 0;
@@ -4144,22 +4197,22 @@ public:
             const srclen = resolveArrayLength(newval);
             if (srclen != (upperbound - lowerbound))
             {
-                e.error("array length mismatch assigning [0..%llu] to [%llu..%llu]",
+                e.error("array length mismatch assigning `[0..%llu]` to `[%llu..%llu]`",
                     ulong(srclen), ulong(lowerbound), ulong(upperbound));
                 return CTFEExp.cantexp;
             }
         }
 
-        if (aggregate.op == TOKstring)
+        if (aggregate.op == TOK.string_)
         {
             StringExp existingSE = cast(StringExp)aggregate;
-            if (existingSE.ownedByCtfe != OWNEDctfe)
+            if (existingSE.ownedByCtfe != OwnedBy.ctfe)
             {
-                e.error("cannot modify read-only string literal %s", existingSE.toChars());
+                e.error("cannot modify read-only string literal `%s`", existingSE.toChars());
                 return CTFEExp.cantexp;
             }
 
-            if (newval.op == TOKslice)
+            if (newval.op == TOK.slice)
             {
                 auto se = cast(SliceExp)newval;
                 auto aggr2 = se.e1;
@@ -4169,7 +4222,7 @@ public:
                 if (aggregate == aggr2 &&
                     lowerbound < srcupper && srclower < upperbound)
                 {
-                    e.error("overlapping slice assignment [%llu..%llu] = [%llu..%llu]",
+                    e.error("overlapping slice assignment `[%llu..%llu] = [%llu..%llu]`",
                         ulong(lowerbound), ulong(upperbound), ulong(srclower), ulong(srcupper));
                     return CTFEExp.cantexp;
                 }
@@ -4179,18 +4232,18 @@ public:
                     newval = resolveSlice(newval);
                     if (CTFEExp.isCantExp(newval))
                     {
-                        e.error("CTFE internal error: slice %s", orignewval.toChars());
+                        e.error("CTFE internal error: slice `%s`", orignewval.toChars());
                         return CTFEExp.cantexp;
                     }
                 }
-                assert(newval.op != TOKslice);
+                assert(newval.op != TOK.slice);
             }
-            if (newval.op == TOKstring)
+            if (newval.op == TOK.string_)
             {
                 sliceAssignStringFromString(existingSE, cast(StringExp)newval, cast(size_t)firstIndex);
                 return newval;
             }
-            if (newval.op == TOKarrayliteral)
+            if (newval.op == TOK.arrayLiteral)
             {
                 /* Mixed slice: it was initialized as a string literal.
                  * Now a slice of it is being set with an array literal.
@@ -4211,16 +4264,16 @@ public:
             retslice.type = e.type;
             return interpret(retslice, istate);
         }
-        if (aggregate.op == TOKarrayliteral)
+        if (aggregate.op == TOK.arrayLiteral)
         {
             ArrayLiteralExp existingAE = cast(ArrayLiteralExp)aggregate;
-            if (existingAE.ownedByCtfe != OWNEDctfe)
+            if (existingAE.ownedByCtfe != OwnedBy.ctfe)
             {
-                e.error("cannot modify read-only constant %s", existingAE.toChars());
+                e.error("cannot modify read-only constant `%s`", existingAE.toChars());
                 return CTFEExp.cantexp;
             }
 
-            if (newval.op == TOKslice && !isBlockAssignment)
+            if (newval.op == TOK.slice && !isBlockAssignment)
             {
                 auto se = cast(SliceExp)newval;
                 auto aggr2 = se.e1;
@@ -4236,7 +4289,7 @@ public:
                     // Currently overlapping for struct array is allowed.
                     // The order of elements processing depends on the overlapping.
                     // https://issues.dlang.org/show_bug.cgi?id=14024
-                    assert(aggr2.op == TOKarrayliteral);
+                    assert(aggr2.op == TOK.arrayLiteral);
                     Expressions* oldelems = existingAE.elements;
                     Expressions* newelems = (cast(ArrayLiteralExp)aggr2).elements;
 
@@ -4288,7 +4341,7 @@ public:
                 if (aggregate == aggr2 &&
                     lowerbound < srcupper && srclower < upperbound)
                 {
-                    e.error("overlapping slice assignment [%llu..%llu] = [%llu..%llu]",
+                    e.error("overlapping slice assignment `[%llu..%llu] = [%llu..%llu]`",
                         ulong(lowerbound), ulong(upperbound), ulong(srclower), ulong(srcupper));
                     return CTFEExp.cantexp;
                 }
@@ -4298,15 +4351,15 @@ public:
                     newval = resolveSlice(newval);
                     if (CTFEExp.isCantExp(newval))
                     {
-                        e.error("CTFE internal error: slice %s", orignewval.toChars());
+                        e.error("CTFE internal error: slice `%s`", orignewval.toChars());
                         return CTFEExp.cantexp;
                     }
                 }
                 // no overlapping
                 //length?
-                assert(newval.op != TOKslice);
+                assert(newval.op != TOK.slice);
             }
-            if (newval.op == TOKstring && !isBlockAssignment)
+            if (newval.op == TOK.string_ && !isBlockAssignment)
             {
                 /* Mixed slice: it was initialized as an array literal of chars/integers.
                  * Now a slice of it is being set with a string.
@@ -4314,12 +4367,12 @@ public:
                 sliceAssignArrayLiteralFromString(existingAE, cast(StringExp)newval, cast(size_t)firstIndex);
                 return newval;
             }
-            if (newval.op == TOKarrayliteral && !isBlockAssignment)
+            if (newval.op == TOK.arrayLiteral && !isBlockAssignment)
             {
                 Expressions* oldelems = existingAE.elements;
                 Expressions* newelems = (cast(ArrayLiteralExp)newval).elements;
                 Type elemtype = existingAE.type.nextOf();
-                bool needsPostblit = e.op != TOKblit && e.e2.isLvalue();
+                bool needsPostblit = e.op != TOK.blit && e.e2.isLvalue();
                 for (size_t j = 0; j < newelems.dim; j++)
                 {
                     Expression newelem = (*newelems)[j];
@@ -4360,7 +4413,7 @@ public:
                     bool directblk = (cast(TypeArray)ae.type).next.equivalent(newval.type);
                     for (size_t k = lwr; k < upr; k++)
                     {
-                        if (!directblk && (*w)[k].op == TOKarrayliteral)
+                        if (!directblk && (*w)[k].op == TOK.arrayLiteral)
                         {
                             // Multidimensional array block assign
                             if (Expression ex = assignTo(cast(ArrayLiteralExp)(*w)[k]))
@@ -4398,7 +4451,7 @@ public:
 
             Type tn = newval.type.toBasetype();
             bool wantRef = (tn.ty == Tarray || isAssocArray(tn) || tn.ty == Tclass);
-            bool cow = newval.op != TOKstructliteral && newval.op != TOKarrayliteral && newval.op != TOKstring;
+            bool cow = newval.op != TOK.structLiteral && newval.op != TOK.arrayLiteral && newval.op != TOK.string_;
             Type tb = tn.baseElemOf();
             StructDeclaration sd = (tb.ty == Tstruct ? (cast(TypeStruct)tb).sym : null);
 
@@ -4406,8 +4459,8 @@ public:
             rb.istate = istate;
             rb.newval = newval;
             rb.refCopy = wantRef || cow;
-            rb.needsPostblit = sd && sd.postblit && e.op != TOKblit && e.e2.isLvalue();
-            rb.needsDtor = sd && sd.dtor && e.op == TOKassign;
+            rb.needsPostblit = sd && sd.postblit && e.op != TOK.blit && e.e2.isLvalue();
+            rb.needsDtor = sd && sd.dtor && e.op == TOK.assign;
             if (Expression ex = rb.assignTo(existingAE, cast(size_t)lowerbound, cast(size_t)upperbound))
                 return ex;
 
@@ -4418,7 +4471,7 @@ public:
             return interpret(retslice, istate);
         }
 
-        e.error("slice operation %s = %s cannot be evaluated at compile time", e1.toChars(), newval.toChars());
+        e.error("slice operation `%s = %s` cannot be evaluated at compile time", e1.toChars(), newval.toChars());
         return CTFEExp.cantexp;
     }
 
@@ -4431,57 +4484,57 @@ public:
     {
         switch (e.op)
         {
-        case TOKaddass:
+        case TOK.addAssign:
             interpretAssignCommon(e, &Add);
             return;
 
-        case TOKminass:
+        case TOK.minAssign:
             interpretAssignCommon(e, &Min);
             return;
 
-        case TOKcatass:
-        case TOKcatelemass:
-        case TOKcatdcharass:
+        case TOK.concatenateAssign:
+        case TOK.concatenateElemAssign:
+        case TOK.concatenateDcharAssign:
             interpretAssignCommon(e, &ctfeCat);
             return;
 
-        case TOKmulass:
+        case TOK.mulAssign:
             interpretAssignCommon(e, &Mul);
             return;
 
-        case TOKdivass:
+        case TOK.divAssign:
             interpretAssignCommon(e, &Div);
             return;
 
-        case TOKmodass:
+        case TOK.modAssign:
             interpretAssignCommon(e, &Mod);
             return;
 
-        case TOKshlass:
+        case TOK.leftShiftAssign:
             interpretAssignCommon(e, &Shl);
             return;
 
-        case TOKshrass:
+        case TOK.rightShiftAssign:
             interpretAssignCommon(e, &Shr);
             return;
 
-        case TOKushrass:
+        case TOK.unsignedRightShiftAssign:
             interpretAssignCommon(e, &Ushr);
             return;
 
-        case TOKandass:
+        case TOK.andAssign:
             interpretAssignCommon(e, &And);
             return;
 
-        case TOKorass:
+        case TOK.orAssign:
             interpretAssignCommon(e, &Or);
             return;
 
-        case TOKxorass:
+        case TOK.xorAssign:
             interpretAssignCommon(e, &Xor);
             return;
 
-        case TOKpowass:
+        case TOK.powAssign:
             interpretAssignCommon(e, &Pow);
             return;
 
@@ -4496,7 +4549,7 @@ public:
         {
             printf("%s PostExp::interpret() %s\n", e.loc.toChars(), e.toChars());
         }
-        if (e.op == TOKplusplus)
+        if (e.op == TOK.plusPlus)
             interpretAssignCommon(e, &Add, 1);
         else
             interpretAssignCommon(e, &Min, 1);
@@ -4514,19 +4567,19 @@ public:
     static int isPointerCmpExp(Expression e, Expression* p1, Expression* p2)
     {
         int ret = 1;
-        while (e.op == TOKnot)
+        while (e.op == TOK.not)
         {
             ret *= -1;
             e = (cast(NotExp)e).e1;
         }
         switch (e.op)
         {
-        case TOKlt:
-        case TOKle:
+        case TOK.lessThan:
+        case TOK.lessOrEqual:
             ret *= -1;
             goto case; /+ fall through +/
-        case TOKgt:
-        case TOKge:
+        case TOK.greaterThan:
+        case TOK.greaterOrEqual:
             *p1 = (cast(BinExp)e).e1;
             *p2 = (cast(BinExp)e).e2;
             if (!(isPointer((*p1).type) && isPointer((*p2).type)))
@@ -4546,17 +4599,17 @@ public:
     {
         switch (op)
         {
-        case TOKge:
-            return TOKlt;
+        case TOK.greaterOrEqual:
+            return TOK.lessThan;
 
-        case TOKgt:
-            return TOKle;
+        case TOK.greaterThan:
+            return TOK.lessOrEqual;
 
-        case TOKle:
-            return TOKgt;
+        case TOK.lessOrEqual:
+            return TOK.greaterThan;
 
-        case TOKlt:
-            return TOKge;
+        case TOK.lessThan:
+            return TOK.greaterOrEqual;
 
         default:
             assert(0);
@@ -4581,7 +4634,7 @@ public:
      */
     private void interpretFourPointerRelation(BinExp e)
     {
-        assert(e.op == TOKandand || e.op == TOKoror);
+        assert(e.op == TOK.andAnd || e.op == TOK.orOr);
 
         /*  It can only be an isInside expression, if both e1 and e2 are
          *  directional pointer comparisons.
@@ -4617,7 +4670,7 @@ public:
         Expression agg1 = getAggregateFromPointer(p1, &ofs1);
         Expression agg2 = getAggregateFromPointer(p2, &ofs2);
 
-        if (!pointToSameMemoryBlock(agg1, agg2) && agg1.op != TOKnull && agg2.op != TOKnull)
+        if (!pointToSameMemoryBlock(agg1, agg2) && agg1.op != TOK.null_ && agg2.op != TOK.null_)
         {
             // Here it is either CANT_INTERPRET,
             // or an IsInside comparison returning false.
@@ -4641,7 +4694,7 @@ public:
             }
             if (except)
             {
-                e.error("comparison %s of pointers to unrelated memory blocks remains indeterminate at compile time because exception %s was thrown while evaluating %s", e.e1.toChars(), except.toChars(), e.e2.toChars());
+                e.error("comparison `%s` of pointers to unrelated memory blocks remains indeterminate at compile time because exception `%s` was thrown while evaluating `%s`", e.e1.toChars(), except.toChars(), e.e2.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
@@ -4655,14 +4708,14 @@ public:
             if ((dir1 == dir2 && pointToSameMemoryBlock(agg1, agg4) && pointToSameMemoryBlock(agg2, agg3)) || (dir1 != dir2 && pointToSameMemoryBlock(agg1, agg3) && pointToSameMemoryBlock(agg2, agg4)))
             {
                 // it's a legal two-sided comparison
-                result = new IntegerExp(e.loc, (e.op == TOKandand) ? 0 : 1, e.type);
+                result = new IntegerExp(e.loc, (e.op == TOK.andAnd) ? 0 : 1, e.type);
                 return;
             }
             // It's an invalid four-pointer comparison. Either the second
             // comparison is in the same direction as the first, or else
             // more than two memory blocks are involved (either two independent
             // invalid comparisons are present, or else agg3 == agg4).
-            e.error("comparison %s of pointers to unrelated memory blocks is indeterminate at compile time, even when combined with %s.", e.e1.toChars(), e.e2.toChars());
+            e.error("comparison `%s` of pointers to unrelated memory blocks is indeterminate at compile time, even when combined with `%s`.", e.e1.toChars(), e.e2.toChars());
             result = CTFEExp.cantexp;
             return;
         }
@@ -4674,7 +4727,7 @@ public:
         // they have side-effects.
         bool nott = false;
         Expression ex = e.e1;
-        while (ex.op == TOKnot)
+        while (ex.op == TOK.not)
         {
             nott = !nott;
             ex = (cast(NotExp)ex).e1;
@@ -4682,15 +4735,15 @@ public:
         TOK cmpop = ex.op;
         if (nott)
             cmpop = reverseRelation(cmpop);
-        int cmp = comparePointers(e.loc, cmpop, e.e1.type, agg1, ofs1, agg2, ofs2);
+        int cmp = comparePointers(cmpop, agg1, ofs1, agg2, ofs2);
         // We already know this is a valid comparison.
         assert(cmp >= 0);
-        if (e.op == TOKandand && cmp == 1 || e.op == TOKoror && cmp == 0)
+        if (e.op == TOK.andAnd && cmp == 1 || e.op == TOK.orOr && cmp == 0)
         {
             result = interpret(e.e2, istate);
             return;
         }
-        result = new IntegerExp(e.loc, (e.op == TOKandand) ? 0 : 1, e.type);
+        result = new IntegerExp(e.loc, (e.op == TOK.andAnd) ? 0 : 1, e.type);
     }
 
     override void visit(LogicalExp e)
@@ -4709,15 +4762,16 @@ public:
             return;
 
         int res;
-        const andand = e.op == TOKandand;
+        const andand = e.op == TOK.andAnd;
         if (andand ? result.isBool(false) : isTrueBool(result))
             res = !andand;
         else if (andand ? isTrueBool(result) : result.isBool(false))
         {
-            result = interpret(e.e2, istate);
+            UnionExp ue2;
+            result = interpret(&ue2, e.e2, istate);
             if (exceptionOrCant(result))
                 return;
-            if (result.op == TOKvoidexp)
+            if (result.op == TOK.voidExpression)
             {
                 assert(e.type.ty == Tvoid);
                 result = null;
@@ -4729,19 +4783,22 @@ public:
                 res = 1;
             else
             {
-                result.error("`%s` does not evaluate to a bool", result.toChars());
+                result.error("`%s` does not evaluate to a `bool`", result.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
         }
         else
         {
-            result.error("`%s` cannot be interpreted as a bool", result.toChars());
+            result.error("`%s` cannot be interpreted as a `bool`", result.toChars());
             result = CTFEExp.cantexp;
             return;
         }
         if (goal != ctfeNeedNothing)
-            result = new IntegerExp(e.loc, res, e.type);
+        {
+            emplaceExp!(IntegerExp)(pue, e.loc, res, e.type);
+            result = pue.exp();
+        }
     }
 
 
@@ -4754,7 +4811,7 @@ public:
             --CtfeStatus.stackTraceCallsToSuppress;
             return;
         }
-        errorSupplemental(callingExp.loc, "called from here: %s", callingExp.toChars());
+        errorSupplemental(callingExp.loc, "called from here: `%s`", callingExp.toChars());
         // Quit if it's not worth trying to compress the stack trace
         if (CtfeStatus.callDepth < 6 || global.params.verbose)
             return;
@@ -4777,10 +4834,10 @@ public:
         if (recurseCount < 2)
             return;
         // We found a useful recursion.  Print all the calls involved in the recursion
-        errorSupplemental(fd.loc, "%d recursive calls to function %s", recurseCount, fd.toChars());
+        errorSupplemental(fd.loc, "%d recursive calls to function `%s`", recurseCount, fd.toChars());
         for (InterState* cur = istate; cur.fd != fd; cur = cur.caller)
         {
-            errorSupplemental(cur.fd.loc, "recursively called from function %s", cur.fd.toChars());
+            errorSupplemental(cur.fd.loc, "recursively called from function `%s`", cur.fd.toChars());
         }
         // We probably didn't enter the recursion in this function.
         // Go deeper to find the real beginning.
@@ -4807,7 +4864,7 @@ public:
         if (exceptionOrCant(ecall))
             return;
 
-        if (ecall.op == TOKdotvar)
+        if (ecall.op == TOK.dotVariable)
         {
             DotVarExp dve = cast(DotVarExp)ecall;
 
@@ -4816,35 +4873,41 @@ public:
             fd = dve.var.isFuncDeclaration();
             assert(fd);
 
-            if (pthis.op == TOKdottype)
+            if (pthis.op == TOK.dotType)
                 pthis = (cast(DotTypeExp)dve.e1).e1;
         }
-        else if (ecall.op == TOKvar)
+        else if (ecall.op == TOK.variable)
         {
             fd = (cast(VarExp)ecall).var.isFuncDeclaration();
             assert(fd);
 
-            if (fd.ident == Id._ArrayPostblit || fd.ident == Id._ArrayDtor)
+            if (fd.ident == Id.__ArrayPostblit || fd.ident == Id.__ArrayDtor)
             {
                 assert(e.arguments.dim == 1);
                 Expression ea = (*e.arguments)[0];
-                //printf("1 ea = %s %s\n", ea.type.toChars(), ea.toChars());
-                if (ea.op == TOKslice)
+                // printf("1 ea = %s %s\n", ea.type.toChars(), ea.toChars());
+                if (ea.op == TOK.slice)
                     ea = (cast(SliceExp)ea).e1;
-                if (ea.op == TOKcast)
+                if (ea.op == TOK.cast_)
                     ea = (cast(CastExp)ea).e1;
 
-                //printf("2 ea = %s, %s %s\n", ea.type.toChars(), Token::toChars(ea.op), ea.toChars());
-                if (ea.op == TOKvar || ea.op == TOKsymoff)
+                // printf("2 ea = %s, %s %s\n", ea.type.toChars(), Token.toChars(ea.op), ea.toChars());
+                if (ea.op == TOK.variable || ea.op == TOK.symbolOffset)
                     result = getVarExp(e.loc, istate, (cast(SymbolExp)ea).var, ctfeNeedRvalue);
-                else if (ea.op == TOKaddress)
+                else if (ea.op == TOK.address)
                     result = interpret((cast(AddrExp)ea).e1, istate);
+
+                // https://issues.dlang.org/show_bug.cgi?id=18871
+                // https://issues.dlang.org/show_bug.cgi?id=18819
+                else if (ea.op == TOK.arrayLiteral)
+                    result = interpret(cast(ArrayLiteralExp)ea, istate);
+
                 else
                     assert(0);
                 if (CTFEExp.isCantExp(result))
                     return;
 
-                if (fd.ident == Id._ArrayPostblit)
+                if (fd.ident == Id.__ArrayPostblit)
                     result = evaluatePostblit(istate, result);
                 else
                     result = evaluateDtor(istate, result);
@@ -4853,23 +4916,23 @@ public:
                 return;
             }
         }
-        else if (ecall.op == TOKsymoff)
+        else if (ecall.op == TOK.symbolOffset)
         {
             SymOffExp soe = cast(SymOffExp)ecall;
             fd = soe.var.isFuncDeclaration();
             assert(fd && soe.offset == 0);
         }
-        else if (ecall.op == TOKdelegate)
+        else if (ecall.op == TOK.delegate_)
         {
             // Calling a delegate
             fd = (cast(DelegateExp)ecall).func;
             pthis = (cast(DelegateExp)ecall).e1;
 
             // Special handling for: &nestedfunc --> DelegateExp(VarExp(nestedfunc), nestedfunc)
-            if (pthis.op == TOKvar && (cast(VarExp)pthis).var == fd)
+            if (pthis.op == TOK.variable && (cast(VarExp)pthis).var == fd)
                 pthis = null; // context is not necessary for CTFE
         }
-        else if (ecall.op == TOKfunction)
+        else if (ecall.op == TOK.function_)
         {
             // Calling a delegate literal
             fd = (cast(FuncExp)ecall).fd;
@@ -4878,13 +4941,13 @@ public:
         {
             // delegate.funcptr()
             // others
-            e.error("cannot call %s at compile time", e.toChars());
+            e.error("cannot call `%s` at compile time", e.toChars());
             result = CTFEExp.cantexp;
             return;
         }
         if (!fd)
         {
-            e.error("CTFE internal error: cannot evaluate %s at compile time", e.toChars());
+            e.error("CTFE internal error: cannot evaluate `%s` at compile time", e.toChars());
             result = CTFEExp.cantexp;
             return;
         }
@@ -4895,28 +4958,28 @@ public:
             // Currently this is satisfied because closure is not yet supported.
             assert(!fd.isNested());
 
-            if (pthis.op == TOKtypeid)
+            if (pthis.op == TOK.typeid_)
             {
-                pthis.error("static variable %s cannot be read at compile time", pthis.toChars());
+                pthis.error("static variable `%s` cannot be read at compile time", pthis.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
             assert(pthis);
 
-            if (pthis.op == TOKnull)
+            if (pthis.op == TOK.null_)
             {
                 assert(pthis.type.toBasetype().ty == Tclass);
-                e.error("function call through null class reference %s", pthis.toChars());
+                e.error("function call through null class reference `%s`", pthis.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
-            assert(pthis.op == TOKstructliteral || pthis.op == TOKclassreference);
+            assert(pthis.op == TOK.structLiteral || pthis.op == TOK.classReference);
 
             if (fd.isVirtual() && !e.directcall)
             {
                 // Make a virtual function call.
                 // Get the function from the vtable of the original class
-                assert(pthis.op == TOKclassreference);
+                assert(pthis.op == TOK.classReference);
                 ClassDeclaration cd = (cast(ClassReferenceExp)pthis).originalClass();
 
                 // We can't just use the vtable index to look it up, because
@@ -4926,9 +4989,9 @@ public:
             }
         }
 
-        if (fd && fd.semanticRun >= PASSsemantic3done && fd.semantic3Errors)
+        if (fd && fd.semanticRun >= PASS.semantic3done && fd.semantic3Errors)
         {
-            e.error("CTFE failed because of previous errors in %s", fd.toChars());
+            e.error("CTFE failed because of previous errors in `%s`", fd.toChars());
             result = CTFEExp.cantexp;
             return;
         }
@@ -4940,13 +5003,13 @@ public:
 
         if (!fd.fbody)
         {
-            e.error("%s cannot be interpreted at compile time, because it has no available source code", fd.toChars());
+            e.error("`%s` cannot be interpreted at compile time, because it has no available source code", fd.toChars());
             result = CTFEExp.cantexp;
             return;
         }
 
-        result = interpret(fd, istate, e.arguments, pthis);
-        if (result.op == TOKvoidexp)
+        result = interpretFunction(fd, istate, e.arguments, pthis);
+        if (result.op == TOK.voidExpression)
             return;
         if (!exceptionOrCantInterpret(result))
         {
@@ -4968,27 +5031,31 @@ public:
         {
             printf("%s CommaExp::interpret() %s\n", e.loc.toChars(), e.toChars());
         }
-        CommaExp firstComma = e;
-        while (firstComma.e1.op == TOKcomma)
-            firstComma = cast(CommaExp)firstComma.e1;
 
         // If it creates a variable, and there's no context for
         // the variable to be created in, we need to create one now.
         InterState istateComma;
-        if (!istate && firstComma.e1.op == TOKdeclaration)
+        if (!istate && firstComma(e.e1).op == TOK.declaration)
         {
             ctfeStack.startFrame(null);
             istate = &istateComma;
+        }
+
+        void endTempStackFrame()
+        {
+            // If we created a temporary stack frame, end it now.
+            if (istate == &istateComma)
+                ctfeStack.endFrame();
         }
 
         result = CTFEExp.cantexp;
 
         // If the comma returns a temporary variable, it needs to be an lvalue
         // (this is particularly important for struct constructors)
-        if (e.e1.op == TOKdeclaration &&
-            e.e2.op == TOKvar &&
+        if (e.e1.op == TOK.declaration &&
+            e.e2.op == TOK.variable &&
             (cast(DeclarationExp)e.e1).declaration == (cast(VarExp)e.e2).var &&
-            (cast(VarExp)e.e2).var.storage_class & STCctfe)
+            (cast(VarExp)e.e2).var.storage_class & STC.ctfe)
         {
             VarExp ve = cast(VarExp)e.e2;
             VarDeclaration v = ve.var.isVarDeclaration();
@@ -5005,26 +5072,23 @@ public:
                 // through a reference parameter instead).
                 newval = interpret(newval, istate);
                 if (exceptionOrCant(newval))
-                    goto Lfin;
-                if (newval.op != TOKvoidexp)
+                    return endTempStackFrame();
+                if (newval.op != TOK.voidExpression)
                 {
                     // v isn't necessarily null.
                     setValueWithoutChecking(v, copyLiteral(newval).copy());
                 }
             }
-            result = interpret(e.e2, istate, goal);
         }
         else
         {
-            result = interpret(e.e1, istate, ctfeNeedNothing);
-            if (exceptionOrCant(result))
-                goto Lfin;
-            result = interpret(e.e2, istate, goal);
+            UnionExp ue = void;
+            auto e1 = interpret(&ue, e.e1, istate, ctfeNeedNothing);
+            if (exceptionOrCant(e1))
+                return endTempStackFrame();
         }
-    Lfin:
-        // If we created a temporary stack frame, end it now.
-        if (istate == &istateComma)
-            ctfeStack.endFrame();
+        result = interpret(pue, e.e2, istate, goal);
+        return endTempStackFrame();
     }
 
     override void visit(CondExp e)
@@ -5033,25 +5097,28 @@ public:
         {
             printf("%s CondExp::interpret() %s\n", e.loc.toChars(), e.toChars());
         }
+        UnionExp uecond = void;
+        Expression econd;
+        econd = interpret(&uecond, e.econd, istate);
+        if (exceptionOrCant(econd))
+            return;
+
         if (isPointer(e.econd.type))
         {
-            result = interpret(e.econd, istate);
-            if (exceptionOrCant(result))
-                return;
-            if (result.op != TOKnull)
-                result = new IntegerExp(e.loc, 1, Type.tbool);
+            if (econd.op != TOK.null_)
+            {
+                emplaceExp!(IntegerExp)(&uecond, e.loc, 1, Type.tbool);
+                econd = uecond.exp();
+            }
         }
-        else
-            result = interpret(e.econd, istate);
-        if (exceptionOrCant(result))
-            return;
-        if (isTrueBool(result))
-            result = interpret(e.e1, istate, goal);
-        else if (result.isBool(false))
-            result = interpret(e.e2, istate, goal);
+
+        if (isTrueBool(econd))
+            result = interpret(pue, e.e1, istate, goal);
+        else if (econd.isBool(false))
+            result = interpret(pue, e.e2, istate, goal);
         else
         {
-            e.error("%s does not evaluate to boolean result at compile time", e.econd.toChars());
+            e.error("`%s` does not evaluate to boolean result at compile time", e.econd.toChars());
             result = CTFEExp.cantexp;
         }
     }
@@ -5062,17 +5129,19 @@ public:
         {
             printf("%s ArrayLengthExp::interpret() %s\n", e.loc.toChars(), e.toChars());
         }
-        Expression e1 = interpret(e.e1, istate);
+        UnionExp ue1;
+        Expression e1 = interpret(&ue1, e.e1, istate);
         assert(e1);
         if (exceptionOrCant(e1))
             return;
-        if (e1.op != TOKstring && e1.op != TOKarrayliteral && e1.op != TOKslice && e1.op != TOKnull)
+        if (e1.op != TOK.string_ && e1.op != TOK.arrayLiteral && e1.op != TOK.slice && e1.op != TOK.null_)
         {
-            e.error("%s cannot be evaluated at compile time", e.toChars());
+            e.error("`%s` cannot be evaluated at compile time", e.toChars());
             result = CTFEExp.cantexp;
             return;
         }
-        result = new IntegerExp(e.loc, resolveArrayLength(e1), e.type);
+        emplaceExp!(IntegerExp)(pue, e.loc, resolveArrayLength(e1), e.type);
+        result = pue.exp();
     }
 
     override void visit(DelegatePtrExp e)
@@ -5081,11 +5150,11 @@ public:
         {
             printf("%s DelegatePtrExp::interpret() %s\n", e.loc.toChars(), e.toChars());
         }
-        Expression e1 = interpret(e.e1, istate);
+        Expression e1 = interpret(pue, e.e1, istate);
         assert(e1);
         if (exceptionOrCant(e1))
             return;
-        e.error("%s cannot be evaluated at compile time", e.toChars());
+        e.error("`%s` cannot be evaluated at compile time", e.toChars());
         result = CTFEExp.cantexp;
     }
 
@@ -5095,11 +5164,11 @@ public:
         {
             printf("%s DelegateFuncptrExp::interpret() %s\n", e.loc.toChars(), e.toChars());
         }
-        Expression e1 = interpret(e.e1, istate);
+        Expression e1 = interpret(pue, e.e1, istate);
         assert(e1);
         if (exceptionOrCant(e1))
             return;
-        e.error("%s cannot be evaluated at compile time", e.toChars());
+        e.error("`%s` cannot be evaluated at compile time", e.toChars());
         result = CTFEExp.cantexp;
     }
 
@@ -5122,29 +5191,29 @@ public:
             dinteger_t ofs;
             Expression agg = getAggregateFromPointer(e1, &ofs);
 
-            if (agg.op == TOKnull)
+            if (agg.op == TOK.null_)
             {
-                e.error("cannot index through null pointer %s", e.e1.toChars());
+                e.error("cannot index through null pointer `%s`", e.e1.toChars());
                 return false;
             }
-            if (agg.op == TOKint64)
+            if (agg.op == TOK.int64)
             {
-                e.error("cannot index through invalid pointer %s of value %s", e.e1.toChars(), e1.toChars());
+                e.error("cannot index through invalid pointer `%s` of value `%s`", e.e1.toChars(), e1.toChars());
                 return false;
             }
             // Pointer to a non-array variable
-            if (agg.op == TOKsymoff)
+            if (agg.op == TOK.symbolOffset)
             {
-                e.error("mutable variable %s cannot be %s at compile time, even through a pointer", cast(char*)(modify ? "modified" : "read"), (cast(SymOffExp)agg).var.toChars());
+                e.error("mutable variable `%s` cannot be %s at compile time, even through a pointer", cast(char*)(modify ? "modified" : "read"), (cast(SymOffExp)agg).var.toChars());
                 return false;
             }
 
-            if (agg.op == TOKarrayliteral || agg.op == TOKstring)
+            if (agg.op == TOK.arrayLiteral || agg.op == TOK.string_)
             {
                 dinteger_t len = resolveArrayLength(agg);
                 if (ofs + indx >= len)
                 {
-                    e.error("pointer index [%lld] exceeds allocated memory block [0..%lld]", ofs + indx, len);
+                    e.error("pointer index `[%lld]` exceeds allocated memory block `[0..%lld]`", ofs + indx, len);
                     return false;
                 }
             }
@@ -5152,7 +5221,7 @@ public:
             {
                 if (ofs + indx != 0)
                 {
-                    e.error("pointer index [%lld] lies outside memory block [0..1]", ofs + indx);
+                    e.error("pointer index `[%lld]` lies outside memory block `[0..1]`", ofs + indx);
                     return false;
                 }
             }
@@ -5164,18 +5233,18 @@ public:
         Expression e1 = interpret(e.e1, istate);
         if (exceptionOrCantInterpret(e1))
             return false;
-        if (e1.op == TOKnull)
+        if (e1.op == TOK.null_)
         {
-            e.error("cannot index null array %s", e.e1.toChars());
+            e.error("cannot index null array `%s`", e.e1.toChars());
             return false;
         }
-        if (e1.op == TOKvector)
+        if (e1.op == TOK.vector)
             e1 = (cast(VectorExp)e1).e1;
 
         // Set the $ variable, and find the array literal to modify
-        if (e1.op != TOKarrayliteral && e1.op != TOKstring && e1.op != TOKslice)
+        if (e1.op != TOK.arrayLiteral && e1.op != TOK.string_ && e1.op != TOK.slice)
         {
-            e.error("cannot determine length of %s at compile time", e.e1.toChars());
+            e.error("cannot determine length of `%s` at compile time", e.e1.toChars());
             return false;
         }
 
@@ -5191,13 +5260,13 @@ public:
             ctfeStack.pop(e.lengthVar); // $ is defined only inside []
         if (exceptionOrCantInterpret(e2))
             return false;
-        if (e2.op != TOKint64)
+        if (e2.op != TOK.int64)
         {
-            e.error("CTFE internal error: non-integral index [%s]", e.e2.toChars());
+            e.error("CTFE internal error: non-integral index `[%s]`", e.e2.toChars());
             return false;
         }
 
-        if (e1.op == TOKslice)
+        if (e1.op == TOK.slice)
         {
             // Simplify index of slice: agg[lwr..upr][indx] --> agg[indx']
             uinteger_t index = e2.toInteger();
@@ -5240,13 +5309,14 @@ public:
                 result = CTFEExp.cantexp;
                 return;
             }
-            if (agg.op == TOKarrayliteral || agg.op == TOKstring)
+            if (agg.op == TOK.arrayLiteral || agg.op == TOK.string_)
             {
                 if (goal == ctfeNeedLvalue)
                 {
                     // if we need a reference, IndexExp shouldn't be interpreting
                     // the expression to a value, it should stay as a reference
-                    result = new IndexExp(e.loc, agg, new IntegerExp(e.e2.loc, indexToAccess, e.e2.type));
+                    emplaceExp!(IndexExp)(pue, e.loc, agg, new IntegerExp(e.e2.loc, indexToAccess, e.e2.type));
+                    result = pue.exp();
                     result.type = e.type;
                     return;
                 }
@@ -5269,13 +5339,13 @@ public:
             Expression e1 = interpret(e.e1, istate);
             if (exceptionOrCant(e1))
                 return;
-            if (e1.op == TOKnull)
+            if (e1.op == TOK.null_)
             {
                 if (goal == ctfeNeedLvalue && e1.type.ty == Taarray && e.modifiable)
                 {
                     assert(0); // does not reach here?
                 }
-                e.error("cannot index null array %s", e.e1.toChars());
+                e.error("cannot index null array `%s`", e.e1.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
@@ -5290,18 +5360,20 @@ public:
                     result = e;
                 else
                 {
-                    result = new IndexExp(e.loc, e1, e2);
+                    emplaceExp!(IndexExp)(pue, e.loc, e1, e2);
+                    result = pue.exp();
                     result.type = e.type;
                 }
                 return;
             }
 
-            assert(e1.op == TOKassocarrayliteral);
-            e2 = resolveSlice(e2);
+            assert(e1.op == TOK.assocArrayLiteral);
+            UnionExp e2tmp = void;
+            e2 = resolveSlice(e2, &e2tmp);
             result = findKeyInAA(e.loc, cast(AssocArrayLiteralExp)e1, e2);
             if (!result)
             {
-                e.error("key %s not found in associative array %s", e2.toChars(), e.e1.toChars());
+                e.error("key `%s` not found in associative array `%s`", e2.toChars(), e.e1.toChars());
                 result = CTFEExp.cantexp;
             }
             return;
@@ -5318,7 +5390,8 @@ public:
         if (goal == ctfeNeedLvalue)
         {
             Expression e2 = new IntegerExp(e.e2.loc, indexToAccess, Type.tsize_t);
-            result = new IndexExp(e.loc, agg, e2);
+            emplaceExp!(IndexExp)(pue, e.loc, agg, e2);
+            result = pue.exp();
             result.type = e.type;
             return;
         }
@@ -5326,9 +5399,9 @@ public:
         result = ctfeIndex(e.loc, e.type, agg, indexToAccess);
         if (exceptionOrCant(result))
             return;
-        if (result.op == TOKvoid)
+        if (result.op == TOK.void_)
         {
-            e.error("%s is used before initialized", e.toChars());
+            e.error("`%s` is used before initialized", e.toChars());
             errorSupplemental(result.loc, "originally uninitialized here");
             result = CTFEExp.cantexp;
             return;
@@ -5348,9 +5421,9 @@ public:
             Expression e1 = interpret(e.e1, istate);
             if (exceptionOrCant(e1))
                 return;
-            if (e1.op == TOKint64)
+            if (e1.op == TOK.int64)
             {
-                e.error("cannot slice invalid pointer %s of value %s", e.e1.toChars(), e1.toChars());
+                e.error("cannot slice invalid pointer `%s` of value `%s`", e.e1.toChars(), e1.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
@@ -5370,7 +5443,7 @@ public:
             Expression agg = getAggregateFromPointer(e1, &ofs);
             ilwr += ofs;
             iupr += ofs;
-            if (agg.op == TOKnull)
+            if (agg.op == TOK.null_)
             {
                 if (iupr == ilwr)
                 {
@@ -5378,28 +5451,28 @@ public:
                     result.type = e.type;
                     return;
                 }
-                e.error("cannot slice null pointer %s", e.e1.toChars());
+                e.error("cannot slice null pointer `%s`", e.e1.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
-            if (agg.op == TOKsymoff)
+            if (agg.op == TOK.symbolOffset)
             {
                 e.error("slicing pointers to static variables is not supported in CTFE");
                 result = CTFEExp.cantexp;
                 return;
             }
-            if (agg.op != TOKarrayliteral && agg.op != TOKstring)
+            if (agg.op != TOK.arrayLiteral && agg.op != TOK.string_)
             {
-                e.error("pointer %s cannot be sliced at compile time (it does not point to an array)", e.e1.toChars());
+                e.error("pointer `%s` cannot be sliced at compile time (it does not point to an array)", e.e1.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
-            assert(agg.op == TOKarrayliteral || agg.op == TOKstring);
+            assert(agg.op == TOK.arrayLiteral || agg.op == TOK.string_);
             dinteger_t len = ArrayLength(Type.tsize_t, agg).exp().toInteger();
             //Type *pointee = ((TypePointer *)agg.type)->next;
             if (iupr > (len + 1) || iupr < ilwr)
             {
-                e.error("pointer slice [%lld..%lld] exceeds allocated memory block [0..%lld]", ilwr, iupr, len);
+                e.error("pointer slice `[%lld..%lld]` exceeds allocated memory block `[0..%lld]`", ilwr, iupr, len);
                 result = CTFEExp.cantexp;
                 return;
             }
@@ -5408,7 +5481,8 @@ public:
                 lwr = new IntegerExp(e.loc, ilwr, lwr.type);
                 upr = new IntegerExp(e.loc, iupr, upr.type);
             }
-            result = new SliceExp(e.loc, agg, lwr, upr);
+            emplaceExp!(SliceExp)(pue, e.loc, agg, lwr, upr);
+            result = pue.exp();
             result.type = e.type;
             return;
         }
@@ -5425,9 +5499,9 @@ public:
 
         /* Set the $ variable
          */
-        if (e1.op != TOKarrayliteral && e1.op != TOKstring && e1.op != TOKnull && e1.op != TOKslice)
+        if (e1.op != TOK.arrayLiteral && e1.op != TOK.string_ && e1.op != TOK.null_ && e1.op != TOK.slice)
         {
-            e.error("cannot determine length of %s at compile time", e1.toChars());
+            e.error("cannot determine length of `%s` at compile time", e1.toChars());
             result = CTFEExp.cantexp;
             return;
         }
@@ -5460,7 +5534,7 @@ public:
 
         uinteger_t ilwr = lwr.toInteger();
         uinteger_t iupr = upr.toInteger();
-        if (e1.op == TOKnull)
+        if (e1.op == TOK.null_)
         {
             if (ilwr == 0 && iupr == 0)
             {
@@ -5471,7 +5545,7 @@ public:
             result = CTFEExp.cantexp;
             return;
         }
-        if (e1.op == TOKslice)
+        if (e1.op == TOK.slice)
         {
             SliceExp se = cast(SliceExp)e1;
             // Simplify slice of slice:
@@ -5480,26 +5554,28 @@ public:
             uinteger_t up1 = se.upr.toInteger();
             if (ilwr > iupr || iupr > up1 - lo1)
             {
-                e.error("slice[%llu..%llu] exceeds array bounds[%llu..%llu]", ilwr, iupr, lo1, up1);
+                e.error("slice `[%llu..%llu]` exceeds array bounds `[%llu..%llu]`", ilwr, iupr, lo1, up1);
                 result = CTFEExp.cantexp;
                 return;
             }
             ilwr += lo1;
             iupr += lo1;
-            result = new SliceExp(e.loc, se.e1, new IntegerExp(e.loc, ilwr, lwr.type), new IntegerExp(e.loc, iupr, upr.type));
+            emplaceExp!(SliceExp)(pue, e.loc, se.e1, new IntegerExp(e.loc, ilwr, lwr.type), new IntegerExp(e.loc, iupr, upr.type));
+            result = pue.exp();
             result.type = e.type;
             return;
         }
-        if (e1.op == TOKarrayliteral || e1.op == TOKstring)
+        if (e1.op == TOK.arrayLiteral || e1.op == TOK.string_)
         {
             if (iupr < ilwr || dollar < iupr)
             {
-                e.error("slice [%lld..%lld] exceeds array bounds [0..%lld]", ilwr, iupr, dollar);
+                e.error("slice `[%lld..%lld]` exceeds array bounds `[0..%lld]`", ilwr, iupr, dollar);
                 result = CTFEExp.cantexp;
                 return;
             }
         }
-        result = new SliceExp(e.loc, e1, lwr, upr);
+        emplaceExp!(SliceExp)(pue, e.loc, e1, lwr, upr);
+        result = pue.exp();
         result.type = e.type;
     }
 
@@ -5515,14 +5591,15 @@ public:
         Expression e2 = interpret(e.e2, istate);
         if (exceptionOrCant(e2))
             return;
-        if (e2.op == TOKnull)
+        if (e2.op == TOK.null_)
         {
-            result = new NullExp(e.loc, e.type);
+            emplaceExp!(NullExp)(pue, e.loc, e.type);
+            result = pue.exp();
             return;
         }
-        if (e2.op != TOKassocarrayliteral)
+        if (e2.op != TOK.assocArrayLiteral)
         {
-            e.error("%s cannot be interpreted at compile time", e.toChars());
+            e.error("`%s` cannot be interpreted at compile time", e.toChars());
             result = CTFEExp.cantexp;
             return;
         }
@@ -5533,15 +5610,16 @@ public:
             return;
         if (!result)
         {
-            result = new NullExp(e.loc, e.type);
+            emplaceExp!(NullExp)(pue, e.loc, e.type);
+            result = pue.exp();
         }
         else
         {
             // Create a CTFE pointer &aa[index]
             result = new IndexExp(e.loc, e2, e1);
             result.type = e.type.nextOf();
-            result = new AddrExp(e.loc, result);
-            result.type = e.type;
+            emplaceExp!(AddrExp)(pue, e.loc, result, e.type);
+            result = pue.exp();
         }
     }
 
@@ -5551,6 +5629,7 @@ public:
         {
             printf("%s CatExp::interpret() %s\n", e.loc.toChars(), e.toChars());
         }
+        {
         Expression e1 = interpret(e.e1, istate);
         if (exceptionOrCant(e1))
             return;
@@ -5558,19 +5637,22 @@ public:
         if (exceptionOrCant(e2))
             return;
 
-        e1 = resolveSlice(e1);
-        e2 = resolveSlice(e2);
+        UnionExp e1tmp = void;
+        e1 = resolveSlice(e1, &e1tmp);
+        UnionExp e2tmp = void;
+        e2 = resolveSlice(e2, &e2tmp);
         result = ctfeCat(e.loc, e.type, e1, e2).copy();
+        }
         if (CTFEExp.isCantExp(result))
         {
-            e.error("%s cannot be interpreted at compile time", e.toChars());
+            e.error("`%s` cannot be interpreted at compile time", e.toChars());
             return;
         }
         // We know we still own it, because we interpreted both e1 and e2
-        if (result.op == TOKarrayliteral)
+        if (result.op == TOK.arrayLiteral)
         {
             ArrayLiteralExp ale = cast(ArrayLiteralExp)result;
-            ale.ownedByCtfe = OWNEDctfe;
+            ale.ownedByCtfe = OwnedBy.ctfe;
 
             // https://issues.dlang.org/show_bug.cgi?id=14686
             for (size_t i = 0; i < ale.elements.dim; i++)
@@ -5580,8 +5662,8 @@ public:
                     return;
             }
         }
-        if (result.op == TOKstring)
-            (cast(StringExp)result).ownedByCtfe = OWNEDctfe;
+        if (result.op == TOK.string_)
+            (cast(StringExp)result).ownedByCtfe = OwnedBy.ctfe;
     }
 
     override void visit(DeleteExp e)
@@ -5594,7 +5676,7 @@ public:
         if (exceptionOrCant(result))
             return;
 
-        if (result.op == TOKnull)
+        if (result.op == TOK.null_)
         {
             result = CTFEExp.voidexp;
             return;
@@ -5604,9 +5686,9 @@ public:
         switch (tb.ty)
         {
         case Tclass:
-            if (result.op != TOKclassreference)
+            if (result.op != TOK.classReference)
             {
-                e.error("delete on invalid class reference '%s'", result.toChars());
+                e.error("`delete` on invalid class reference `%s`", result.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
@@ -5622,7 +5704,7 @@ public:
 
             if (cd.dtor)
             {
-                result = interpret(cd.dtor, istate, null, cre);
+                result = interpretFunction(cd.dtor, istate, null, cre);
                 if (exceptionOrCant(result))
                     return;
             }
@@ -5632,10 +5714,10 @@ public:
             tb = (cast(TypePointer)tb).next.toBasetype();
             if (tb.ty == Tstruct)
             {
-                if (result.op != TOKaddress ||
-                    (cast(AddrExp)result).e1.op != TOKstructliteral)
+                if (result.op != TOK.address ||
+                    (cast(AddrExp)result).e1.op != TOK.structLiteral)
                 {
-                    e.error("delete on invalid struct pointer '%s'", result.toChars());
+                    e.error("`delete` on invalid struct pointer `%s`", result.toChars());
                     result = CTFEExp.cantexp;
                     return;
                 }
@@ -5651,7 +5733,7 @@ public:
 
                 if (sd.dtor)
                 {
-                    result = interpret(sd.dtor, istate, null, sle);
+                    result = interpretFunction(sd.dtor, istate, null, sle);
                     if (exceptionOrCant(result))
                         return;
                 }
@@ -5662,9 +5744,9 @@ public:
             auto tv = tb.nextOf().baseElemOf();
             if (tv.ty == Tstruct)
             {
-                if (result.op != TOKarrayliteral)
+                if (result.op != TOK.arrayLiteral)
                 {
-                    e.error("delete on invalid struct array '%s'", result.toChars());
+                    e.error("`delete` on invalid struct array `%s`", result.toChars());
                     result = CTFEExp.cantexp;
                     return;
                 }
@@ -5682,7 +5764,7 @@ public:
                     auto ale = cast(ArrayLiteralExp)result;
                     foreach (el; *ale.elements)
                     {
-                        result = interpret(sd.dtor, istate, null, el);
+                        result = interpretFunction(sd.dtor, istate, null, el);
                         if (exceptionOrCant(result))
                             return;
                     }
@@ -5711,11 +5793,11 @@ public:
             result = CTFEExp.voidexp;
             return;
         }
-        if (e.to.ty == Tpointer && e1.op != TOKnull)
+        if (e.to.ty == Tpointer && e1.op != TOK.null_)
         {
             Type pointee = (cast(TypePointer)e.type).next;
             // Implement special cases of normally-unsafe casts
-            if (e1.op == TOKint64)
+            if (e1.op == TOK.int64)
             {
                 // Happens with Windows HANDLEs, for example.
                 result = paintTypeOntoLiteral(e.to, e1);
@@ -5730,7 +5812,7 @@ public:
                 // For slices, we need the type being sliced,
                 // since it may have already been type painted
                 Type elemtype = e1.type.nextOf();
-                if (e1.op == TOKslice)
+                if (e1.op == TOK.slice)
                     elemtype = (cast(SliceExp)e1).e1.type.nextOf();
 
                 // Allow casts from X* to void *, and X** to void** for any X.
@@ -5751,7 +5833,7 @@ public:
                 }
                 else if (ultimatePointee.ty != Tvoid && ultimateSrc.ty != Tvoid && !isSafePointerCast(elemtype, pointee))
                 {
-                    e.error("reinterpreting cast from %s* to %s* is not supported in CTFE", elemtype.toChars(), pointee.toChars());
+                    e.error("reinterpreting cast from `%s*` to `%s*` is not supported in CTFE", elemtype.toChars(), pointee.toChars());
                     result = CTFEExp.cantexp;
                     return;
                 }
@@ -5759,30 +5841,30 @@ public:
                     castBackFromVoid = true;
             }
 
-            if (e1.op == TOKslice)
+            if (e1.op == TOK.slice)
             {
-                if ((cast(SliceExp)e1).e1.op == TOKnull)
+                if ((cast(SliceExp)e1).e1.op == TOK.null_)
                 {
                     result = paintTypeOntoLiteral(e.type, (cast(SliceExp)e1).e1);
                     return;
                 }
                 // Create a CTFE pointer &aggregate[1..2]
-                result = new IndexExp(e.loc, (cast(SliceExp)e1).e1, (cast(SliceExp)e1).lwr);
-                result.type = e.type.nextOf();
-                result = new AddrExp(e.loc, result);
-                result.type = e.type;
+                auto ei = new IndexExp(e.loc, (cast(SliceExp)e1).e1, (cast(SliceExp)e1).lwr);
+                ei.type = e.type.nextOf();
+                emplaceExp!(AddrExp)(pue, e.loc, ei, e.type);
+                result = pue.exp();
                 return;
             }
-            if (e1.op == TOKarrayliteral || e1.op == TOKstring)
+            if (e1.op == TOK.arrayLiteral || e1.op == TOK.string_)
             {
                 // Create a CTFE pointer &[1,2,3][0] or &"abc"[0]
-                result = new IndexExp(e.loc, e1, new IntegerExp(e.loc, 0, Type.tsize_t));
-                result.type = e.type.nextOf();
-                result = new AddrExp(e.loc, result);
-                result.type = e.type;
+                auto ei = new IndexExp(e.loc, e1, new IntegerExp(e.loc, 0, Type.tsize_t));
+                ei.type = e.type.nextOf();
+                emplaceExp!(AddrExp)(pue, e.loc, ei, e.type);
+                result = pue.exp();
                 return;
             }
-            if (e1.op == TOKindex && !(cast(IndexExp)e1).e1.type.equals(e1.type))
+            if (e1.op == TOK.index && !(cast(IndexExp)e1).e1.type.equals(e1.type))
             {
                 // type painting operation
                 IndexExp ie = cast(IndexExp)e1;
@@ -5792,23 +5874,26 @@ public:
                     // get the original type. For strings, it's just the type...
                     Type origType = ie.e1.type.nextOf();
                     // ..but for arrays of type void*, it's the type of the element
-                    Expression xx = null;
-                    if (ie.e1.op == TOKarrayliteral && ie.e2.op == TOKint64)
+                    if (ie.e1.op == TOK.arrayLiteral && ie.e2.op == TOK.int64)
                     {
                         ArrayLiteralExp ale = cast(ArrayLiteralExp)ie.e1;
                         size_t indx = cast(size_t)ie.e2.toInteger();
                         if (indx < ale.elements.dim)
-                            xx = (*ale.elements)[indx];
+                        {
+                            if (Expression xx = (*ale.elements)[indx])
+                            {
+                                if (xx.op == TOK.index)
+                                    origType = (cast(IndexExp)xx).e1.type.nextOf();
+                                else if (xx.op == TOK.address)
+                                    origType = (cast(AddrExp)xx).e1.type;
+                                else if (xx.op == TOK.variable)
+                                    origType = (cast(VarExp)xx).var.type;
+                            }
+                        }
                     }
-                    if (xx && xx.op == TOKindex)
-                        origType = (cast(IndexExp)xx).e1.type.nextOf();
-                    else if (xx && xx.op == TOKaddress)
-                        origType = (cast(AddrExp)xx).e1.type;
-                    else if (xx && xx.op == TOKvar)
-                        origType = (cast(VarExp)xx).var.type;
                     if (!isSafePointerCast(origType, pointee))
                     {
-                        e.error("using void* to reinterpret cast from %s* to %s* is not supported in CTFE", origType.toChars(), pointee.toChars());
+                        e.error("using `void*` to reinterpret cast from `%s*` to `%s*` is not supported in CTFE", origType.toChars(), pointee.toChars());
                         result = CTFEExp.cantexp;
                         return;
                     }
@@ -5816,16 +5901,16 @@ public:
                 result.type = e.type;
                 return;
             }
-            if (e1.op == TOKaddress)
+            if (e1.op == TOK.address)
             {
                 Type origType = (cast(AddrExp)e1).e1.type;
                 if (isSafePointerCast(origType, pointee))
                 {
-                    result = new AddrExp(e.loc, (cast(AddrExp)e1).e1);
-                    result.type = e.type;
+                    emplaceExp!(AddrExp)(pue, e.loc, (cast(AddrExp)e1).e1, e.type);
+                    result = pue.exp();
                     return;
                 }
-                if (castToSarrayPointer && pointee.toBasetype().ty == Tsarray && (cast(AddrExp)e1).e1.op == TOKindex)
+                if (castToSarrayPointer && pointee.toBasetype().ty == Tsarray && (cast(AddrExp)e1).e1.op == TOK.index)
                 {
                     // &val[idx]
                     dinteger_t dim = (cast(TypeSArray)pointee.toBasetype()).dim.toInteger();
@@ -5834,36 +5919,37 @@ public:
                     Expression upr = new IntegerExp(ie.e2.loc, ie.e2.toInteger() + dim, Type.tsize_t);
 
                     // Create a CTFE pointer &val[idx..idx+dim]
-                    result = new SliceExp(e.loc, ie.e1, lwr, upr);
-                    result.type = pointee;
-                    result = new AddrExp(e.loc, result);
-                    result.type = e.type;
+                    auto er = new SliceExp(e.loc, ie.e1, lwr, upr);
+                    er.type = pointee;
+                    emplaceExp!(AddrExp)(pue, e.loc, er, e.type);
+                    result = pue.exp();
                     return;
                 }
             }
-            if (e1.op == TOKvar || e1.op == TOKsymoff)
+            if (e1.op == TOK.variable || e1.op == TOK.symbolOffset)
             {
                 // type painting operation
                 Type origType = (cast(SymbolExp)e1).var.type;
                 if (castBackFromVoid && !isSafePointerCast(origType, pointee))
                 {
-                    e.error("using void* to reinterpret cast from %s* to %s* is not supported in CTFE", origType.toChars(), pointee.toChars());
+                    e.error("using `void*` to reinterpret cast from `%s*` to `%s*` is not supported in CTFE", origType.toChars(), pointee.toChars());
                     result = CTFEExp.cantexp;
                     return;
                 }
-                if (e1.op == TOKvar)
-                    result = new VarExp(e.loc, (cast(VarExp)e1).var);
+                if (e1.op == TOK.variable)
+                    emplaceExp!(VarExp)(pue, e.loc, (cast(VarExp)e1).var);
                 else
-                    result = new SymOffExp(e.loc, (cast(SymOffExp)e1).var, (cast(SymOffExp)e1).offset);
+                    emplaceExp!(SymOffExp)(pue, e.loc, (cast(SymOffExp)e1).var, (cast(SymOffExp)e1).offset);
+                result = pue.exp();
                 result.type = e.to;
                 return;
             }
 
             // Check if we have a null pointer (eg, inside a struct)
             e1 = interpret(e1, istate);
-            if (e1.op != TOKnull)
+            if (e1.op != TOK.null_)
             {
-                e.error("pointer cast from %s to %s is not supported at compile time", e1.type.toChars(), e.to.toChars());
+                e.error("pointer cast from `%s` to `%s` is not supported at compile time", e1.type.toChars(), e.to.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
@@ -5874,30 +5960,30 @@ public:
             e1 = interpret(e.e1, istate);
             if (exceptionOrCant(e1))
                 return;
-            assert(e1.op == TOKvector);
+            assert(e1.op == TOK.vector);
             e1 = (cast(VectorExp)e1).e1;
         }
-        if (e.to.ty == Tarray && e1.op == TOKslice)
+        if (e.to.ty == Tarray && e1.op == TOK.slice)
         {
             // Note that the slice may be void[], so when checking for dangerous
             // casts, we need to use the original type, which is se.e1.
             SliceExp se = cast(SliceExp)e1;
             if (!isSafePointerCast(se.e1.type.nextOf(), e.to.nextOf()))
             {
-                e.error("array cast from %s to %s is not supported at compile time", se.e1.type.toChars(), e.to.toChars());
+                e.error("array cast from `%s` to `%s` is not supported at compile time", se.e1.type.toChars(), e.to.toChars());
                 result = CTFEExp.cantexp;
                 return;
             }
-            e1 = new SliceExp(e1.loc, se.e1, se.lwr, se.upr);
-            e1.type = e.to;
-            result = e1;
+            emplaceExp!(SliceExp)(pue, e1.loc, se.e1, se.lwr, se.upr);
+            result = pue.exp();
+            result.type = e.to;
             return;
         }
         // Disallow array type painting, except for conversions between built-in
         // types of identical size.
         if ((e.to.ty == Tsarray || e.to.ty == Tarray) && (e1.type.ty == Tsarray || e1.type.ty == Tarray) && !isSafePointerCast(e1.type.nextOf(), e.to.nextOf()))
         {
-            e.error("array cast from %s to %s is not supported at compile time", e1.type.toChars(), e.to.toChars());
+            e.error("array cast from `%s` to `%s` is not supported at compile time", e1.type.toChars(), e.to.toChars());
             result = CTFEExp.cantexp;
             return;
         }
@@ -5905,7 +5991,8 @@ public:
             e1 = resolveSlice(e1);
         if (e.to.toBasetype().ty == Tbool && e1.type.ty == Tpointer)
         {
-            result = new IntegerExp(e.loc, e1.op != TOKnull, e.to);
+            emplaceExp!(IntegerExp)(pue, e.loc, e1.op != TOK.null_, e.to);
+            result = pue.exp();
             return;
         }
         result = ctfeCast(e.loc, e.type, e.to, e1);
@@ -5917,7 +6004,7 @@ public:
         {
             printf("%s AssertExp::interpret() %s\n", e.loc.toChars(), e.toChars());
         }
-        Expression e1 = interpret(e.e1, istate);
+        Expression e1 = interpret(pue, e.e1, istate);
         if (exceptionOrCant(e1))
             return;
         if (isTrueBool(e1))
@@ -5927,19 +6014,20 @@ public:
         {
             if (e.msg)
             {
-                result = interpret(e.msg, istate);
+                UnionExp ue = void;
+                result = interpret(&ue, e.msg, istate);
                 if (exceptionOrCant(result))
                     return;
-                e.error("%s", result.toChars());
+                e.error("`%s`", result.toChars());
             }
             else
-                e.error("%s failed", e.toChars());
+                e.error("`%s` failed", e.toChars());
             result = CTFEExp.cantexp;
             return;
         }
         else
         {
-            e.error("%s is not a compile time boolean expression", e1.toChars());
+            e.error("`%s` is not a compile time boolean expression", e1.toChars());
             result = CTFEExp.cantexp;
             return;
         }
@@ -5954,13 +6042,13 @@ public:
             printf("%s PtrExp::interpret() %s\n", e.loc.toChars(), e.toChars());
         }
         // Check for int<->float and long<->double casts.
-        if (e.e1.op == TOKsymoff && (cast(SymOffExp)e.e1).offset == 0 && (cast(SymOffExp)e.e1).var.isVarDeclaration() && isFloatIntPaint(e.type, (cast(SymOffExp)e.e1).var.type))
+        if (e.e1.op == TOK.symbolOffset && (cast(SymOffExp)e.e1).offset == 0 && (cast(SymOffExp)e.e1).var.isVarDeclaration() && isFloatIntPaint(e.type, (cast(SymOffExp)e.e1).var.type))
         {
             // *(cast(int*)&v), where v is a float variable
             result = paintFloatInt(getVarExp(e.loc, istate, (cast(SymOffExp)e.e1).var, ctfeNeedRvalue), e.type);
             return;
         }
-        if (e.e1.op == TOKcast && (cast(CastExp)e.e1).e1.op == TOKaddress)
+        if (e.e1.op == TOK.cast_ && (cast(CastExp)e.e1).e1.op == TOK.address)
         {
             // *(cast(int*)&x), where x is a float expression
             Expression x = (cast(AddrExp)(cast(CastExp)e.e1).e1).e1;
@@ -5972,16 +6060,16 @@ public:
         }
 
         // Constant fold *(&structliteral + offset)
-        if (e.e1.op == TOKadd)
+        if (e.e1.op == TOK.add)
         {
             AddExp ae = cast(AddExp)e.e1;
-            if (ae.e1.op == TOKaddress && ae.e2.op == TOKint64)
+            if (ae.e1.op == TOK.address && ae.e2.op == TOK.int64)
             {
                 AddrExp ade = cast(AddrExp)ae.e1;
                 Expression ex = interpret(ade.e1, istate);
                 if (exceptionOrCant(ex))
                     return;
-                if (ex.op == TOKstructliteral)
+                if (ex.op == TOK.structLiteral)
                 {
                     StructLiteralExp se = cast(StructLiteralExp)ex;
                     dinteger_t offset = ae.e2.toInteger();
@@ -5998,24 +6086,24 @@ public:
         if (exceptionOrCant(result))
             return;
 
-        if (result.op == TOKfunction)
+        if (result.op == TOK.function_)
             return;
-        if (result.op == TOKsymoff)
+        if (result.op == TOK.symbolOffset)
         {
             SymOffExp soe = cast(SymOffExp)result;
             if (soe.offset == 0 && soe.var.isFuncDeclaration())
                 return;
-            e.error("cannot dereference pointer to static variable %s at compile time", soe.var.toChars());
+            e.error("cannot dereference pointer to static variable `%s` at compile time", soe.var.toChars());
             result = CTFEExp.cantexp;
             return;
         }
 
-        if (result.op != TOKaddress)
+        if (result.op != TOK.address)
         {
-            if (result.op == TOKnull)
-                e.error("dereference of null pointer '%s'", e.e1.toChars());
+            if (result.op == TOK.null_)
+                e.error("dereference of null pointer `%s`", e.e1.toChars());
             else
-                e.error("dereference of invalid pointer '%s'", result.toChars());
+                e.error("dereference of invalid pointer `%s`", result.toChars());
             result = CTFEExp.cantexp;
             return;
         }
@@ -6023,7 +6111,7 @@ public:
         // *(&x) ==> x
         result = (cast(AddrExp)result).e1;
 
-        if (result.op == TOKslice && e.type.toBasetype().ty == Tsarray)
+        if (result.op == TOK.slice && e.type.toBasetype().ty == Tsarray)
         {
             /* aggr[lwr..upr]
              * upr may exceed the upper boundary of aggr, but the check is deferred
@@ -6058,7 +6146,8 @@ public:
                 result = e; // optimize: reuse this CTFE reference
             else
             {
-                result = new DotVarExp(e.loc, ex, f, false);
+                emplaceExp!(DotVarExp)(pue, e.loc, ex, f, false);
+                result = pue.exp();
                 result.type = e.type;
             }
             return;
@@ -6067,23 +6156,23 @@ public:
         VarDeclaration v = e.var.isVarDeclaration();
         if (!v)
         {
-            e.error("CTFE internal error: %s", e.toChars());
+            e.error("CTFE internal error: `%s`", e.toChars());
             result = CTFEExp.cantexp;
             return;
         }
 
-        if (ex.op == TOKnull)
+        if (ex.op == TOK.null_)
         {
             if (ex.type.toBasetype().ty == Tclass)
-                e.error("class '%s' is null and cannot be dereferenced", e.e1.toChars());
+                e.error("class `%s` is `null` and cannot be dereferenced", e.e1.toChars());
             else
-                e.error("CTFE internal error: null this '%s'", e.e1.toChars());
+                e.error("CTFE internal error: null this `%s`", e.e1.toChars());
             result = CTFEExp.cantexp;
             return;
         }
-        if (ex.op != TOKstructliteral && ex.op != TOKclassreference)
+        if (ex.op != TOK.structLiteral && ex.op != TOK.classReference)
         {
-            e.error("%s.%s is not yet implemented at compile time", e.e1.toChars(), e.var.toChars());
+            e.error("`%s.%s` is not yet implemented at compile time", e.e1.toChars(), e.var.toChars());
             result = CTFEExp.cantexp;
             return;
         }
@@ -6092,7 +6181,7 @@ public:
         int i;
 
         // We can't use getField, because it makes a copy
-        if (ex.op == TOKclassreference)
+        if (ex.op == TOK.classReference)
         {
             se = (cast(ClassReferenceExp)ex).value;
             i = (cast(ClassReferenceExp)ex).findFieldIndexByName(v);
@@ -6104,7 +6193,7 @@ public:
         }
         if (i == -1)
         {
-            e.error("couldn't find field %s of type %s in %s", v.toChars(), e.type.toChars(), se.toChars());
+            e.error("couldn't find field `%s` of type `%s` in `%s`", v.toChars(), e.type.toChars(), se.toChars());
             result = CTFEExp.cantexp;
             return;
         }
@@ -6112,14 +6201,15 @@ public:
         if (goal == ctfeNeedLvalue)
         {
             Expression ev = (*se.elements)[i];
-            if (!ev || ev.op == TOKvoid)
+            if (!ev || ev.op == TOK.void_)
                 (*se.elements)[i] = voidInitLiteral(e.type, v).copy();
             // just return the (simplified) dotvar expression as a CTFE reference
             if (e.e1 == ex)
                 result = e;
             else
             {
-                result = new DotVarExp(e.loc, ex, v);
+                emplaceExp!(DotVarExp)(pue, e.loc, ex, v);
+                result = pue.exp();
                 result.type = e.type;
             }
             return;
@@ -6128,21 +6218,21 @@ public:
         result = (*se.elements)[i];
         if (!result)
         {
-            e.error("Internal Compiler Error: null field %s", v.toChars());
+            e.error("Internal Compiler Error: null field `%s`", v.toChars());
             result = CTFEExp.cantexp;
             return;
         }
-        if (result.op == TOKvoid)
+        if (result.op == TOK.void_)
         {
             VoidInitExp ve = cast(VoidInitExp)result;
             const(char)* s = ve.var.toChars();
             if (v.overlapped)
             {
-                e.error("reinterpretation through overlapped field %s is not allowed in CTFE", s);
+                e.error("reinterpretation through overlapped field `%s` is not allowed in CTFE", s);
                 result = CTFEExp.cantexp;
                 return;
             }
-            e.error("cannot read uninitialized variable %s in CTFE", s);
+            e.error("cannot read uninitialized variable `%s` in CTFE", s);
             result = CTFEExp.cantexp;
             return;
         }
@@ -6174,13 +6264,13 @@ public:
         Expression index = interpret(e.e2, istate);
         if (exceptionOrCant(index))
             return;
-        if (agg.op == TOKnull)
+        if (agg.op == TOK.null_)
         {
             result = CTFEExp.voidexp;
             return;
         }
 
-        assert(agg.op == TOKassocarrayliteral);
+        assert(agg.op == TOK.assocArrayLiteral);
         AssocArrayLiteralExp aae = cast(AssocArrayLiteralExp)agg;
         Expressions* keysx = aae.keys;
         Expressions* valuesx = aae.values;
@@ -6188,7 +6278,7 @@ public:
         for (size_t j = 0; j < valuesx.dim; ++j)
         {
             Expression ekey = (*keysx)[j];
-            int eq = ctfeEqual(e.loc, TOKequal, ekey, index);
+            int eq = ctfeEqual(e.loc, TOK.equal, ekey, index);
             if (eq)
                 ++removed;
             else if (removed != 0)
@@ -6199,7 +6289,8 @@ public:
         }
         valuesx.dim = valuesx.dim - removed;
         keysx.dim = keysx.dim - removed;
-        result = new IntegerExp(e.loc, removed ? 1 : 0, Type.tbool);
+        emplaceExp!(IntegerExp)(pue, e.loc, removed ? 1 : 0, Type.tbool);
+        result = pue.exp();
     }
 
     override void visit(ClassReferenceExp e)
@@ -6220,43 +6311,78 @@ public:
     }
 }
 
-private Expression interpret(Expression e, InterState* istate, CtfeGoal goal = ctfeNeedRvalue)
+/********************************************
+ * Interpret the expression.
+ * Params:
+ *    pue = non-null pointer to temporary storage that can be used to store the return value
+ *    e = Expression to interpret
+ *    istate = context
+ *    goal = what the result will be used for
+ * Returns:
+ *    resulting expression
+ */
+
+Expression interpret(UnionExp* pue, Expression e, InterState* istate, CtfeGoal goal = ctfeNeedRvalue)
 {
     if (!e)
         return null;
-    scope Interpreter v = new Interpreter(istate, goal);
+    scope Interpreter v = new Interpreter(pue, istate, goal);
     e.accept(v);
     Expression ex = v.result;
     assert(goal == ctfeNeedNothing || ex !is null);
     return ex;
 }
 
+///
+Expression interpret(Expression e, InterState* istate, CtfeGoal goal = ctfeNeedRvalue)
+{
+    UnionExp ue = void;
+    auto result = interpret(&ue, e, istate, goal);
+    if (result == ue.exp())
+        result = ue.copy();
+    return result;
+}
+
 /***********************************
  * Interpret the statement.
+ * Params:
+ *    pue = non-null pointer to temporary storage that can be used to store the return value
+ *    s = Statement to interpret
+ *    istate = context
  * Returns:
  *      NULL    continue to next statement
- *      TOKcantexp      cannot interpret statement at compile time
+ *      TOK.cantExpression      cannot interpret statement at compile time
  *      !NULL   expression from return statement, or thrown exception
  */
-private Expression interpret(Statement s, InterState* istate)
+Expression interpret(UnionExp* pue, Statement s, InterState* istate)
 {
     if (!s)
         return null;
-    scope Interpreter v = new Interpreter(istate, ctfeNeedNothing);
+    scope Interpreter v = new Interpreter(pue, istate, ctfeNeedNothing);
     s.accept(v);
     return v.result;
+}
+
+///
+Expression interpret(Statement s, InterState* istate)
+{
+    UnionExp ue = void;
+    auto result = interpret(&ue, s, istate);
+    if (result == ue.exp())
+        result = ue.copy();
+    return result;
 }
 
 /* All results destined for use outside of CTFE need to have their CTFE-specific
  * features removed.
  * In particular, all slices must be resolved.
  */
-private Expression scrubReturnValue(Loc loc, Expression e)
+private Expression scrubReturnValue(const ref Loc loc, Expression e)
 {
-    if (e.op == TOKclassreference)
+    if (e.op == TOK.classReference)
     {
         StructLiteralExp se = (cast(ClassReferenceExp)e).value;
-        se.ownedByCtfe = OWNEDcode;
+        se.ownedByCtfe = OwnedBy.code;
         if (!(se.stageflags & stageScrub))
         {
             int old = se.stageflags;
@@ -6266,16 +6392,16 @@ private Expression scrubReturnValue(Loc loc, Expression e)
             se.stageflags = old;
         }
     }
-    if (e.op == TOKvoid)
+    if (e.op == TOK.void_)
     {
-        error(loc, "uninitialized variable '%s' cannot be returned from CTFE", (cast(VoidInitExp)e).var.toChars());
+        error(loc, "uninitialized variable `%s` cannot be returned from CTFE", (cast(VoidInitExp)e).var.toChars());
         return new ErrorExp();
     }
     e = resolveSlice(e);
-    if (e.op == TOKstructliteral)
+    if (e.op == TOK.structLiteral)
     {
         StructLiteralExp se = cast(StructLiteralExp)e;
-        se.ownedByCtfe = OWNEDcode;
+        se.ownedByCtfe = OwnedBy.code;
         if (!(se.stageflags & stageScrub))
         {
             int old = se.stageflags;
@@ -6285,20 +6411,20 @@ private Expression scrubReturnValue(Loc loc, Expression e)
             se.stageflags = old;
         }
     }
-    if (e.op == TOKstring)
+    if (e.op == TOK.string_)
     {
-        (cast(StringExp)e).ownedByCtfe = OWNEDcode;
+        (cast(StringExp)e).ownedByCtfe = OwnedBy.code;
     }
-    if (e.op == TOKarrayliteral)
+    if (e.op == TOK.arrayLiteral)
     {
-        (cast(ArrayLiteralExp)e).ownedByCtfe = OWNEDcode;
+        (cast(ArrayLiteralExp)e).ownedByCtfe = OwnedBy.code;
         if (Expression ex = scrubArray(loc, (cast(ArrayLiteralExp)e).elements))
             return ex;
     }
-    if (e.op == TOKassocarrayliteral)
+    if (e.op == TOK.assocArrayLiteral)
     {
         AssocArrayLiteralExp aae = cast(AssocArrayLiteralExp)e;
-        aae.ownedByCtfe = OWNEDcode;
+        aae.ownedByCtfe = OwnedBy.code;
         if (Expression ex = scrubArray(loc, aae.keys))
             return ex;
         if (Expression ex = scrubArray(loc, aae.values))
@@ -6320,7 +6446,7 @@ private bool isEntirelyVoid(Expressions* elems)
         if (!m)
             continue;
 
-        if (!(m.op == TOKvoid) && !(m.op == TOKarrayliteral && isEntirelyVoid((cast(ArrayLiteralExp)m).elements)) && !(m.op == TOKstructliteral && isEntirelyVoid((cast(StructLiteralExp)m).elements)))
+        if (!(m.op == TOK.void_) && !(m.op == TOK.arrayLiteral && isEntirelyVoid((cast(ArrayLiteralExp)m).elements)) && !(m.op == TOK.structLiteral && isEntirelyVoid((cast(StructLiteralExp)m).elements)))
         {
             return false;
         }
@@ -6329,7 +6455,7 @@ private bool isEntirelyVoid(Expressions* elems)
 }
 
 // Scrub all members of an array. Return false if error
-private Expression scrubArray(Loc loc, Expressions* elems, bool structlit = false)
+private Expression scrubArray(const ref Loc loc, Expressions* elems, bool structlit = false)
 {
     for (size_t i = 0; i < elems.dim; i++)
     {
@@ -6341,14 +6467,14 @@ private Expression scrubArray(Loc loc, Expressions* elems, bool structlit = fals
 
         // A struct .init may contain void members.
         // Static array members are a weird special case (bug 10994).
-        if (structlit && ((m.op == TOKvoid) || (m.op == TOKarrayliteral && m.type.ty == Tsarray && isEntirelyVoid((cast(ArrayLiteralExp)m).elements)) || (m.op == TOKstructliteral && isEntirelyVoid((cast(StructLiteralExp)m).elements))))
+        if (structlit && ((m.op == TOK.void_) || (m.op == TOK.arrayLiteral && m.type.ty == Tsarray && isEntirelyVoid((cast(ArrayLiteralExp)m).elements)) || (m.op == TOK.structLiteral && isEntirelyVoid((cast(StructLiteralExp)m).elements))))
         {
             m = null;
         }
         else
         {
             m = scrubReturnValue(loc, m);
-            if (CTFEExp.isCantExp(m) || m.op == TOKerror)
+            if (CTFEExp.isCantExp(m) || m.op == TOK.error)
                 return m;
         }
         (*elems)[i] = m;
@@ -6356,12 +6482,12 @@ private Expression scrubArray(Loc loc, Expressions* elems, bool structlit = fals
     return null;
 }
 
-private Expression scrubCacheValue(Loc loc, Expression e)
+private Expression scrubCacheValue(const ref Loc loc, Expression e)
 {
-    if (e.op == TOKclassreference)
+    if (e.op == TOK.classReference)
     {
         StructLiteralExp sle = (cast(ClassReferenceExp)e).value;
-        sle.ownedByCtfe = OWNEDcache;
+        sle.ownedByCtfe = OwnedBy.cache;
         if (!(sle.stageflags & stageScrub))
         {
             int old = sle.stageflags;
@@ -6371,10 +6497,10 @@ private Expression scrubCacheValue(Loc loc, Expression e)
             sle.stageflags = old;
         }
     }
-    if (e.op == TOKstructliteral)
+    if (e.op == TOK.structLiteral)
     {
         StructLiteralExp sle = cast(StructLiteralExp)e;
-        sle.ownedByCtfe = OWNEDcache;
+        sle.ownedByCtfe = OwnedBy.cache;
         if (!(sle.stageflags & stageScrub))
         {
             int old = sle.stageflags;
@@ -6384,20 +6510,20 @@ private Expression scrubCacheValue(Loc loc, Expression e)
             sle.stageflags = old;
         }
     }
-    if (e.op == TOKstring)
+    if (e.op == TOK.string_)
     {
-        (cast(StringExp)e).ownedByCtfe = OWNEDcache;
+        (cast(StringExp)e).ownedByCtfe = OwnedBy.cache;
     }
-    if (e.op == TOKarrayliteral)
+    if (e.op == TOK.arrayLiteral)
     {
-        (cast(ArrayLiteralExp)e).ownedByCtfe = OWNEDcache;
+        (cast(ArrayLiteralExp)e).ownedByCtfe = OwnedBy.cache;
         if (Expression ex = scrubArrayCache(loc, (cast(ArrayLiteralExp)e).elements))
             return ex;
     }
-    if (e.op == TOKassocarrayliteral)
+    if (e.op == TOK.assocArrayLiteral)
     {
         AssocArrayLiteralExp aae = cast(AssocArrayLiteralExp)e;
-        aae.ownedByCtfe = OWNEDcache;
+        aae.ownedByCtfe = OwnedBy.cache;
         if (Expression ex = scrubArrayCache(loc, aae.keys))
             return ex;
         if (Expression ex = scrubArrayCache(loc, aae.values))
@@ -6406,7 +6532,7 @@ private Expression scrubCacheValue(Loc loc, Expression e)
     return e;
 }
 
-private Expression scrubArrayCache(Loc loc, Expressions* elems)
+private Expression scrubArrayCache(const ref Loc loc, Expressions* elems)
 {
     for (size_t i = 0; i < elems.dim; i++)
     {
@@ -6427,10 +6553,10 @@ private Expression interpret_length(InterState* istate, Expression earg)
     if (exceptionOrCantInterpret(earg))
         return earg;
     dinteger_t len = 0;
-    if (earg.op == TOKassocarrayliteral)
+    if (earg.op == TOK.assocArrayLiteral)
         len = (cast(AssocArrayLiteralExp)earg).keys.dim;
     else
-        assert(earg.op == TOKnull);
+        assert(earg.op == TOK.null_);
     Expression e = new IntegerExp(earg.loc, len, Type.tsize_t);
     return e;
 }
@@ -6444,11 +6570,11 @@ private Expression interpret_keys(InterState* istate, Expression earg, Type retu
     earg = interpret(earg, istate);
     if (exceptionOrCantInterpret(earg))
         return earg;
-    if (earg.op == TOKnull)
+    if (earg.op == TOK.null_)
         return new NullExp(earg.loc, returnType);
-    if (earg.op != TOKassocarrayliteral && earg.type.toBasetype().ty != Taarray)
+    if (earg.op != TOK.assocArrayLiteral && earg.type.toBasetype().ty != Taarray)
         return null;
-    assert(earg.op == TOKassocarrayliteral);
+    assert(earg.op == TOK.assocArrayLiteral);
     AssocArrayLiteralExp aae = cast(AssocArrayLiteralExp)earg;
     auto ae = new ArrayLiteralExp(aae.loc, aae.keys);
     ae.ownedByCtfe = aae.ownedByCtfe;
@@ -6465,11 +6591,11 @@ private Expression interpret_values(InterState* istate, Expression earg, Type re
     earg = interpret(earg, istate);
     if (exceptionOrCantInterpret(earg))
         return earg;
-    if (earg.op == TOKnull)
+    if (earg.op == TOK.null_)
         return new NullExp(earg.loc, returnType);
-    if (earg.op != TOKassocarrayliteral && earg.type.toBasetype().ty != Taarray)
+    if (earg.op != TOK.assocArrayLiteral && earg.type.toBasetype().ty != Taarray)
         return null;
-    assert(earg.op == TOKassocarrayliteral);
+    assert(earg.op == TOK.assocArrayLiteral);
     AssocArrayLiteralExp aae = cast(AssocArrayLiteralExp)earg;
     auto ae = new ArrayLiteralExp(aae.loc, aae.values);
     ae.ownedByCtfe = aae.ownedByCtfe;
@@ -6487,11 +6613,11 @@ private Expression interpret_dup(InterState* istate, Expression earg)
     earg = interpret(earg, istate);
     if (exceptionOrCantInterpret(earg))
         return earg;
-    if (earg.op == TOKnull)
+    if (earg.op == TOK.null_)
         return new NullExp(earg.loc, earg.type);
-    if (earg.op != TOKassocarrayliteral && earg.type.toBasetype().ty != Taarray)
+    if (earg.op != TOK.assocArrayLiteral && earg.type.toBasetype().ty != Taarray)
         return null;
-    assert(earg.op == TOKassocarrayliteral);
+    assert(earg.op == TOK.assocArrayLiteral);
     AssocArrayLiteralExp aae = cast(AssocArrayLiteralExp)copyLiteral(earg).copy();
     for (size_t i = 0; i < aae.keys.dim; i++)
     {
@@ -6511,17 +6637,17 @@ private Expression interpret_aaApply(InterState* istate, Expression aa, Expressi
     aa = interpret(aa, istate);
     if (exceptionOrCantInterpret(aa))
         return aa;
-    if (aa.op != TOKassocarrayliteral)
+    if (aa.op != TOK.assocArrayLiteral)
         return new IntegerExp(deleg.loc, 0, Type.tsize_t);
 
     FuncDeclaration fd = null;
     Expression pthis = null;
-    if (deleg.op == TOKdelegate)
+    if (deleg.op == TOK.delegate_)
     {
         fd = (cast(DelegateExp)deleg).func;
         pthis = (cast(DelegateExp)deleg).e1;
     }
-    else if (deleg.op == TOKfunction)
+    else if (deleg.op == TOK.function_)
         fd = (cast(FuncExp)deleg).fd;
 
     assert(fd && fd.fbody);
@@ -6530,7 +6656,7 @@ private Expression interpret_aaApply(InterState* istate, Expression aa, Expressi
     assert(numParams == 1 || numParams == 2);
 
     Parameter fparam = Parameter.getNth((cast(TypeFunction)fd.type).parameters, numParams - 1);
-    bool wantRefValue = 0 != (fparam.storageClass & (STCout | STCref));
+    bool wantRefValue = 0 != (fparam.storageClass & (STC.out_ | STC.ref_));
 
     Expressions args;
     args.setDim(numParams);
@@ -6554,11 +6680,11 @@ private Expression interpret_aaApply(InterState* istate, Expression aa, Expressi
         if (numParams == 2)
             args[0] = ekey;
 
-        eresult = interpret(fd, istate, &args, pthis);
+        eresult = interpretFunction(fd, istate, &args, pthis);
         if (exceptionOrCantInterpret(eresult))
             return eresult;
 
-        assert(eresult.op == TOKint64);
+        assert(eresult.op == TOK.int64);
         if ((cast(IntegerExp)eresult).getInteger() != 0)
             return eresult;
     }
@@ -6576,12 +6702,12 @@ private Expression foreachApplyUtf(InterState* istate, Expression str, Expressio
     }
     FuncDeclaration fd = null;
     Expression pthis = null;
-    if (deleg.op == TOKdelegate)
+    if (deleg.op == TOK.delegate_)
     {
         fd = (cast(DelegateExp)deleg).func;
         pthis = (cast(DelegateExp)deleg).e1;
     }
-    else if (deleg.op == TOKfunction)
+    else if (deleg.op == TOK.function_)
         fd = (cast(FuncExp)deleg).fd;
 
     assert(fd && fd.fbody);
@@ -6598,13 +6724,13 @@ private Expression foreachApplyUtf(InterState* istate, Expression str, Expressio
 
     StringExp se = null;
     ArrayLiteralExp ale = null;
-    if (str.op == TOKstring)
+    if (str.op == TOK.string_)
         se = cast(StringExp)str;
-    else if (str.op == TOKarrayliteral)
+    else if (str.op == TOK.arrayLiteral)
         ale = cast(ArrayLiteralExp)str;
     else
     {
-        str.error("CTFE internal error: cannot foreach %s", str.toChars());
+        str.error("CTFE internal error: cannot foreach `%s`", str.toChars());
         return CTFEExp.cantexp;
     }
     Expressions args;
@@ -6644,7 +6770,7 @@ private Expression foreachApplyUtf(InterState* istate, Expression str, Expressio
                     while (indx > 0 && buflen < 4)
                     {
                         Expression r = (*ale.elements)[indx];
-                        assert(r.op == TOKint64);
+                        assert(r.op == TOK.int64);
                         char x = cast(char)(cast(IntegerExp)r).getInteger();
                         if ((x & 0xC0) != 0x80)
                             break;
@@ -6656,7 +6782,7 @@ private Expression foreachApplyUtf(InterState* istate, Expression str, Expressio
                 for (size_t i = 0; i < buflen; ++i)
                 {
                     Expression r = (*ale.elements)[indx + i];
-                    assert(r.op == TOKint64);
+                    assert(r.op == TOK.int64);
                     utf8buf[i] = cast(char)(cast(IntegerExp)r).getInteger();
                 }
                 n = 0;
@@ -6670,7 +6796,7 @@ private Expression foreachApplyUtf(InterState* istate, Expression str, Expressio
                     --indx;
                     buflen = 1;
                     Expression r = (*ale.elements)[indx];
-                    assert(r.op == TOKint64);
+                    assert(r.op == TOK.int64);
                     ushort x = cast(ushort)(cast(IntegerExp)r).getInteger();
                     if (indx > 0 && x >= 0xDC00 && x <= 0xDFFF)
                     {
@@ -6683,7 +6809,7 @@ private Expression foreachApplyUtf(InterState* istate, Expression str, Expressio
                 for (size_t i = 0; i < buflen; ++i)
                 {
                     Expression r = (*ale.elements)[indx + i];
-                    assert(r.op == TOKint64);
+                    assert(r.op == TOK.int64);
                     utf16buf[i] = cast(ushort)(cast(IntegerExp)r).getInteger();
                 }
                 n = 0;
@@ -6695,7 +6821,7 @@ private Expression foreachApplyUtf(InterState* istate, Expression str, Expressio
                     if (rvs)
                         --indx;
                     Expression r = (*ale.elements)[indx];
-                    assert(r.op == TOKint64);
+                    assert(r.op == TOK.int64);
                     rawvalue = cast(dchar)(cast(IntegerExp)r).getInteger();
                     n = 1;
                 }
@@ -6757,7 +6883,7 @@ private Expression foreachApplyUtf(InterState* istate, Expression str, Expressio
         }
         if (errmsg)
         {
-            deleg.error("%s", errmsg);
+            deleg.error("`%s`", errmsg);
             return CTFEExp.cantexp;
         }
 
@@ -6811,10 +6937,10 @@ private Expression foreachApplyUtf(InterState* istate, Expression str, Expressio
 
             args[numParams - 1] = val;
 
-            eresult = interpret(fd, istate, &args, pthis);
+            eresult = interpretFunction(fd, istate, &args, pthis);
             if (exceptionOrCantInterpret(eresult))
                 return eresult;
-            assert(eresult.op == TOKint64);
+            assert(eresult.op == TOK.int64);
             if ((cast(IntegerExp)eresult).getInteger() != 0)
                 return eresult;
         }
@@ -6825,13 +6951,13 @@ private Expression foreachApplyUtf(InterState* istate, Expression str, Expressio
 /* If this is a built-in function, return the interpreted result,
  * Otherwise, return NULL.
  */
-private Expression evaluateIfBuiltin(InterState* istate, Loc loc, FuncDeclaration fd, Expressions* arguments, Expression pthis)
+private Expression evaluateIfBuiltin(InterState* istate, const ref Loc loc, FuncDeclaration fd, Expressions* arguments, Expression pthis)
 {
     Expression e = null;
     size_t nargs = arguments ? arguments.dim : 0;
     if (!pthis)
     {
-        if (isBuiltin(fd) == BUILTINyes)
+        if (isBuiltin(fd) == BUILTIN.yes)
         {
             Expressions args;
             args.setDim(nargs);
@@ -6846,7 +6972,7 @@ private Expression evaluateIfBuiltin(InterState* istate, Loc loc, FuncDeclaratio
             e = eval_builtin(loc, fd, &args);
             if (!e)
             {
-                error(loc, "cannot evaluate unimplemented builtin %s at compile time", fd.toChars());
+                error(loc, "cannot evaluate unimplemented builtin `%s` at compile time", fd.toChars());
                 e = CTFEExp.cantexp;
             }
         }
@@ -6876,7 +7002,7 @@ private Expression evaluateIfBuiltin(InterState* istate, Loc loc, FuncDeclaratio
     }
     if (pthis && !fd.fbody && fd.isCtorDeclaration() && fd.parent && fd.parent.parent && fd.parent.parent.ident == Id.object)
     {
-        if (pthis.op == TOKclassreference && fd.parent.ident == Id.Throwable)
+        if (pthis.op == TOK.classReference && fd.parent.ident == Id.Throwable)
         {
             // At present, the constructors just copy their arguments into the struct.
             // But we might need some magic if stack tracing gets added to druntime.
@@ -6931,7 +7057,7 @@ private Expression evaluatePostblit(InterState* istate, Expression e)
     if (!sd.postblit)
         return null;
 
-    if (e.op == TOKarrayliteral)
+    if (e.op == TOK.arrayLiteral)
     {
         ArrayLiteralExp ale = cast(ArrayLiteralExp)e;
         for (size_t i = 0; i < ale.elements.dim; i++)
@@ -6942,10 +7068,10 @@ private Expression evaluatePostblit(InterState* istate, Expression e)
         }
         return null;
     }
-    if (e.op == TOKstructliteral)
+    if (e.op == TOK.structLiteral)
     {
         // e.__postblit()
-        e = interpret(sd.postblit, istate, null, e);
+        e = interpretFunction(sd.postblit, istate, null, e);
         if (exceptionOrCantInterpret(e))
             return e;
         return null;
@@ -6962,16 +7088,16 @@ private Expression evaluateDtor(InterState* istate, Expression e)
     if (!sd.dtor)
         return null;
 
-    if (e.op == TOKarrayliteral)
+    if (e.op == TOK.arrayLiteral)
     {
         ArrayLiteralExp alex = cast(ArrayLiteralExp)e;
         for (size_t i = alex.elements.dim; 0 < i--;)
             e = evaluateDtor(istate, (*alex.elements)[i]);
     }
-    else if (e.op == TOKstructliteral)
+    else if (e.op == TOK.structLiteral)
     {
         // e.__dtor()
-        e = interpret(sd.dtor, istate, null, e);
+        e = interpretFunction(sd.dtor, istate, null, e);
     }
     else
         assert(0);
@@ -6991,11 +7117,6 @@ private bool hasValue(VarDeclaration vd)
     return null !is getValue(vd);
 }
 
-extern (C++) Expression getValue(VarDeclaration vd)
-{
-    return ctfeStack.getValue(vd);
-}
-
 // Don't check for validity
 private void setValueWithoutChecking(VarDeclaration vd, Expression newval)
 {
@@ -7006,11 +7127,11 @@ private void setValue(VarDeclaration vd, Expression newval)
 {
     version (none)
     {
-        if (!((vd.storage_class & (STCout | STCref)) ? isCtfeReferenceValid(newval) : isCtfeValueValid(newval)))
+        if (!((vd.storage_class & (STC.out_ | STC.ref_)) ? isCtfeReferenceValid(newval) : isCtfeValueValid(newval)))
         {
             printf("[%s] vd = %s %s, newval = %s\n", vd.loc.toChars(), vd.type.toChars(), vd.toChars(), newval.toChars());
         }
     }
-    assert((vd.storage_class & (STCout | STCref)) ? isCtfeReferenceValid(newval) : isCtfeValueValid(newval));
+    assert((vd.storage_class & (STC.out_ | STC.ref_)) ? isCtfeReferenceValid(newval) : isCtfeValueValid(newval));
     ctfeStack.setValue(vd, newval);
 }

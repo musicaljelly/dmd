@@ -1,7 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (c) 1999-2016 by The D Language Foundation
- * All Rights Reserved
+ * Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -116,6 +115,7 @@ public:
     void addMember(Scope *sc, ScopeDsymbol *sds);
     const char *kind() const;
     const char *toPrettyChars(bool unused);
+    ProtDeclaration *isProtDeclaration() { return this; }
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -125,11 +125,9 @@ public:
     Expression *ealign;
     structalign_t salign;
 
-    AlignDeclaration(Loc loc, Expression *ealign, Dsymbols *decl);
+    AlignDeclaration(const Loc &loc, Expression *ealign, Dsymbols *decl);
     Dsymbol *syntaxCopy(Dsymbol *s);
     Scope *newScope(Scope *sc);
-    void setScope(Scope *sc);
-    structalign_t getAlignment();
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -180,6 +178,7 @@ class StaticIfDeclaration : public ConditionalDeclaration
 public:
     ScopeDsymbol *scopesym;
     bool addisdone;
+    bool onStack;
 
     Dsymbol *syntaxCopy(Dsymbol *s);
     Dsymbols *include(Scope *sc);
@@ -232,7 +231,6 @@ public:
     Dsymbol *syntaxCopy(Dsymbol *s);
     void addMember(Scope *sc, ScopeDsymbol *sds);
     void setScope(Scope *sc);
-    void compileIt(Scope *sc);
     const char *kind() const;
     void accept(Visitor *v) { v->visit(this); }
 };
