@@ -44,3 +44,4 @@ src/optabgen.dSYM/
 # GCov
 *.gcno
 *.gcda
+src/vcbuild/dmd.VC.db
