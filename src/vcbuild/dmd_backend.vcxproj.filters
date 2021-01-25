@@ -209,81 +209,6 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\dmd\aggregate.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\aliasthis.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\arraytypes.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\attrib.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\complex_t.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\cond.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\declaration.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\dsymbol.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\enum.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\errors.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\expression.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\hdrgen.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\identifier.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\import.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\init.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\intrange.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\json.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\mars.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\module.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\mtype.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\scope.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\statement.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\staticassert.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\template.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\version.h">
-      <Filter>src</Filter>
-    </ClInclude>
     <ClInclude Include="..\dmd\backend\aa.h">
       <Filter>dmd\backend</Filter>
     </ClInclude>
@@ -410,21 +335,36 @@
     <ClInclude Include="..\vcbuild\warnings.h">
       <Filter>vcbuild</Filter>
     </ClInclude>
-    <ClInclude Include="..\dmd\target.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\nspace.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\objc.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\tokens.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="..\dmd\globals.h">
-      <Filter>src</Filter>
-    </ClInclude>
+    <ClInclude Include="..\dmd\aggregate.h" />
+    <ClInclude Include="..\dmd\aliasthis.h" />
+    <ClInclude Include="..\dmd\arraytypes.h" />
+    <ClInclude Include="..\dmd\attrib.h" />
+    <ClInclude Include="..\dmd\complex_t.h" />
+    <ClInclude Include="..\dmd\cond.h" />
+    <ClInclude Include="..\dmd\declaration.h" />
+    <ClInclude Include="..\dmd\dsymbol.h" />
+    <ClInclude Include="..\dmd\enum.h" />
+    <ClInclude Include="..\dmd\errors.h" />
+    <ClInclude Include="..\dmd\expression.h" />
+    <ClInclude Include="..\dmd\globals.h" />
+    <ClInclude Include="..\dmd\hdrgen.h" />
+    <ClInclude Include="..\dmd\identifier.h" />
+    <ClInclude Include="..\dmd\import.h" />
+    <ClInclude Include="..\dmd\init.h" />
+    <ClInclude Include="..\dmd\intrange.h" />
+    <ClInclude Include="..\dmd\json.h" />
+    <ClInclude Include="..\dmd\mars.h" />
+    <ClInclude Include="..\dmd\module.h" />
+    <ClInclude Include="..\dmd\mtype.h" />
+    <ClInclude Include="..\dmd\nspace.h" />
+    <ClInclude Include="..\dmd\objc.h" />
+    <ClInclude Include="..\dmd\scope.h" />
+    <ClInclude Include="..\dmd\statement.h" />
+    <ClInclude Include="..\dmd\staticassert.h" />
+    <ClInclude Include="..\dmd\target.h" />
+    <ClInclude Include="..\dmd\template.h" />
+    <ClInclude Include="..\dmd\tokens.h" />
+    <ClInclude Include="..\dmd\version.h" />
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="..\dmd\backend\optabgen.c">

@@ -26,7 +26,7 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
-    <WholeProgramOptimization Condition="'$(Configuration)'=='Release'">false</WholeProgramOptimization>
+    <WholeProgramOptimization Condition="'$(Configuration)'=='Release'">true</WholeProgramOptimization>
   </PropertyGroup>
   <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
@@ -73,6 +73,7 @@
       <ForcedIncludeFiles>vcbuild\warnings.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <InlineFunctionExpansion Condition="'$(Configuration)'=='Debug'">Disabled</InlineFunctionExpansion>
       <Optimization Condition="'$(Configuration)'=='Debug'">Disabled</Optimization>
+      <WholeProgramOptimization Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</WholeProgramOptimization>
     </ClCompile>
     <Link>
       <AdditionalOptions>/LARGEADDRESSAWARE %(AdditionalOptions)</AdditionalOptions>
