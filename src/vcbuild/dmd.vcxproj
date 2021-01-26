@@ -33,11 +33,12 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>Utility</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
-    <DCompiler>DMD</DCompiler>
+    <DCompiler>LDC</DCompiler>
+    <WholeProgramOptimization>false</WholeProgramOptimization>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -155,7 +156,8 @@
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <StackReserveSize>8388608</StackReserveSize>
       <AdditionalOptions>$(ExternalLinkerOptions) %(AdditionalOptions)</AdditionalOptions>
-      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
+      <ShowProgress>NotSet</ShowProgress>
     </Link>
     <DCompile>
       <VersionIdentifiers>MARS</VersionIdentifiers>
@@ -167,7 +169,15 @@
       <DebugCode>Release</DebugCode>
       <DebugInfo>None</DebugInfo>
       <BoundsCheck>Off</BoundsCheck>
+      <AdditionalOptions>-mcpu=native -flto=full -defaultlib=phobos2-ldc-lto,druntime-ldc-lto %(AdditionalOptions)</AdditionalOptions>
+      <ShowCommandLine>true</ShowCommandLine>
     </DCompile>
+    <PostBuildEvent>
+      <Command>W:/tools/lld-link.exe /OUT:$(OutDir)dmd.exe $(IntDir)dpackage___.dmd.obj $(IntDir)dpackage___.dmd.backend.obj $(IntDir)dpackage___.dmd.root.obj $(OutDir)dmd_backend.lib phobos2-ldc-lto.lib druntime-ldc-lto.lib user32.lib kernel32.lib legacy_stdio_definitions.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /LIBPATH:"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.18362.0\um\x86" /LIBPATH:C:\D\dmd2\windows\lib /LIBPATH:"C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.28.29333\lib\x86" /LIBPATH:"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.18362.0\ucrt\x86" /LIBPATH:"C:\Program Files (x86)\Windows Kits\10\lib\10.0.18362.0\um\x86" /LIBPATH:"C:\Program Files (x86)\LDC\lib" /LIBPATH:"C:\D\dmd2\windows\lib32mscoff" /NXCOMPAT /DYNAMICBASE /STACK:"8388608" /MACHINE:X86 /OPT:REF /SAFESEH:NO /INCREMENTAL:NO /SUBSYSTEM:CONSOLE /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /OPT:ICF /ERRORREPORT:PROMPT /NOLOGO /TLBID:1</Command>
+    </PostBuildEvent>
+    <PostBuildEvent>
+      <Message>Linking executable using lld-link.exe</Message>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
