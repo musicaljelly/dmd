@@ -96,44 +96,44 @@ enum CMzerosecond = 0x8;
 enum CMdigitsecond = 0x10;
 enum CMsinglechar = 0x20;
 
-bool isoctal(char c)
+bool isoctal(const char c)
 {
     return (cmtable[c] & CMoctal) != 0;
 }
 
-bool ishex(char c)
+bool ishex(const char c)
 {
     return (cmtable[c] & CMhex) != 0;
 }
 
-bool isidchar(char c)
+bool isidchar(const char c)
 {
     return (cmtable[c] & CMidchar) != 0;
 }
 
-bool isZeroSecond(char c)
+bool isZeroSecond(const char c)
 {
     return (cmtable[c] & CMzerosecond) != 0;
 }
 
-bool isDigitSecond(char c)
+bool isDigitSecond(const char c)
 {
     return (cmtable[c] & CMdigitsecond) != 0;
 }
 
-bool issinglechar(char c)
+bool issinglechar(const char c)
 {
     return (cmtable[c] & CMsinglechar) != 0;
 }
 
-private bool c_isxdigit(int c)
+private bool c_isxdigit(const int c)
 {
     return (( c >= '0' && c <= '9') ||
             ( c >= 'a' && c <= 'f') ||
             ( c >= 'A' && c <= 'F'));
 }
 
-private bool c_isalnum(int c)
+private bool c_isalnum(const int c)
 {
     return (( c >= '0' && c <= '9') ||
             ( c >= 'a' && c <= 'z') ||
@@ -527,7 +527,7 @@ class Lexer : ErrorHandler
                         }
                         else if (id == Id.VENDOR)
                         {
-                            t.ustring = global.compiler.vendor;
+                            t.ustring = global.vendor;
                             goto Lstr;
                         }
                         else if (id == Id.TIMESTAMP)
@@ -1803,6 +1803,8 @@ class Lexer : ErrorHandler
         int d;
         bool err = false;
         bool overflow = false;
+        bool anyBinaryDigitsNoSingleUS = false;
+        bool anyHexDigitsNoSingleUS = false;
         dchar c = *p;
         if (c == '0')
         {
@@ -1818,8 +1820,8 @@ class Lexer : ErrorHandler
             case '5':
             case '6':
             case '7':
-                n = c - '0';
-                ++p;
+            case '8':
+            case '9':
                 base = 8;
                 break;
             case 'x':
@@ -1861,31 +1863,15 @@ class Lexer : ErrorHandler
             {
             case '0':
             case '1':
-                ++p;
-                d = c - '0';
-                break;
             case '2':
             case '3':
             case '4':
             case '5':
             case '6':
             case '7':
-                if (base == 2 && !err)
-                {
-                    error("binary digit expected");
-                    err = true;
-                }
-                ++p;
-                d = c - '0';
-                break;
             case '8':
             case '9':
                 ++p;
-                if (base < 10 && !err)
-                {
-                    error("radix %d digit expected, not `%c`", base, c);
-                    err = true;
-                }
                 d = c - '0';
                 break;
             case 'a':
@@ -1905,11 +1891,6 @@ class Lexer : ErrorHandler
                 {
                     if (c == 'e' || c == 'E' || c == 'f' || c == 'F')
                         goto Lreal;
-                    if (!err)
-                    {
-                        error("radix %d digit expected, not `%c`", base, c);
-                        err = true;
-                    }
                 }
                 if (c >= 'a')
                     d = c + 10 - 'a';
@@ -1938,6 +1919,16 @@ class Lexer : ErrorHandler
             default:
                 goto Ldone;
             }
+            // got a digit here, set any necessary flags, check for errors
+            anyHexDigitsNoSingleUS = true;
+            anyBinaryDigitsNoSingleUS = true;
+            if (!err && d >= base)
+            {
+                error("%s digit expected, not `%c`", base == 2 ? "binary".ptr :
+                                                     base == 8 ? "octal".ptr :
+                                                     "decimal".ptr, c);
+                err = true;
+            }
             // Avoid expensive overflow check if we aren't at risk of overflow
             if (n <= 0x0FFF_FFFF_FFFF_FFFFUL)
                 n = n * base + d;
@@ -1955,6 +1946,12 @@ class Lexer : ErrorHandler
             error("integer overflow");
             err = true;
         }
+        // Deprecated in 2018-06.
+        // Change to error in 2019-06.
+        // @@@DEPRECATED_2019-06@@@
+        if ((base == 2 && !anyBinaryDigitsNoSingleUS) ||
+            (base == 16 && !anyHexDigitsNoSingleUS))
+            deprecation("`%.*s` isn't a valid integer literal, use `%.*s0` instead", cast(int)(p - start), start, 2, start);
         enum FLAGS : int
         {
             none = 0,
@@ -1996,7 +1993,13 @@ class Lexer : ErrorHandler
             break;
         }
         if (base == 8 && n >= 8)
-            error("octal literals `0%llo%.*s` are no longer supported, use `std.conv.octal!%llo%.*s` instead", n, p - psuffix, psuffix, n, p - psuffix, psuffix);
+        {
+            if (err)
+                // can't translate invalid octal value, just show a generic message
+                error("octal literals larger than 7 are no longer supported");
+            else
+                error("octal literals `0%llo%.*s` are no longer supported, use `std.conv.octal!%llo%.*s` instead", n, p - psuffix, psuffix, n, p - psuffix, psuffix);
+        }
         TOK result;
         switch (flags)
         {
@@ -2268,7 +2271,7 @@ class Lexer : ErrorHandler
         va_start(ap, format);
         .vdeprecation(token.loc, format, ap);
         va_end(ap);
-        if (global.params.useDeprecated == 0)
+        if (global.params.useDeprecated == Diagnostic.error)
             errors = true;
     }
 
@@ -2389,9 +2392,9 @@ class Lexer : ErrorHandler
     {
         const s = p;
         assert(*s & 0x80);
-        // Check length of remaining string up to 6 UTF-8 characters
+        // Check length of remaining string up to 4 UTF-8 characters
         size_t len;
-        for (len = 1; len < 6 && s[len]; len++)
+        for (len = 1; len < 4 && s[len]; len++)
         {
         }
         size_t idx = 0;
@@ -2584,7 +2587,7 @@ class Lexer : ErrorHandler
     }
 
 private:
-    final void endOfLine()
+    void endOfLine()
     {
         scanloc.linnum++;
         line = p;

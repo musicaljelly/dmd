@@ -5,23 +5,27 @@
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
  * http://www.boost.org/LICENSE_1_0.txt
- * https://github.com/dlang/dmd/blob/master/src/mars.h
+ * https://github.com/dlang/dmd/blob/master/src/dmd/globals.h
  */
 
-#ifndef DMD_GLOBALS_H
-#define DMD_GLOBALS_H
-
-#ifdef __DMC__
 #pragma once
-#endif
 
-#include "ctfloat.h"
-#include "outbuffer.h"
-#include "filename.h"
+#include "root/dcompat.h"
+#include "root/ctfloat.h"
+#include "root/outbuffer.h"
+#include "root/filename.h"
 #include "compiler.h"
 
 // Can't include arraytypes.h here, need to declare these directly.
 template <typename TYPE> struct Array;
+
+typedef unsigned char Diagnostic;
+enum
+{
+    DIAGNOSTICerror,  // generate an error
+    DIAGNOSTICinform, // generate a warning
+    DIAGNOSTICoff     // disable diagnostic
+};
 
 // The state of array bounds checking
 typedef unsigned char CHECKENABLE;
@@ -38,6 +42,7 @@ enum
 {
     CHECKACTION_D,        // call D assert on failure
     CHECKACTION_C,        // call C assert on failure
+    CHECKACTION_halt      // cause program halt on failure
 };
 
 enum CPU
@@ -93,30 +98,20 @@ struct Param
     bool isSolaris;     // generate code for Solaris
     bool hasObjectiveC; // target supports Objective-C
     bool mscoff;        // for Win32: write COFF object files instead of OMF
-    // 0: don't allow use of deprecated features
-    // 1: silently allow use of deprecated features
-    // 2: warn about the use of deprecated features
-    char useDeprecated;
-    bool useInvariants; // generate class invariant checks
-    bool useIn;         // generate precondition checks
-    bool useOut;        // generate postcondition checks
+    Diagnostic useDeprecated;
     bool stackstomp;    // add stack stomping code
     bool useUnitTests;  // generate unittest code
     bool useInline;     // inline expand functions
     bool useDIP25;      // implement http://wiki.dlang.org/DIP25
     bool release;       // build release version
     bool preservePaths; // true means don't strip path from source file
-    // 0: disable warnings
-    // 1: warnings as errors
-    // 2: informational warnings (no errors)
-    char warnings;
+    Diagnostic warnings;
     bool pic;           // generate position-independent-code for shared libs
     bool color;         // use ANSI colors in console output
     bool cov;           // generate code coverage data
     unsigned char covPercent;   // 0..100 code coverage percentage required
     bool nofloat;       // code should not pull in floating point support
     bool ignoreUnsupportedPragmas;      // rather than error on them
-    bool enforcePropertySyntax;
     bool useModuleInfo; // generate runtime module information
     bool useTypeInfo;   // generate runtime type information
     bool useExceptions; // support exception handling
@@ -127,8 +122,13 @@ struct Param
     bool bug10378;      // use pre-bugzilla 10378 search strategy
     bool fix16997;      // fix integral promotions for unary + - ~ operators
                         // https://issues.dlang.org/show_bug.cgi?id=16997
+    bool fixAliasThis;  // if the current scope has an alias this, check it before searching upper scopes
     bool vsafe;         // use enhanced @safe checking
     bool ehnogc;        // use @nogc exception handling
+    bool dtorFields;        // destruct fields of partially constructed objects
+                            // https://issues.dlang.org/show_bug.cgi?id=14246
+    bool markdown;          // enable Markdown replacements in Ddoc
+    bool vmarkdown;         // list instances of Markdown replacements in Ddoc
     bool showGaggedErrors;  // print gagged errors anyway
     bool manual;            // open browser on compiler manual
     bool usage;             // print usage and exit
@@ -138,14 +138,19 @@ struct Param
 
     CPU cpu;                // CPU instruction set to target
 
+    CHECKENABLE useInvariants;     // generate class invariant checks
+    CHECKENABLE useIn;             // generate precondition checks
+    CHECKENABLE useOut;            // generate postcondition checks
     CHECKENABLE useArrayBounds;    // when to generate code for array bounds checks
     CHECKENABLE useAssert;         // when to generate code for assert()'s
     CHECKENABLE useSwitchError;    // check for switches without a default
+    CHECKENABLE boundscheck;       // state of -boundscheck switch
+
     CHECKACTION checkAction;       // action to take when bounds, asserts or switch defaults are violated
 
     unsigned errorLimit;
 
-    const char *argv0;    // program name
+    DArray<const char>  argv0;    // program name
     Array<const char *> *modFileAliasStrings; // array of char*'s of -I module filename alias strings
     Array<const char *> *imppath;     // array of char*'s of where to look for import modules
     Array<const char *> *fileImppath; // array of char*'s of where to look for file import modules
@@ -166,6 +171,10 @@ struct Param
     bool doJsonGeneration;    // write JSON file
     const char *jsonfilename; // write JSON file to jsonfilename
     unsigned jsonFieldFlags;  // JSON field flags to include
+
+    OutBuffer *mixinOut;                // write expanded mixins for debugging
+    const char *mixinFile;             // .mixin file output name
+    int mixinLines;                     // Number of lines in writeMixins
 
     unsigned debuglevel;   // debug level
     Array<const char *> *debugids;     // debug identifiers
@@ -227,14 +236,15 @@ struct Global
     Array<const char *> *path;        // Array of char*'s which form the import lookup path
     Array<const char *> *filePath;    // Array of char*'s which form the file import lookup path
 
-    const char *version;
+    const char *version;     // Compiler version string
+    const char *vendor;      // Compiler backend name
 
-    Compiler compiler;
     Param params;
-    unsigned errors;       // number of errors reported so far
-    unsigned warnings;     // number of warnings reported so far
-    unsigned gag;          // !=0 means gag reporting of errors & warnings
-    unsigned gaggedErrors; // number of errors reported while gagged
+    unsigned errors;         // number of errors reported so far
+    unsigned warnings;       // number of warnings reported so far
+    unsigned gag;            // !=0 means gag reporting of errors & warnings
+    unsigned gaggedErrors;   // number of errors reported while gagged
+    unsigned gaggedWarnings; // number of warnings reported while gagged
 
     void* console;         // opaque pointer to console for controlling text attributes
 
@@ -292,14 +302,6 @@ typedef uint32_t                d_uns32;
 typedef int64_t                 d_int64;
 typedef uint64_t                d_uns64;
 
-// Represents a D [ ] array
-template<typename T>
-struct DArray
-{
-    size_t length;
-    T *ptr;
-};
-
 // file location
 struct Loc
 {
@@ -317,7 +319,7 @@ struct Loc
     Loc(const char *filename, unsigned linnum, unsigned charnum);
 
     const char *toChars() const;
-    bool equals(const Loc& loc);
+    bool equals(const Loc& loc) const;
 };
 
 enum LINK
@@ -329,14 +331,14 @@ enum LINK
     LINKwindows,
     LINKpascal,
     LINKobjc,
-    LINKsystem,
+    LINKsystem
 };
 
 enum CPPMANGLE
 {
     CPPMANGLEdefault,
     CPPMANGLEstruct,
-    CPPMANGLEclass,
+    CPPMANGLEclass
 };
 
 enum MATCH
@@ -355,5 +357,3 @@ enum PINLINE
 };
 
 typedef uinteger_t StorageClass;
-
-#endif /* DMD_GLOBALS_H */

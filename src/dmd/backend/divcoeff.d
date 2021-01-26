@@ -17,7 +17,8 @@ import core.stdc.stdio;
 
 extern (C++):
 
-alias ullong = ulong;
+import core.stdc.stdint : uint64_t;
+alias ullong = uint64_t;
 
 /* unsigned 128 bit math
  */
@@ -52,7 +53,7 @@ void u128Div(ullong xh, ullong xl, ullong yh, ullong yl, ullong *pqh, ullong *pq
 
     //ullong xxh = xh, xxl = xl, yyh = yh, yyl = yl;
 
-//    assert(yh || yl);           // no div-by-0 bugs
+    assert(yh || yl);           // no div-by-0 bugs
 
     // left justify y
     uint shiftcount = 1;
@@ -117,9 +118,9 @@ void u128Div(ullong xh, ullong xl, ullong yh, ullong yl, ullong *pqh, ullong *pq
 
 extern (C) bool choose_multiplier(int N, ullong d, int prec, ullong *pm, int *pshpost)
 {
-//    assert(N == 32 || N == 64);
-//    assert(prec <= N);
-//    assert(d > 1 && (d & (d - 1)));
+    assert(N == 32 || N == 64);
+    assert(prec <= N);
+    assert(d > 1 && (d & (d - 1)));
 
     // Compute b such that 2**(b-1) < d <= 2**b
     // which is the number of significant bits in d
@@ -205,8 +206,8 @@ extern (C) bool choose_multiplier(int N, ullong d, int prec, ullong *pm, int *ps
         *pm = mhighl;
         mhighbit = mhighh & 1;
     }
-//    else
-//        assert(0);
+    else
+        assert(0);
 
     *pshpost = shpost;
     return mhighbit;
@@ -243,7 +244,7 @@ extern (C) bool udiv_coefficients(int N, ullong d, int *pshpre, ullong *pm, int 
         }
         *pshpre = e;
         mhighbit = choose_multiplier(N, d, N - e, pm, pshpost);
-//        assert(mhighbit == false);
+        assert(mhighbit == false);
     }
     else
         *pshpre = 0;
@@ -290,10 +291,10 @@ unittest
         bool mhighbit = udiv_coefficients(ps.N, ps.d, &shpre, &m, &shpost);
 
         //printf("[%d] %d %d %llx %d\n", i, shpre, mhighbit, m, shpost);
-//        assert(shpre == ps.shpre);
-//        assert(mhighbit == ps.highbit);
-//        assert(m == ps.m);
-//        assert(shpost == ps.shpost);
+        assert(shpre == ps.shpre);
+        assert(mhighbit == ps.highbit);
+        assert(m == ps.m);
+        assert(shpost == ps.shpost);
     }
 }
 

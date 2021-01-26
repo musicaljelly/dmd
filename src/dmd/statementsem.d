@@ -250,7 +250,24 @@ private extern (C++) final class StatementSemanticVisitor : Visitor
                         sexception = sexception.statementSemantic(sc);
                     if (sexception)
                     {
-                        if (i + 1 == cs.statements.dim && !sfinally)
+                        /* Returns: true if statements[] are empty statements
+                         */
+                        static bool isEmpty(const Statement[] statements)
+                        {
+                            foreach (s; statements)
+                            {
+                                if (const cs = s.isCompoundStatement())
+                                {
+                                    if (!isEmpty((*cs.statements)[]))
+                                        return false;
+                                }
+                                else
+                                    return false;
+                            }
+                            return true;
+                        }
+
+                        if (!sfinally && isEmpty((*cs.statements)[i + 1 .. cs.statements.dim]))
                         {
                         }
                         else
@@ -915,32 +932,35 @@ private extern (C++) final class StatementSemanticVisitor : Visitor
                     return returnEarly();
                 }
             }
-            else if (!needExpansion)
-            {
-                // Declare value
-                if (!declareVariable(p.storageClass, p.type, p.ident, e, t))
-                {
-                    return returnEarly();
-                }
-            }
             else
-            { // expand tuples into multiple `static foreach` variables.
-                assert(e && !t);
-                auto ident = Identifier.generateId("__value");
-                declareVariable(0, e.type, ident, e, null);
-                import dmd.cond: StaticForeach;
-                auto field = Identifier.idPool(StaticForeach.tupleFieldName.ptr,StaticForeach.tupleFieldName.length);
-                Expression access = new DotIdExp(loc, e, field);
-                access = expressionSemantic(access, sc);
-                if (!tuple) return returnEarly();
-                //printf("%s\n",tuple.toChars());
-                foreach (l; 0 .. dim)
+            {
+                if (!needExpansion)
                 {
-                    auto cp = (*fs.parameters)[l];
-                    Expression init_ = new IndexExp(loc, access, new IntegerExp(loc, l, Type.tsize_t));
-                    init_ = init_.expressionSemantic(sc);
-                    assert(init_.type);
-                    declareVariable(p.storageClass, init_.type, cp.ident, init_, null);
+                    // Declare value
+                    if (!declareVariable(p.storageClass, p.type, p.ident, e, t))
+                    {
+                        return returnEarly();
+                    }
+                }
+                else
+                { // expand tuples into multiple `static foreach` variables.
+                    assert(e && !t);
+                    auto ident = Identifier.generateId("__value");
+                    declareVariable(0, e.type, ident, e, null);
+                    import dmd.cond: StaticForeach;
+                    auto field = Identifier.idPool(StaticForeach.tupleFieldName.ptr,StaticForeach.tupleFieldName.length);
+                    Expression access = new DotIdExp(loc, e, field);
+                    access = expressionSemantic(access, sc);
+                    if (!tuple) return returnEarly();
+                    //printf("%s\n",tuple.toChars());
+                    foreach (l; 0 .. dim)
+                    {
+                        auto cp = (*fs.parameters)[l];
+                        Expression init_ = new IndexExp(loc, access, new IntegerExp(loc, l, Type.tsize_t));
+                        init_ = init_.expressionSemantic(sc);
+                        assert(init_.type);
+                        declareVariable(p.storageClass, init_.type, cp.ident, init_, null);
+                    }
                 }
             }
 
@@ -1091,19 +1111,18 @@ private extern (C++) final class StatementSemanticVisitor : Visitor
             {
                 if (FuncDeclaration fd = sapplyOld.isFuncDeclaration())
                 {
-                    int fvarargs; // ignored (opApply shouldn't take variadics)
-                    Parameters* fparameters = fd.getParameters(&fvarargs);
+                    auto fparameters = fd.getParameterList();
 
-                    if (Parameter.dim(fparameters) == 1)
+                    if (fparameters.length == 1)
                     {
                         // first param should be the callback function
-                        Parameter fparam = Parameter.getNth(fparameters, 0);
+                        Parameter fparam = fparameters[0];
                         if ((fparam.type.ty == Tpointer ||
                              fparam.type.ty == Tdelegate) &&
                             fparam.type.nextOf().ty == Tfunction)
                         {
                             TypeFunction tf = cast(TypeFunction)fparam.type.nextOf();
-                            foreachParamCount = Parameter.dim(tf.parameters);
+                            foreachParamCount = tf.parameterList.length;
                             foundMismatch = true;
                         }
                     }
@@ -1209,6 +1228,11 @@ private extern (C++) final class StatementSemanticVisitor : Visitor
 
                     if (dim == 2 && i == 0)
                     {
+                        if (!p.type.isintegral())
+                        {
+                            fs.error("foreach: key cannot be of non-integral type `%s`", p.type.toChars());
+                            goto case Terror;
+                        }
                         var = new VarDeclaration(loc, p.type.mutableOf(), Identifier.generateId("__key"), null);
                         var.storage_class |= STC.temp | STC.foreach_;
                         if (var.storage_class & (STC.ref_ | STC.out_))
@@ -1235,6 +1259,11 @@ private extern (C++) final class StatementSemanticVisitor : Visitor
                                 goto case Terror;
                             }
                             fs.key.range = new IntRange(SignExtendedNumber(0), dimrange.imax);
+                        }
+                        else if (!Type.tsize_t.implicitConvTo(var.type))
+                        {
+                            fs.deprecation("foreach: loop index implicitly converted from `size_t` to `%s`",
+                                           fs.key.type.toChars());
                         }
                     }
                     else
@@ -1302,6 +1331,10 @@ private extern (C++) final class StatementSemanticVisitor : Visitor
                     Identifier idkey = Identifier.generateId("__key");
                     fs.key = new VarDeclaration(loc, Type.tsize_t, idkey, null);
                     fs.key.storage_class |= STC.temp;
+                }
+                else if (fs.key.type.ty != Tsize_t)
+                {
+                    tmp_length = new CastExp(loc, tmp_length, fs.key.type);
                 }
                 if (fs.op == TOK.foreach_reverse_)
                     fs.key._init = new ExpInitializer(loc, tmp_length);
@@ -1584,9 +1617,9 @@ private extern (C++) final class StatementSemanticVisitor : Visitor
                         tfld = cast(TypeFunction)tab.nextOf();
                     Lget:
                         //printf("tfld = %s\n", tfld.toChars());
-                        if (tfld.parameters.dim == 1)
+                        if (tfld.parameterList.parameters.dim == 1)
                         {
-                            Parameter p = Parameter.getNth(tfld.parameters, 0);
+                            Parameter p = tfld.parameterList[0];
                             if (p.type && p.type.ty == Tdelegate)
                             {
                                 auto t = p.type.typeSemantic(loc, sc2);
@@ -1659,22 +1692,22 @@ private extern (C++) final class StatementSemanticVisitor : Visitor
                      *  extern(C) int _aaApply2(void*, in size_t, int delegate(void*, void*))
                      *      _aaApply2(aggr, keysize, flde)
                      */
-                    static __gshared const(char)** name = ["_aaApply", "_aaApply2"];
-                    static __gshared FuncDeclaration* fdapply = [null, null];
-                    static __gshared TypeDelegate* fldeTy = [null, null];
+                    __gshared const(char)** name = ["_aaApply", "_aaApply2"];
+                    __gshared FuncDeclaration* fdapply = [null, null];
+                    __gshared TypeDelegate* fldeTy = [null, null];
 
                     ubyte i = (dim == 2 ? 1 : 0);
                     if (!fdapply[i])
                     {
                         auto params = new Parameters();
-                        params.push(new Parameter(0, Type.tvoid.pointerTo(), null, null));
-                        params.push(new Parameter(STC.in_, Type.tsize_t, null, null));
+                        params.push(new Parameter(0, Type.tvoid.pointerTo(), null, null, null));
+                        params.push(new Parameter(STC.in_, Type.tsize_t, null, null, null));
                         auto dgparams = new Parameters();
-                        dgparams.push(new Parameter(0, Type.tvoidptr, null, null));
+                        dgparams.push(new Parameter(0, Type.tvoidptr, null, null, null));
                         if (dim == 2)
-                            dgparams.push(new Parameter(0, Type.tvoidptr, null, null));
-                        fldeTy[i] = new TypeDelegate(new TypeFunction(dgparams, Type.tint32, 0, LINK.d));
-                        params.push(new Parameter(0, fldeTy[i], null, null));
+                            dgparams.push(new Parameter(0, Type.tvoidptr, null, null, null));
+                        fldeTy[i] = new TypeDelegate(new TypeFunction(ParameterList(dgparams), Type.tint32, LINK.d));
+                        params.push(new Parameter(0, fldeTy[i], null, null, null));
                         fdapply[i] = FuncDeclaration.genCfunc(params, Type.tint32, name[i]);
                     }
 
@@ -1703,7 +1736,7 @@ private extern (C++) final class StatementSemanticVisitor : Visitor
                     /* Call:
                      *      _aApply(aggr, flde)
                      */
-                    static __gshared const(char)** fntab =
+                    __gshared const(char)** fntab =
                     [
                         "cc", "cw", "cd",
                         "wc", "cc", "wd",
@@ -1737,13 +1770,13 @@ private extern (C++) final class StatementSemanticVisitor : Visitor
                     FuncDeclaration fdapply;
                     TypeDelegate dgty;
                     auto params = new Parameters();
-                    params.push(new Parameter(STC.in_, tn.arrayOf(), null, null));
+                    params.push(new Parameter(STC.in_, tn.arrayOf(), null, null, null));
                     auto dgparams = new Parameters();
-                    dgparams.push(new Parameter(0, Type.tvoidptr, null, null));
+                    dgparams.push(new Parameter(0, Type.tvoidptr, null, null, null));
                     if (dim == 2)
-                        dgparams.push(new Parameter(0, Type.tvoidptr, null, null));
-                    dgty = new TypeDelegate(new TypeFunction(dgparams, Type.tint32, 0, LINK.d));
-                    params.push(new Parameter(0, dgty, null, null));
+                        dgparams.push(new Parameter(0, Type.tvoidptr, null, null, null));
+                    dgty = new TypeDelegate(new TypeFunction(ParameterList(dgparams), Type.tint32, LINK.d));
+                    params.push(new Parameter(0, dgty, null, null, null));
                     fdapply = FuncDeclaration.genCfunc(params, Type.tint32, fdname.ptr);
 
                     if (tab.ty == Tsarray)
@@ -1880,7 +1913,7 @@ else
             p.type = p.type.addStorageClass(p.storageClass);
             if (tfld)
             {
-                Parameter prm = Parameter.getNth(tfld.parameters, i);
+                Parameter prm = tfld.parameterList[i];
                 //printf("\tprm = %s%s\n", (prm.storageClass&STC.ref_?"ref ":"").ptr, prm.ident.toChars());
                 stc = prm.storageClass & STC.ref_;
                 id = p.ident; // argument copy is not need.
@@ -1907,25 +1940,27 @@ else
             LcopyArg:
                 id = Identifier.generateId("__applyArg", cast(int)i);
 
-                Initializer ie = new ExpInitializer(Loc.initial, new IdentifierExp(Loc.initial, id));
-                auto v = new VarDeclaration(Loc.initial, p.type, p.ident, ie);
+                Initializer ie = new ExpInitializer(fs.loc, new IdentifierExp(fs.loc, id));
+                auto v = new VarDeclaration(fs.loc, p.type, p.ident, ie);
                 v.storage_class |= STC.temp;
-                Statement s = new ExpStatement(Loc.initial, v);
+                Statement s = new ExpStatement(fs.loc, v);
                 fs._body = new CompoundStatement(fs.loc, s, fs._body);
             }
-            params.push(new Parameter(stc, p.type, id, null));
+            params.push(new Parameter(stc, p.type, id, null, null));
         }
         // https://issues.dlang.org/show_bug.cgi?id=13840
         // Throwable nested function inside nothrow function is acceptable.
         StorageClass stc = mergeFuncAttrs(STC.safe | STC.pure_ | STC.nogc, fs.func);
-        auto tf = new TypeFunction(params, Type.tint32, 0, LINK.d, stc);
+        auto tf = new TypeFunction(ParameterList(params), Type.tint32, LINK.d, stc);
         fs.cases = new Statements();
         fs.gotos = new ScopeStatements();
-        auto fld = new FuncLiteralDeclaration(fs.loc, Loc.initial, tf, TOK.delegate_, fs);
+        auto fld = new FuncLiteralDeclaration(fs.loc, fs.endloc, tf, TOK.delegate_, fs);
         fld.fbody = fs._body;
         Expression flde = new FuncExp(fs.loc, fld);
         flde = flde.expressionSemantic(sc);
         fld.tookAddressOf = 0;
+        if (flde.op == TOK.error)
+            return null;
         return cast(FuncExp)flde;
     }
 
@@ -2295,6 +2330,13 @@ else
                 }
             }
         }
+        else if (ps.ident == Id.linkerDirective)
+        {
+            /* Should this be allowed?
+             */
+            ps.error("`pragma(linkerDirective)` not allowed as statement");
+            return setError();
+        }
         else if (ps.ident == Id.startaddress)
         {
             if (!ps.args || ps.args.dim != 1)
@@ -2361,7 +2403,7 @@ else
                 fd.inlining = inlining;
             }
         }
-        else
+        else if (!global.params.ignoreUnsupportedPragmas)
         {
             ps.error("unrecognized `pragma(%s)`", ps.ident.toChars());
             return setError();
@@ -2369,6 +2411,11 @@ else
 
         if (ps._body)
         {
+            if (ps.ident == Id.msg || ps.ident == Id.startaddress)
+            {
+                ps.error("`pragma(%s)` is missing a terminating `;`", ps.ident.toChars());
+                return setError();
+            }
             ps._body = ps._body.statementSemantic(sc);
         }
         result = ps._body;
@@ -2537,20 +2584,31 @@ else
             CompoundStatement cs;
             Statement s;
 
-            if (global.params.useSwitchError == CHECKENABLE.on)
+            if (global.params.useSwitchError == CHECKENABLE.on &&
+                global.params.checkAction != CHECKACTION.halt)
             {
-                Expression sl = new IdentifierExp(ss.loc, Id.empty);
-                sl = new DotIdExp(ss.loc, sl, Id.object);
-                sl = new DotIdExp(ss.loc, sl, Id.__switch_error);
+                if (global.params.checkAction == CHECKACTION.C)
+                {
+                    /* Rewrite as an assert(0) and let e2ir generate
+                     * the call to the C assert failure function
+                     */
+                    s = new ExpStatement(ss.loc, new AssertExp(ss.loc, new IntegerExp(ss.loc, 0, Type.tint32)));
+                }
+                else
+                {
+                    Expression sl = new IdentifierExp(ss.loc, Id.empty);
+                    sl = new DotIdExp(ss.loc, sl, Id.object);
+                    sl = new DotIdExp(ss.loc, sl, Id.__switch_error);
 
-                Expressions* args = new Expressions();
-                args.push(new StringExp(ss.loc, cast(char*) ss.loc.filename));
-                args.push(new IntegerExp(ss.loc.linnum));
+                    Expressions* args = new Expressions();
+                    args.push(new StringExp(ss.loc, cast(char*) ss.loc.filename));
+                    args.push(new IntegerExp(ss.loc.linnum));
 
-                sl = new CallExp(ss.loc, sl, args);
-                sl.expressionSemantic(sc);
+                    sl = new CallExp(ss.loc, sl, args);
+                    sl.expressionSemantic(sc);
 
-                s = new SwitchErrorStatement(ss.loc, sl);
+                    s = new SwitchErrorStatement(ss.loc, sl);
+                }
             }
             else
                 s = new ExpStatement(ss.loc, new HaltExp(ss.loc));
@@ -3051,7 +3109,7 @@ else
                 rs.exp = new ErrorExp();
 
             // Extract side-effect part
-            rs.exp = Expression.extractLast(rs.exp, &e0);
+            rs.exp = Expression.extractLast(rs.exp, e0);
             if (rs.exp.op == TOK.call)
                 rs.exp = valueNoDtor(rs.exp);
 
@@ -3234,7 +3292,7 @@ else
             foreach (i, v; ad.fields)
             {
                 bool mustInit = (v.storage_class & STC.nodefaultctor || v.type.needsNested());
-                if (mustInit && !(sc.ctorflow.fieldinit[i] & CSX.this_ctor))
+                if (mustInit && !(sc.ctorflow.fieldinit[i].csx & CSX.this_ctor))
                 {
                     rs.error("an earlier `return` statement skips field `%s` initialization", v.toChars());
                     errors = true;
@@ -3519,7 +3577,7 @@ else
                 cs.push(new ExpStatement(ss.loc, tmp));
 
                 auto args = new Parameters();
-                args.push(new Parameter(0, ClassDeclaration.object.type, null, null));
+                args.push(new Parameter(0, ClassDeclaration.object.type, null, null, null));
 
                 FuncDeclaration fdenter = FuncDeclaration.genCfunc(args, Type.tvoid, Id.monitorenter);
                 Expression e = new CallExp(ss.loc, fdenter, new VarExp(ss.loc, tmp));
@@ -3561,7 +3619,7 @@ else
             cs.push(new ExpStatement(ss.loc, v));
 
             auto args = new Parameters();
-            args.push(new Parameter(0, t.pointerTo(), null, null));
+            args.push(new Parameter(0, t.pointerTo(), null, null, null));
 
             FuncDeclaration fdenter = FuncDeclaration.genCfunc(args, Type.tvoid, Id.criticalenter, STC.nothrow_);
             Expression int0 = new IntegerExp(ss.loc, dinteger_t(0), Type.tint8);
@@ -4023,6 +4081,9 @@ else
 
     override void visit(CompoundAsmStatement cas)
     {
+        // Apply postfix attributes of the asm block to each statement.
+        sc = sc.push();
+        sc.stc |= cas.stc;
         foreach (ref s; *cas.statements)
         {
             s = s ? s.statementSemantic(sc) : null;
@@ -4038,6 +4099,7 @@ else
         if (!(cas.stc & (STC.trusted | STC.safe)) && sc.func.setUnsafe())
             cas.error("`asm` statement is assumed to be `@system` - mark it with `@trusted` if it is not");
 
+        sc.pop();
         result = cas;
     }
 

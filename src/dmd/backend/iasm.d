@@ -169,7 +169,7 @@ else
 // Operand flags - usOp1, usOp2, usOp3
 //
 
-alias uint opflag_t;
+alias opflag_t = uint;
 
 // Operand flags for normal opcodes
 enum
@@ -381,7 +381,8 @@ enum
 
 version (SCPP)
 {
-    enum OP_DB
+    alias OP_DB = int;
+    enum
     {
         // These are the number of bytes
         OPdb = 1,
@@ -464,6 +465,7 @@ struct PTRNTAB0 {
 }
 
 union PTRNTAB {
+        void            *ppt;
         PTRNTAB0        *pptb0;
         PTRNTAB1        *pptb1;
         PTRNTAB2        *pptb2;
@@ -473,6 +475,7 @@ union PTRNTAB {
 
 struct OP
 {
+    const(char)* str;   // opcode string
     ubyte usNumops;
     PTRNTAB ptb;
 }

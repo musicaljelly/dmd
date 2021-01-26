@@ -106,7 +106,7 @@
     </Link>
     <DCompile>
       <VersionIdentifiers>MARS</VersionIdentifiers>
-      <StringImportPaths>..\..;..\..\res</StringImportPaths>
+      <StringImportPaths>..\..;..\..\res;$(OutDir)\backend\generated</StringImportPaths>
       <CRuntimeLibrary>MultiThreadedDebug</CRuntimeLibrary>
       <CompilationModel>Package</CompilationModel>
       <ImportPaths>..</ImportPaths>
@@ -130,7 +130,7 @@
     </Link>
     <DCompile>
       <VersionIdentifiers>MARS</VersionIdentifiers>
-      <StringImportPaths>..\..;..\..\res</StringImportPaths>
+      <StringImportPaths>..\..;..\..\res;$(OutDir)\backend\generated</StringImportPaths>
       <CRuntimeLibrary>MultiThreadedDebug</CRuntimeLibrary>
       <CompilationModel>Package</CompilationModel>
       <ImportPaths>..</ImportPaths>
@@ -159,7 +159,7 @@
     </Link>
     <DCompile>
       <VersionIdentifiers>MARS</VersionIdentifiers>
-      <StringImportPaths>..\..;..\..\res</StringImportPaths>
+      <StringImportPaths>..\..;..\..\res;$(OutDir)\backend\generated</StringImportPaths>
       <CompilationModel>Package</CompilationModel>
       <ImportPaths>..</ImportPaths>
       <Optimizer>true</Optimizer>
@@ -189,7 +189,7 @@
     </Link>
     <DCompile>
       <VersionIdentifiers>MARS</VersionIdentifiers>
-      <StringImportPaths>..\..;..\..\res</StringImportPaths>
+      <StringImportPaths>..\..;..\..\res;$(OutDir)\backend\generated</StringImportPaths>
       <CompilationModel>Package</CompilationModel>
       <ImportPaths>..</ImportPaths>
       <Optimizer>true</Optimizer>

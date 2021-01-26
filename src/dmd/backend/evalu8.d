@@ -9,6 +9,8 @@
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/evalu8.d, backend/evalu8.d)
  */
 
+module dmd.backend.evalu8;
+
 version (SPP)
 {
 }
@@ -41,8 +43,8 @@ import scopeh;
 }
 
 extern (C++):
-
-extern void error(const(char)* filename, uint linnum, uint charnum, const(char)* format, ...);
+version (MARS)
+    import dmd.backend.errors;
 
 // fp.c
 int testFE();

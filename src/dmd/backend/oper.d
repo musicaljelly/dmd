@@ -17,7 +17,7 @@ extern (C++):
 @nogc:
 nothrow:
 
-alias int OPER;
+alias OPER = int;
 enum
 {
         OPunde,                 // place holder for undefined operator
@@ -304,10 +304,6 @@ int convidx(OPER op) { return op - CNVOPMIN; }
  *      OTae            potential common subexpression operator
  *      OTboolnop       operation is a nop if boolean result is desired
  */
-
-// Workaround 2.066.x bug by resolving the TYMAX value before using it as dimension.
-static if (__VERSION__ <= 2066)
-    private enum computeEnumValue = OPMAX;
 
 extern (C)
 {

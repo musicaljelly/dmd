@@ -16,16 +16,16 @@ module dmd.backend.cgcv;
 // Online documentation: https://dlang.org/phobos/dmd_backend_cgcv.html
 
 import dmd.backend.cc : Classsym, Symbol;
+import dmd.backend.dlist;
 import dmd.backend.type;
-import dmd.tk.dlist;
 
 extern (C++):
 @nogc:
 nothrow:
 
-alias LIST* symlist_t;
+alias symlist_t = LIST*;
 
-extern char* ftdbname;
+extern __gshared char* ftdbname;
 
 void cv_init();
 uint cv_typidx(type* t);
@@ -37,7 +37,7 @@ uint cv4_struct(Classsym*, int);
 
 /* =================== Added for MARS compiler ========================= */
 
-alias uint idx_t;        // type of type index
+alias idx_t = uint;        // type of type index
 
 /* Data structure for a type record     */
 
@@ -66,6 +66,8 @@ debtyp_t* debtyp_alloc(uint length);
 int cv_stringbytes(const(char)* name);
 uint cv4_numericbytes(uint value);
 void cv4_storenumeric(ubyte* p, uint value);
+uint cv4_signednumericbytes(int value);
+void cv4_storesignednumeric(ubyte* p, int value);
 idx_t cv_debtyp(debtyp_t* d);
 int cv_namestring(ubyte* p, const(char)* name, int length = -1);
 uint cv4_typidx(type* t);

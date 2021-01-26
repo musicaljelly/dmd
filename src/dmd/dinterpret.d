@@ -52,7 +52,7 @@ import dmd.visitor;
  * functions and may invoke a function that contains `ErrorStatement` in its body.
  * If that, the "CTFE failed because of previous errors" error is raised.
  */
-public extern (C++) Expression ctfeInterpret(Expression e)
+public Expression ctfeInterpret(Expression e)
 {
     if (e.op == TOK.error)
         return e;
@@ -81,7 +81,7 @@ public extern (C++) Expression ctfeInterpret(Expression e)
 /* Run CTFE on the expression, but allow the expression to be a TypeExp
  *  or a tuple containing a TypeExp. (This is required by pragma(msg)).
  */
-public extern (C++) Expression ctfeInterpretForPragmaMsg(Expression e)
+public Expression ctfeInterpretForPragmaMsg(Expression e)
 {
     if (e.op == TOK.error || e.op == TOK.type)
         return e;
@@ -110,8 +110,7 @@ public extern (C++) Expression ctfeInterpretForPragmaMsg(Expression e)
         {
             if (!expsx)
             {
-                expsx = new Expressions();
-                expsx.setDim(tup.exps.dim);
+                expsx = new Expressions(tup.exps.dim);
                 for (size_t j = 0; j < tup.exps.dim; j++)
                     (*expsx)[j] = (*tup.exps)[j];
             }
@@ -337,7 +336,7 @@ private struct InterState
     Statement gotoTarget;
 }
 
-extern (C++) __gshared CtfeStack ctfeStack;
+private __gshared CtfeStack ctfeStack;
 
 /***********************************************************
  * CTFE-object code for a single function
@@ -741,12 +740,14 @@ private void ctfeCompile(FuncDeclaration fd)
 
 /*************************************
  * Attempt to interpret a function given the arguments.
- * Input:
- *      istate     state for calling function (NULL if none)
- *      arguments  function arguments
- *      thisarg    'this', if a needThis() function, NULL if not.
+ * Params:
+ *      fd        = function being called
+ *      istate    = state for calling function (NULL if none)
+ *      arguments = function arguments
+ *      thisarg   = 'this', if a needThis() function, NULL if not.
  *
- * Return result expression if successful, TOK.cantExpression if not,
+ * Returns:
+ * result expression if successful, TOK.cantExpression if not,
  * or CTFEExp if function returned void.
  */
 private Expression interpretFunction(FuncDeclaration fd, InterState* istate, Expressions* arguments, Expression thisarg)
@@ -772,7 +773,8 @@ private Expression interpretFunction(FuncDeclaration fd, InterState* istate, Exp
     Type tb = fd.type.toBasetype();
     assert(tb.ty == Tfunction);
     TypeFunction tf = cast(TypeFunction)tb;
-    if (tf.varargs && arguments && ((fd.parameters && arguments.dim != fd.parameters.dim) || (!fd.parameters && arguments.dim)))
+    if (tf.parameterList.varargs != VarArg.none && arguments &&
+        ((fd.parameters && arguments.dim != fd.parameters.dim) || (!fd.parameters && arguments.dim)))
     {
         fd.error("C-style variadic functions are not yet implemented in CTFE");
         return CTFEExp.cantexp;
@@ -795,18 +797,17 @@ private Expression interpretFunction(FuncDeclaration fd, InterState* istate, Exp
 
     // Place to hold all the arguments to the function while
     // we are evaluating them.
-    Expressions eargs;
     size_t dim = arguments ? arguments.dim : 0;
     assert((fd.parameters ? fd.parameters.dim : 0) == dim);
 
     /* Evaluate all the arguments to the function,
      * store the results in eargs[]
      */
-    eargs.setDim(dim);
+    Expressions eargs = Expressions(dim);
     for (size_t i = 0; i < dim; i++)
     {
         Expression earg = (*arguments)[i];
-        Parameter fparam = Parameter.getNth(tf.parameters, i);
+        Parameter fparam = tf.parameterList[i];
 
         if (fparam.storageClass & (STC.out_ | STC.ref_))
         {
@@ -871,7 +872,7 @@ private Expression interpretFunction(FuncDeclaration fd, InterState* istate, Exp
     for (size_t i = 0; i < dim; i++)
     {
         Expression earg = eargs[i];
-        Parameter fparam = Parameter.getNth(tf.parameters, i);
+        Parameter fparam = tf.parameterList[i];
         VarDeclaration v = (*fd.parameters)[i];
         debug (LOG)
         {
@@ -879,7 +880,8 @@ private Expression interpretFunction(FuncDeclaration fd, InterState* istate, Exp
         }
         ctfeStack.push(v);
 
-        if ((fparam.storageClass & (STC.out_ | STC.ref_)) && earg.op == TOK.variable && (cast(VarExp)earg).var.toParent2() == fd)
+        if ((fparam.storageClass & (STC.out_ | STC.ref_)) && earg.op == TOK.variable &&
+            (cast(VarExp)earg).var.toParent2() == fd)
         {
             VarDeclaration vx = (cast(VarExp)earg).var.isVarDeclaration();
             if (!vx)
@@ -2429,11 +2431,15 @@ public:
                 result = CTFEExp.cantexp;
                 return;
             }
+
             if (v && (v.storage_class & (STC.out_ | STC.ref_)) && hasValue(v))
             {
                 // Strip off the nest of ref variables
                 Expression ev = getValue(v);
-                if (ev.op == TOK.variable || ev.op == TOK.index || ev.op == TOK.dotVariable)
+                if (ev.op == TOK.variable ||
+                    ev.op == TOK.index ||
+                    ev.op == TOK.slice ||
+                    ev.op == TOK.dotVariable)
                 {
                     result = interpret(pue, ev, istate, goal);
                     return;
@@ -2730,9 +2736,8 @@ public:
                 result = CTFEExp.cantexp;
                 return;
             }
-            emplaceExp!(ArrayLiteralExp)(pue, e.loc, basis, expsx);
+            emplaceExp!(ArrayLiteralExp)(pue, e.loc, e.type, basis, expsx);
             auto ale = cast(ArrayLiteralExp)pue.exp();
-            ale.type = e.type;
             ale.ownedByCtfe = OwnedBy.ctfe;
             result = ale;
         }
@@ -2928,12 +2933,10 @@ public:
             if (exceptionOrCantInterpret(elem))
                 return elem;
 
-            auto elements = new Expressions();
-            elements.setDim(len);
+            auto elements = new Expressions(len);
             for (size_t i = 0; i < len; i++)
                 (*elements)[i] = copyLiteral(elem).copy();
-            auto ae = new ArrayLiteralExp(loc, elements);
-            ae.type = newtype;
+            auto ae = new ArrayLiteralExp(loc, newtype, elements);
             ae.ownedByCtfe = OwnedBy.ctfe;
             return ae;
         }
@@ -3022,8 +3025,7 @@ public:
             size_t totalFieldCount = 0;
             for (ClassDeclaration c = cd; c; c = c.baseClass)
                 totalFieldCount += c.fields.dim;
-            auto elems = new Expressions();
-            elems.setDim(totalFieldCount);
+            auto elems = new Expressions(totalFieldCount);
             size_t fieldsSoFar = totalFieldCount;
             for (ClassDeclaration c = cd; c; c = c.baseClass)
             {
@@ -3100,11 +3102,9 @@ public:
                 return;
 
             // Create a CTFE pointer &[newval][0]
-            auto elements = new Expressions();
-            elements.setDim(1);
+            auto elements = new Expressions(1);
             (*elements)[0] = newval;
-            auto ae = new ArrayLiteralExp(e.loc, elements);
-            ae.type = e.newtype.arrayOf();
+            auto ae = new ArrayLiteralExp(e.loc, e.newtype.arrayOf(), elements);
             ae.ownedByCtfe = OwnedBy.ctfe;
 
             auto ei = new IndexExp(e.loc, ae, new IntegerExp(Loc.initial, 0, Type.tsize_t));
@@ -3171,7 +3171,7 @@ public:
         }
     }
 
-    private void interpretCommon(BinExp e, fp_t fp)
+    extern (D) private void interpretCommon(BinExp e, fp_t fp)
     {
         debug (LOG)
         {
@@ -3271,7 +3271,7 @@ public:
             e.error("`%s` cannot be interpreted at compile time", e.toChars());
     }
 
-    private void interpretCompareCommon(BinExp e, fp2_t fp)
+    extern (D) private void interpretCompareCommon(BinExp e, fp2_t fp)
     {
         debug (LOG)
         {
@@ -3428,7 +3428,7 @@ public:
         return v;
     }
 
-    private void interpretAssignCommon(BinExp e, fp_t fp, int post = 0)
+    extern (D) private void interpretAssignCommon(BinExp e, fp_t fp, int post = 0)
     {
         debug (LOG)
         {
@@ -5004,7 +5004,7 @@ public:
         if (!fd.fbody)
         {
             e.error("`%s` cannot be interpreted at compile time, because it has no available source code", fd.toChars());
-            result = CTFEExp.cantexp;
+            result = CTFEExp.showcontext;
             return;
         }
 
@@ -5242,13 +5242,19 @@ public:
             e1 = (cast(VectorExp)e1).e1;
 
         // Set the $ variable, and find the array literal to modify
-        if (e1.op != TOK.arrayLiteral && e1.op != TOK.string_ && e1.op != TOK.slice)
+        dinteger_t len;
+        if (e1.op == TOK.variable && e1.type.toBasetype().ty == Tsarray)
+            len = e1.type.toBasetype().isTypeSArray().dim.toInteger();
+        else
         {
-            e.error("cannot determine length of `%s` at compile time", e.e1.toChars());
-            return false;
+            if (e1.op != TOK.arrayLiteral && e1.op != TOK.string_ && e1.op != TOK.slice)
+            {
+                e.error("cannot determine length of `%s` at compile time", e.e1.toChars());
+                return false;
+            }
+            len = resolveArrayLength(e1);
         }
 
-        dinteger_t len = resolveArrayLength(e1);
         if (e.lengthVar)
         {
             Expression dollarExp = new IntegerExp(e.loc, len, Type.tsize_t);
@@ -5487,7 +5493,16 @@ public:
             return;
         }
 
-        Expression e1 = interpret(e.e1, istate);
+        CtfeGoal goal1 = ctfeNeedRvalue;
+        if (goal == ctfeNeedLvalue)
+        {
+            if (e.e1.type.toBasetype().ty == Tsarray)
+                if (auto ve = e.e1.isVarExp())
+                    if (auto vd = ve.var.isVarDeclaration())
+                        if (vd.storage_class & STC.ref_)
+                            goal1 = ctfeNeedLvalue;
+        }
+        Expression e1 = interpret(e.e1, istate, goal1);
         if (exceptionOrCant(e1))
             return;
 
@@ -5497,15 +5512,24 @@ public:
             return;
         }
 
+        /* Set dollar to the length of the array
+         */
+        uinteger_t dollar;
+        if (e1.op == TOK.variable && e1.type.toBasetype().ty == Tsarray)
+            dollar = e1.type.toBasetype().isTypeSArray().dim.toInteger();
+        else
+        {
+            if (e1.op != TOK.arrayLiteral && e1.op != TOK.string_ && e1.op != TOK.null_ && e1.op != TOK.slice)
+            {
+                e.error("cannot determine length of `%s` at compile time", e1.toChars());
+                result = CTFEExp.cantexp;
+                return;
+            }
+            dollar = resolveArrayLength(e1);
+        }
+
         /* Set the $ variable
          */
-        if (e1.op != TOK.arrayLiteral && e1.op != TOK.string_ && e1.op != TOK.null_ && e1.op != TOK.slice)
-        {
-            e.error("cannot determine length of `%s` at compile time", e1.toChars());
-            result = CTFEExp.cantexp;
-            return;
-        }
-        uinteger_t dollar = resolveArrayLength(e1);
         if (e.lengthVar)
         {
             auto dollarExp = new IntegerExp(e.loc, dollar, Type.tsize_t);
@@ -6576,9 +6600,8 @@ private Expression interpret_keys(InterState* istate, Expression earg, Type retu
         return null;
     assert(earg.op == TOK.assocArrayLiteral);
     AssocArrayLiteralExp aae = cast(AssocArrayLiteralExp)earg;
-    auto ae = new ArrayLiteralExp(aae.loc, aae.keys);
+    auto ae = new ArrayLiteralExp(aae.loc, returnType, aae.keys);
     ae.ownedByCtfe = aae.ownedByCtfe;
-    ae.type = returnType;
     return copyLiteral(ae).copy();
 }
 
@@ -6597,9 +6620,8 @@ private Expression interpret_values(InterState* istate, Expression earg, Type re
         return null;
     assert(earg.op == TOK.assocArrayLiteral);
     AssocArrayLiteralExp aae = cast(AssocArrayLiteralExp)earg;
-    auto ae = new ArrayLiteralExp(aae.loc, aae.values);
+    auto ae = new ArrayLiteralExp(aae.loc, returnType, aae.values);
     ae.ownedByCtfe = aae.ownedByCtfe;
-    ae.type = returnType;
     //printf("result is %s\n", e.toChars());
     return copyLiteral(ae).copy();
 }
@@ -6655,11 +6677,10 @@ private Expression interpret_aaApply(InterState* istate, Expression aa, Expressi
     size_t numParams = fd.parameters.dim;
     assert(numParams == 1 || numParams == 2);
 
-    Parameter fparam = Parameter.getNth((cast(TypeFunction)fd.type).parameters, numParams - 1);
+    Parameter fparam = fd.type.isTypeFunction().parameterList[numParams - 1];
     bool wantRefValue = 0 != (fparam.storageClass & (STC.out_ | STC.ref_));
 
-    Expressions args;
-    args.setDim(numParams);
+    Expressions args = Expressions(numParams);
 
     AssocArrayLiteralExp ae = cast(AssocArrayLiteralExp)aa;
     if (!ae.keys || ae.keys.dim == 0)
@@ -6733,8 +6754,7 @@ private Expression foreachApplyUtf(InterState* istate, Expression str, Expressio
         str.error("CTFE internal error: cannot foreach `%s`", str.toChars());
         return CTFEExp.cantexp;
     }
-    Expressions args;
-    args.setDim(numParams);
+    Expressions args = Expressions(numParams);
 
     Expression eresult = null; // ded-store to prevent spurious warning
 
@@ -6959,8 +6979,7 @@ private Expression evaluateIfBuiltin(InterState* istate, const ref Loc loc, Func
     {
         if (isBuiltin(fd) == BUILTIN.yes)
         {
-            Expressions args;
-            args.setDim(nargs);
+            Expressions args = Expressions(nargs);
             for (size_t i = 0; i < args.dim; i++)
             {
                 Expression earg = (*arguments)[i];

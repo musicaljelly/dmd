@@ -17,6 +17,7 @@ import dmd.arraytypes;
 import dmd.dscope;
 import dmd.dsymbol;
 import dmd.dsymbolsem;
+import dmd.expression;
 import dmd.globals;
 import dmd.identifier;
 import dmd.visitor;
@@ -30,23 +31,36 @@ private enum LOG = false;
  */
 extern (C++) final class Nspace : ScopeDsymbol
 {
-    extern (D) this(const ref Loc loc, Identifier ident, Dsymbols* members)
+    /**
+     * Determines whether the symbol for this namespace should be included in the symbol table.
+     */
+    bool mangleOnly;
+
+    /**
+     * Namespace identifier resolved during semantic.
+     */
+    Expression identExp;
+
+    extern (D) this(const ref Loc loc, Identifier ident, Expression identExp, Dsymbols* members, bool mangleOnly)
     {
         super(ident);
         //printf("Nspace::Nspace(ident = %s)\n", ident.toChars());
         this.loc = loc;
         this.members = members;
+        this.identExp = identExp;
+        this.mangleOnly = mangleOnly;
     }
 
     override Dsymbol syntaxCopy(Dsymbol s)
     {
-        auto ns = new Nspace(loc, ident, null);
+        auto ns = new Nspace(loc, ident, identExp, null, mangleOnly);
         return ScopeDsymbol.syntaxCopy(ns);
     }
 
     override void addMember(Scope* sc, ScopeDsymbol sds)
     {
-        ScopeDsymbol.addMember(sc, sds);
+        if(!mangleOnly)
+            ScopeDsymbol.addMember(sc, sds);
         if (members)
         {
             if (!symtab)
@@ -96,7 +110,7 @@ extern (C++) final class Nspace : ScopeDsymbol
         return Dsymbol.oneMember(ps, ident);
     }
 
-    override final Dsymbol search(const ref Loc loc, Identifier ident, int flags = SearchLocalsOnly)
+    override Dsymbol search(const ref Loc loc, Identifier ident, int flags = SearchLocalsOnly)
     {
         //printf("%s.Nspace.search('%s')\n", toChars(), ident.toChars());
         if (_scope && !symtab)

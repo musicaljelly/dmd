@@ -16,10 +16,9 @@ module dmd.backend.type;
 import dmd.backend.cdef;
 import dmd.backend.cc : block, Blockx, Classsym, Symbol, param_t;
 import dmd.backend.code;
+import dmd.backend.dlist;
 import dmd.backend.el : elem;
 import dmd.backend.ty;
-
-import dmd.tk.dlist;
 
 extern (C++):
 @nogc:
@@ -79,6 +78,7 @@ struct TYPE
     mangle_t Tmangle; // name mangling
 
     uint Tcount; // # pointing to this type
+    char* Tident; // TYident: identifier; TYdarray, TYaarray: pretty name for debug info
     TYPE* Tnext; // next in list
                                 // TYenum: gives base type
     union
@@ -88,7 +88,6 @@ struct TYPE
         param_t* Tparamtypes; // TYfunc, TYtemplate: types of function parameters
         Classsym* Ttag;     // TYstruct,TYmemptr: tag symbol
                             // TYenum,TYvtshape: tag symbol
-        char* Tident;       // TYident: identifier
         type* Talternate;   // C++: typtr: type of parameter before converting
         type* Tkey;         // typtr: key type for associative arrays
     }
@@ -96,10 +95,6 @@ struct TYPE
     list_t Texcspec;        // tyfunc(): list of types of exception specification
     Symbol *Ttypedef;       // if this type came from a typedef, this is
                             // the typedef symbol
-
-
-    static uint sizeCheck();
-    unittest { assert(sizeCheck() == TYPE.sizeof); }
 }
 
 struct typetemp_t
@@ -116,10 +111,6 @@ void type_debug(type* t)
 {
     debug assert(t.id == t.IDtype);
 }
-
-// Workaround 2.066.x bug by resolving the TYMAX value before using it as dimension.
-static if (__VERSION__ <= 2066)
-    private enum computeEnumValue = TYMAX;
 
 // Return name mangling of type
 mangle_t type_mangle(type *t) { return t.Tmangle; }
@@ -158,6 +149,7 @@ void type_dehydrate(type **);
 
 targ_size_t type_size(type *);
 uint type_alignsize(type *);
+bool type_zeroSize(type *t, tym_t tyf);
 uint type_parameterSize(type *t, tym_t tyf);
 uint type_paramsize(type *t);
 type *type_alloc(tym_t);

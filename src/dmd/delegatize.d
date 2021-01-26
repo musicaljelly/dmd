@@ -44,7 +44,7 @@ extern (C++) Expression toDelegate(Expression e, Type t, Scope* sc)
 {
     //printf("Expression::toDelegate(t = %s) %s\n", t.toChars(), e.toChars());
     Loc loc = e.loc;
-    auto tf = new TypeFunction(null, t, 0, LINK.d);
+    auto tf = new TypeFunction(ParameterList(), t, LINK.d);
     if (t.hasWild())
         tf.mod = MODFlags.wild;
     auto fld = new FuncLiteralDeclaration(loc, loc, tf, TOK.delegate_, null);
@@ -133,7 +133,7 @@ private void lambdaSetParent(Expression e, FuncDeclaration fd)
  * Returns:
  *      true if error occurs.
  */
-extern (C++) bool lambdaCheckForNestedRef(Expression e, Scope* sc)
+bool lambdaCheckForNestedRef(Expression e, Scope* sc)
 {
     extern (C++) final class LambdaCheckForNestedRef : StoppableVisitor
     {

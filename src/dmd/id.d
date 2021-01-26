@@ -76,6 +76,7 @@ immutable Msgtable[] msgtable =
     { "unitTest", "__unitTest" },
     { "require", "__require" },
     { "ensure", "__ensure" },
+    { "capture", "__capture" },
     { "_init", "init" },
     { "__sizeof", "sizeof" },
     { "__xalignof", "alignof" },
@@ -115,6 +116,7 @@ immutable Msgtable[] msgtable =
     { "__c_longlong" },
     { "__c_ulonglong" },
     { "__c_long_double" },
+    { "__c_wchar_t" },
     { "cpp_type_info_ptr", "__cpp_type_info_ptr" },
     { "_assert", "assert" },
     { "_unittest", "unittest" },
@@ -304,6 +306,7 @@ immutable Msgtable[] msgtable =
     // For pragma's
     { "Pinline", "inline" },
     { "lib" },
+    { "linkerDirective" },
     { "mangle" },
     { "msg" },
     { "startaddress" },
@@ -403,6 +406,8 @@ immutable Msgtable[] msgtable =
     { "getVirtualIndex" },
     { "getPointerBitmap" },
     { "isReturnOnStack" },
+    { "isZeroInit" },
+    { "getTargetInfo" },
 
     // For C++ mangling
     { "allocator" },

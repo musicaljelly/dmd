@@ -14,6 +14,7 @@ module dmd.denum;
 
 import core.stdc.stdio;
 
+import dmd.attrib;
 import dmd.gluelayer;
 import dmd.declaration;
 import dmd.dscope;
@@ -29,6 +30,16 @@ import dmd.mtype;
 import dmd.tokens;
 import dmd.typesem;
 import dmd.visitor;
+
+bool isSpecialEnumIdent(const Identifier ident) @nogc nothrow
+{
+    return  ident == Id.__c_long ||
+            ident == Id.__c_ulong ||
+            ident == Id.__c_longlong ||
+            ident == Id.__c_ulonglong ||
+            ident == Id.__c_long_double ||
+            ident == Id.__c_wchar_t;
+}
 
 /***********************************************************
  */
@@ -263,13 +274,9 @@ extern (C++) final class EnumDeclaration : ScopeDsymbol
      * Returns:
      *  true if special
      */
-    final bool isSpecial() const nothrow @nogc
+    bool isSpecial() const nothrow @nogc
     {
-        return (ident == Id.__c_long ||
-                ident == Id.__c_ulong ||
-                ident == Id.__c_longlong ||
-                ident == Id.__c_ulonglong ||
-                ident == Id.__c_long_double) && memtype;
+        return isSpecialEnumIdent(ident) && memtype;
     }
 
     Expression getDefaultValue(const ref Loc loc)
@@ -382,10 +389,25 @@ extern (C++) final class EnumMember : VarDeclaration
         this.origType = origType;
     }
 
+    extern(D) this(Loc loc, Identifier id, Expression value, Type memtype,
+        StorageClass stc, UserAttributeDeclaration uad, DeprecatedDeclaration dd)
+    {
+        this(loc, id, value, memtype);
+        storage_class = stc;
+        userAttribDecl = uad;
+        depdecl = dd;
+    }
+
     override Dsymbol syntaxCopy(Dsymbol s)
     {
         assert(!s);
-        return new EnumMember(loc, ident, value ? value.syntaxCopy() : null, origType ? origType.syntaxCopy() : null);
+        return new EnumMember(
+            loc, ident,
+            value ? value.syntaxCopy() : null,
+            origType ? origType.syntaxCopy() : null,
+            storage_class,
+            userAttribDecl ? cast(UserAttributeDeclaration)userAttribDecl.syntaxCopy(s) : null,
+            depdecl ? cast(DeprecatedDeclaration)depdecl.syntaxCopy(s) : null);
     }
 
     override const(char)* kind() const
@@ -396,6 +418,14 @@ extern (C++) final class EnumMember : VarDeclaration
     Expression getVarExp(const ref Loc loc, Scope* sc)
     {
         dsymbolSemantic(this, sc);
+        if (errors)
+            return new ErrorExp();
+        checkDisabled(loc, sc);
+
+        if (depdecl && !depdecl._scope)
+            depdecl._scope = sc;
+        checkDeprecated(loc, sc);
+
         if (errors)
             return new ErrorExp();
         Expression e = new VarExp(loc, this);

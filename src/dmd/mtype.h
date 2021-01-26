@@ -5,22 +5,15 @@
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
  * http://www.boost.org/LICENSE_1_0.txt
- * https://github.com/dlang/dmd/blob/master/src/mtype.h
+ * https://github.com/dlang/dmd/blob/master/src/dmd/mtype.h
  */
 
-#ifndef DMD_MTYPE_H
-#define DMD_MTYPE_H
-
-#ifdef __DMC__
 #pragma once
-#endif /* __DMC__ */
 
-#include "root.h"
-#include "stringtable.h"
-#include "rmem.h" // for d_size_t
+#include "root/rmem.h" // for d_size_t
 
 #include "arraytypes.h"
-#include "expression.h"
+#include "globals.h"
 #include "visitor.h"
 
 struct Scope;
@@ -33,7 +26,6 @@ class TypeInfoDeclaration;
 class Dsymbol;
 class TemplateInstance;
 class TemplateDeclaration;
-enum LINK;
 
 class TypeBasic;
 class Parameter;
@@ -99,6 +91,7 @@ enum ENUMTY
     Tvector,
     Tint128,
     Tuns128,
+    TTraits,
     TMAX
 };
 typedef unsigned char TY;       // ENUMTY
@@ -132,6 +125,14 @@ extern unsigned char impcnvType2[TMAX][TMAX];
 
 // If !=0, give warning on implicit conversion
 extern unsigned char impcnvWarn[TMAX][TMAX];
+
+enum VarArg
+{
+    none     = 0,  /// fixed number of arguments
+    variadic = 1,  /// T t, ...)  can be C-style (core.stdc.stdarg) or D-style (core.vararg)
+    typesafe = 2,  /// T t ...) typesafe https://dlang.org/spec/function.html#typesafe_variadic_functions
+                   ///   or https://dlang.org/spec/function.html#typesafe_variadic_functions
+};
 
 class Type : public RootObject
 {
@@ -226,8 +227,6 @@ public:
     static TemplateDeclaration *rtinfo;
 
     static Type *basic[TMAX];
-    static unsigned char sizeTy[TMAX];
-    static StringTable stringtable;
 
     virtual const char *kind();
     Type *copy();
@@ -235,7 +234,7 @@ public:
     bool equals(RootObject *o);
     bool equivalent(Type *t);
     // kludge for template.isType()
-    int dyncast() const { return DYNCAST_TYPE; }
+    DYNCAST dyncast() const { return DYNCAST_TYPE; }
     int covariant(Type *t, StorageClass *pstc = NULL, bool fix17349 = true);
     const char *toChars();
     char *toPrettyChars(bool QualifyTypes = false);
@@ -248,10 +247,6 @@ public:
     Type *merge2();
     void modToBuffer(OutBuffer *buf);
     char *modToChars();
-
-    /** For each active modifier (MODconst, MODimmutable, etc) call fp with a
-    void* for the work param and a string representation of the attribute. */
-    int modifiersApply(void *param, int (*fp)(void *, const char *));
 
     virtual bool isintegral();
     virtual bool isfloating();   // real, imaginary, or complex
@@ -296,7 +291,6 @@ public:
     Type *arrayOf();
     Type *sarrayOf(dinteger_t dim);
     Type *aliasthisOf();
-    bool checkAliasThisRec();
     virtual Type *makeConst();
     virtual Type *makeImmutable();
     virtual Type *makeShared();
@@ -319,7 +313,6 @@ public:
     virtual Type *toHeadMutable();
     virtual ClassDeclaration *isClassHandle();
     virtual structalign_t alignment();
-    virtual Expression *defaultInit(const Loc &loc = Loc());
     virtual Expression *defaultInitLiteral(const Loc &loc);
     virtual bool isZeroInit(const Loc &loc = Loc());                // if initializer is 0
     Identifier *getTypeInfoIdent();
@@ -332,10 +325,6 @@ public:
     uinteger_t sizemask();
     virtual bool needsDestruction();
     virtual bool needsNested();
-    bool checkComplexTransition(const Loc &loc, Scope *sc);
-
-    static void error(const Loc &loc, const char *format, ...);
-    static void warning(const Loc &loc, const char *format, ...);
 
     // For eliminating dynamic_cast
     virtual TypeBasic *isTypeBasic();
@@ -348,7 +337,6 @@ public:
     Type *syntaxCopy();
 
     d_uns64 size(const Loc &loc);
-    Expression *defaultInit(const Loc &loc);
     Expression *defaultInitLiteral(const Loc &loc);
     void accept(Visitor *v) { v->visit(this); }
 };
@@ -394,7 +382,6 @@ public:
     bool isscalar() /*const*/;
     bool isunsigned() /*const*/;
     MATCH implicitConvTo(Type *to);
-    Expression *defaultInit(const Loc &loc);
     bool isZeroInit(const Loc &loc) /*const*/;
 
     // For eliminating dynamic_cast
@@ -418,7 +405,6 @@ public:
     bool isunsigned();
     bool isBoolean() /*const*/;
     MATCH implicitConvTo(Type *to);
-    Expression *defaultInit(const Loc &loc);
     Expression *defaultInitLiteral(const Loc &loc);
     TypeBasic *elementType();
     bool isZeroInit(const Loc &loc);
@@ -447,7 +433,6 @@ public:
     structalign_t alignment();
     MATCH constConv(Type *to);
     MATCH implicitConvTo(Type *to);
-    Expression *defaultInit(const Loc &loc);
     Expression *defaultInitLiteral(const Loc &loc);
     bool hasPointers();
     bool needsDestruction();
@@ -468,7 +453,6 @@ public:
     bool isZeroInit(const Loc &loc) /*const*/;
     bool isBoolean() /*const*/;
     MATCH implicitConvTo(Type *to);
-    Expression *defaultInit(const Loc &loc);
     bool hasPointers() /*const*/;
 
     void accept(Visitor *v) { v->visit(this); }
@@ -485,7 +469,6 @@ public:
     const char *kind();
     Type *syntaxCopy();
     d_uns64 size(const Loc &loc);
-    Expression *defaultInit(const Loc &loc);
     bool isZeroInit(const Loc &loc) /*const*/;
     bool isBoolean() /*const*/;
     bool hasPointers() /*const*/;
@@ -505,7 +488,6 @@ public:
     MATCH implicitConvTo(Type *to);
     MATCH constConv(Type *to);
     bool isscalar() /*const*/;
-    Expression *defaultInit(const Loc &loc);
     bool isZeroInit(const Loc &loc) /*const*/;
     bool hasPointers() /*const*/;
 
@@ -518,7 +500,6 @@ public:
     const char *kind();
     Type *syntaxCopy();
     d_uns64 size(const Loc &loc) /*const*/;
-    Expression *defaultInit(const Loc &loc);
     bool isZeroInit(const Loc &loc) /*const*/;
     void accept(Visitor *v) { v->visit(this); }
 };
@@ -526,7 +507,7 @@ public:
 enum RET
 {
     RETregs     = 1,    // returned in registers
-    RETstack    = 2,    // returned on stack
+    RETstack    = 2     // returned on stack
 };
 
 enum TRUST
@@ -534,17 +515,13 @@ enum TRUST
     TRUSTdefault = 0,
     TRUSTsystem = 1,    // @system (same as TRUSTdefault)
     TRUSTtrusted = 2,   // @trusted
-    TRUSTsafe = 3,      // @safe
+    TRUSTsafe = 3       // @safe
 };
-
-// in hdrgen.c
-void trustToBuffer(OutBuffer *buf, TRUST trust);
-const char *trustToChars(TRUST trust);
 
 enum TRUSTformat
 {
     TRUSTformatDefault,  // do not emit @system when trust == TRUSTdefault
-    TRUSTformatSystem,   // emit @system when trust == TRUSTdefault
+    TRUSTformatSystem    // emit @system when trust == TRUSTdefault
 };
 
 enum PURE
@@ -553,7 +530,16 @@ enum PURE
     PUREfwdref = 1,     // it's pure, but not known which level yet
     PUREweak = 2,       // no mutable globals are read or written
     PUREconst = 3,      // parameters are values or const
-    PUREstrong = 4,     // parameters are values or immutable
+    PUREstrong = 4      // parameters are values or immutable
+};
+
+struct ParameterList
+{
+    Parameters* parameters;
+    VarArg varargs;
+
+    size_t length();
+    Parameter opIndex(size_t i);
 };
 
 class TypeFunction : public TypeNext
@@ -561,9 +547,8 @@ class TypeFunction : public TypeNext
 public:
     // .next is the return type
 
-    Parameters *parameters;     // function parameters
-    int varargs;        // 1: T t, ...) style for variable number of arguments
-                        // 2: T t ...) style for variable number of arguments
+    ParameterList parameterList;     // function parameters
+
     bool isnothrow;     // true: nothrow
     bool isnogc;        // true: is @nogc
     bool isproperty;    // can be called without parentheses
@@ -579,7 +564,7 @@ public:
 
     int inuse;
 
-    static TypeFunction *create(Parameters *parameters, Type *treturn, int varargs, LINK linkage, StorageClass stc = 0);
+    static TypeFunction *create(Parameters *parameters, Type *treturn, VarArg varargs, LINK linkage, StorageClass stc = 0);
     const char *kind();
     Type *syntaxCopy();
     void purityLevel();
@@ -588,15 +573,8 @@ public:
     StorageClass parameterStorageClass(Parameter *p);
     Type *addStorageClass(StorageClass stc);
 
-    /** For each active attribute (ref/const/nogc/etc) call fp with a void* for the
-    work param and a string representation of the attribute. */
-    int attributesApply(void *param, int (*fp)(void *, const char *), TRUSTformat trustFormat = TRUSTformatDefault);
-
     Type *substWildTo(unsigned mod);
-    MATCH callMatch(Type *tthis, Expressions *toargs, int flag = 0);
-    bool checkRetType(const Loc &loc);
 
-    Expression *defaultInit(const Loc &loc) /*const*/;
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -612,11 +590,23 @@ public:
     d_uns64 size(const Loc &loc) /*const*/;
     unsigned alignsize() /*const*/;
     MATCH implicitConvTo(Type *to);
-    Expression *defaultInit(const Loc &loc);
     bool isZeroInit(const Loc &loc) /*const*/;
     bool isBoolean() /*const*/;
     bool hasPointers() /*const*/;
 
+    void accept(Visitor *v) { v->visit(this); }
+};
+
+class TypeTraits : public Type
+{
+    Loc loc;
+    /// The expression to resolve as type or symbol.
+    TraitsExp *exp;
+    /// The symbol when exp doesn't represent a type.
+    Dsymbol *sym;
+    /// Indicates wether we are in an alias or not.
+    bool inAliasDeclaration;
+    Type *syntaxCopy();
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -633,11 +623,6 @@ public:
     void addInst(TemplateInstance *inst);
     void addIndex(RootObject *expr);
     d_uns64 size(const Loc &loc);
-
-    void resolveTupleIndex(const Loc &loc, Scope *sc, Dsymbol *s,
-        Expression **pe, Type **pt, Dsymbol **ps, RootObject *oindex);
-    void resolveHelper(const Loc &loc, Scope *sc, Dsymbol *s, Dsymbol *scopesym,
-        Expression **pe, Type **pt, Dsymbol **ps, bool intypeid = false);
 
     void accept(Visitor *v) { v->visit(this); }
 };
@@ -698,7 +683,7 @@ enum AliasThisRec
     RECtypeMask = 3,// mask to read no/yes/fwdref
 
     RECtracing = 0x4, // mark in progress of implicitConvTo/deduceWild
-    RECtracingDT = 0x8, // mark in progress of deduceType
+    RECtracingDT = 0x8  // mark in progress of deduceType
 };
 
 class TypeStruct : public Type
@@ -715,7 +700,6 @@ public:
     Type *syntaxCopy();
     Dsymbol *toDsymbol(Scope *sc);
     structalign_t alignment();
-    Expression *defaultInit(const Loc &loc);
     Expression *defaultInitLiteral(const Loc &loc);
     bool isZeroInit(const Loc &loc) /*const*/;
     bool isAssignable();
@@ -757,7 +741,6 @@ public:
     MATCH implicitConvTo(Type *to);
     MATCH constConv(Type *to);
     Type *toBasetype();
-    Expression *defaultInit(const Loc &loc);
     bool isZeroInit(const Loc &loc);
     bool hasPointers();
     bool hasVoidInitPointers();
@@ -783,7 +766,6 @@ public:
     MATCH constConv(Type *to);
     unsigned char deduceWild(Type *t, bool isRef);
     Type *toHeadMutable();
-    Expression *defaultInit(const Loc &loc);
     bool isZeroInit(const Loc &loc) /*const*/;
     bool isscope() /*const*/;
     bool isBoolean() /*const*/;
@@ -801,7 +783,6 @@ public:
     const char *kind();
     Type *syntaxCopy();
     bool equals(RootObject *o);
-    Expression *defaultInit(const Loc &loc);
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -826,7 +807,6 @@ public:
     bool isBoolean() /*const*/;
 
     d_uns64 size(const Loc &loc) /*const*/;
-    Expression *defaultInit(const Loc &loc) /*const*/;
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -842,23 +822,21 @@ public:
     Type *type;
     Identifier *ident;
     Expression *defaultArg;
+    UserAttributeDeclaration *userAttribDecl;   // user defined attributes
 
-    static Parameter *create(StorageClass storageClass, Type *type, Identifier *ident, Expression *defaultArg);
+    static Parameter *create(StorageClass storageClass, Type *type, Identifier *ident,
+                             Expression *defaultArg, UserAttributeDeclaration *userAttribDecl);
     Parameter *syntaxCopy();
     Type *isLazyArray();
     // kludge for template.isType()
-    int dyncast() const { return DYNCAST_PARAMETER; }
+    DYNCAST dyncast() const { return DYNCAST_PARAMETER; }
     virtual void accept(Visitor *v) { v->visit(this); }
 
-    static Parameters *arraySyntaxCopy(Parameters *parameters);
     static size_t dim(Parameters *parameters);
     static Parameter *getNth(Parameters *parameters, d_size_t nth, d_size_t *pn = NULL);
     const char *toChars();
     bool isCovariant(bool returnByRef, const Parameter *p) const;
-    static bool isCovariantScope(bool returnByRef, StorageClass from, StorageClass to);
 };
 
 bool arrayTypeCompatible(Loc loc, Type *t1, Type *t2);
 bool arrayTypeCompatibleWithoutCasting(Type *t1, Type *t2);
-
-#endif /* DMD_MTYPE_H */

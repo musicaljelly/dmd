@@ -32,9 +32,9 @@ import core.stdc.stdio;
  *      torig = the type to generate the `TypeInfo` object for
  *      sc    = the scope
  */
-extern (C++) void genTypeInfo(Loc loc, Type torig, Scope* sc)
+void genTypeInfo(Loc loc, Type torig, Scope* sc)
 {
-    //printf("Type::genTypeInfo() %p, %s\n", this, toChars());
+    // printf("genTypeInfo() %s\n", torig.toChars());
 
     // Even when compiling without `useTypeInfo` (e.g. -betterC) we should
     // still be able to evaluate `TypeInfo` at compile-time, just not at runtime.
@@ -43,14 +43,14 @@ extern (C++) void genTypeInfo(Loc loc, Type torig, Scope* sc)
     {
         if (!global.params.useTypeInfo)
         {
-            torig.error(loc, "`TypeInfo` cannot be used with -betterC");
+            .error(loc, "`TypeInfo` cannot be used with -betterC");
             fatal();
         }
     }
 
     if (!Type.dtypeinfo)
     {
-        torig.error(loc, "`object.TypeInfo` could not be found, but is implicitly used");
+        .error(loc, "`object.TypeInfo` could not be found, but is implicitly used");
         fatal();
     }
 
@@ -108,7 +108,7 @@ extern (C++) Type getTypeInfoType(Loc loc, Type t, Scope* sc)
     return t.vtinfo.type;
 }
 
-extern (C++) TypeInfoDeclaration getTypeInfoDeclaration(Type t)
+private TypeInfoDeclaration getTypeInfoDeclaration(Type t)
 {
     //printf("Type::getTypeInfoDeclaration() %s\n", t.toChars());
     switch (t.ty)
@@ -144,7 +144,7 @@ extern (C++) TypeInfoDeclaration getTypeInfoDeclaration(Type t)
     }
 }
 
-extern (C++) bool isSpeculativeType(Type t)
+bool isSpeculativeType(Type t)
 {
     extern (C++) final class SpeculativeTypeVisitor : Visitor
     {

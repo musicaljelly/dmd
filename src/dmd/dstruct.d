@@ -50,10 +50,10 @@ extern (C++) FuncDeclaration search_toString(StructDeclaration sd)
     FuncDeclaration fd = s ? s.isFuncDeclaration() : null;
     if (fd)
     {
-        static __gshared TypeFunction tftostring;
+        __gshared TypeFunction tftostring;
         if (!tftostring)
         {
-            tftostring = new TypeFunction(null, Type.tstring, 0, LINK.d);
+            tftostring = new TypeFunction(ParameterList(), Type.tstring, LINK.d);
             tftostring = tftostring.merge().toTypeFunction();
         }
         fd = fd.overloadExactMatch(tftostring);
@@ -202,16 +202,10 @@ extern (C++) void semanticTypeInfo(Scope* sc, Type t)
     t.accept(v);
 }
 
-struct StructFlags
+enum StructFlags : int
 {
-    alias Type = uint;
-
-    enum Enum : int
-    {
-        hasPointers = 0x1, // NB: should use noPointers as in ClassFlags
-    }
-
-    alias hasPointers = Enum.hasPointers;
+    none        = 0x0,
+    hasPointers = 0x1, // NB: should use noPointers as in ClassFlags
 }
 
 enum StructPOD : int
@@ -236,8 +230,8 @@ extern (C++) class StructDeclaration : AggregateDeclaration
     FuncDeclaration xeq;        // TypeInfo_Struct.xopEquals
     FuncDeclaration xcmp;       // TypeInfo_Struct.xopCmp
     FuncDeclaration xhash;      // TypeInfo_Struct.xtoHash
-    extern (C++) static __gshared FuncDeclaration xerreq;   // object.xopEquals
-    extern (C++) static __gshared FuncDeclaration xerrcmp;  // object.xopCmp
+    extern (C++) __gshared FuncDeclaration xerreq;   // object.xopEquals
+    extern (C++) __gshared FuncDeclaration xerrcmp;  // object.xopCmp
 
     structalign_t alignment;    // alignment applied outside of the struct
     StructPOD ispod;            // if struct is POD
@@ -356,6 +350,12 @@ extern (C++) class StructDeclaration : AggregateDeclaration
         //printf("StructDeclaration::finalizeSize() %s, sizeok = %d\n", toChars(), sizeok);
         assert(sizeok != Sizeok.done);
 
+        if (sizeok == Sizeok.inProcess)
+        {
+            return;
+        }
+        sizeok = Sizeok.inProcess;
+
         //printf("+StructDeclaration::finalizeSize() %s, fields.dim = %d, sizeok = %d\n", toChars(), fields.dim, sizeok);
 
         fields.setDim(0);   // workaround
@@ -369,7 +369,10 @@ extern (C++) class StructDeclaration : AggregateDeclaration
             s.setFieldOffset(this, &offset, isunion);
         }
         if (type.ty == Terror)
+        {
+            errors = true;
             return;
+        }
 
         // 0 sized struct's are set to 1 byte
         if (structsize == 0)
@@ -407,9 +410,23 @@ extern (C++) class StructDeclaration : AggregateDeclaration
         {
             if (vd._init)
             {
-                // Should examine init to see if it is really all 0's
-                zeroInit = false;
-                break;
+                if (vd._init.isVoidInitializer())
+                    /* Treat as 0 for the purposes of putting the initializer
+                     * in the BSS segment, or doing a mass set to 0
+                     */
+                    continue;
+
+                // Zero size fields are zero initialized
+                if (vd.type.size(vd.loc) == 0)
+                    continue;
+
+                // Examine init to see if it is all 0s.
+                auto exp = vd.getConstInitializer();
+                if (!exp || !_isZeroInit(exp))
+                {
+                    zeroInit = false;
+                    break;
+                }
             }
             else if (!vd.type.isZeroInit(loc))
             {
@@ -593,6 +610,95 @@ extern (C++) class StructDeclaration : AggregateDeclaration
     override void accept(Visitor v)
     {
         v.visit(this);
+    }
+}
+
+/**********************************
+ * Determine if exp is all binary zeros.
+ * Params:
+ *      exp = expression to check
+ * Returns:
+ *      true if it's all binary 0
+ */
+private bool _isZeroInit(Expression exp)
+{
+    switch (exp.op)
+    {
+        case TOK.int64:
+            return exp.toInteger() == 0;
+
+        case TOK.null_:
+        case TOK.false_:
+            return true;
+
+        case TOK.structLiteral:
+        {
+            auto sle = cast(StructLiteralExp) exp;
+            foreach (i; 0 .. sle.sd.fields.dim)
+            {
+                auto field = sle.sd.fields[i];
+                if (field.type.size(field.loc))
+                {
+                    auto e = (*sle.elements)[i];
+                    if (e ? !_isZeroInit(e)
+                          : !field.type.isZeroInit(field.loc))
+                        return false;
+                }
+            }
+            return true;
+        }
+
+        case TOK.arrayLiteral:
+        {
+            auto ale = cast(ArrayLiteralExp)exp;
+
+            const dim = ale.elements ? ale.elements.dim : 0;
+
+            if (ale.type.toBasetype().ty == Tarray) // if initializing a dynamic array
+                return dim == 0;
+
+            foreach (i; 0 .. dim)
+            {
+                if (!_isZeroInit(ale.getElement(i)))
+                    return false;
+            }
+
+            /* Note that true is returned for all T[0]
+             */
+            return true;
+        }
+
+        case TOK.string_:
+        {
+            StringExp se = cast(StringExp)exp;
+
+            if (se.type.toBasetype().ty == Tarray) // if initializing a dynamic array
+                return se.len == 0;
+
+            foreach (i; 0 .. se.len)
+            {
+                if (se.getCodeUnit(i))
+                    return false;
+            }
+            return true;
+        }
+
+        case TOK.vector:
+        {
+            auto ve = cast(VectorExp) exp;
+            return _isZeroInit(ve.e1);
+        }
+
+        case TOK.float64:
+        case TOK.complex80:
+        {
+            import dmd.root.ctfloat : CTFloat;
+            return (exp.toReal()      is CTFloat.zero) &&
+                   (exp.toImaginary() is CTFloat.zero);
+        }
+
+        default:
+            return false;
     }
 }
 

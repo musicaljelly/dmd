@@ -100,6 +100,7 @@ extern(C++) class StrictVisitor(AST) : ParseTimeVisitor!AST
     override void visit(AST.CompoundStatement) { assert(0); }
     override void visit(AST.CompoundDeclarationStatement) { assert(0); }
     override void visit(AST.CompoundAsmStatement) { assert(0); }
+    override void visit(AST.InlineAsmStatement) { assert(0); }
     override void visit(AST.Type) { assert(0); }
     override void visit(AST.TypeBasic) { assert(0); }
     override void visit(AST.TypeError) { assert(0); }
@@ -120,6 +121,7 @@ extern(C++) class StrictVisitor(AST) : ParseTimeVisitor!AST
     override void visit(AST.TypeAArray) { assert(0); }
     override void visit(AST.TypeSArray) { assert(0); }
     override void visit(AST.TypeQualified) { assert(0); }
+    override void visit(AST.TypeTraits) { assert(0); }
     override void visit(AST.TypeIdentifier) { assert(0); }
     override void visit(AST.TypeReturn) { assert(0); }
     override void visit(AST.TypeTypeof) { assert(0); }

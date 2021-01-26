@@ -48,14 +48,13 @@ import dmd.toir;
 import dmd.tokens;
 import dmd.visitor;
 
-import dmd.tk.dlist;
-
 import dmd.backend.cc;
 import dmd.backend.cdef;
 import dmd.backend.cgcv;
 import dmd.backend.code;
 import dmd.backend.code_x86;
 import dmd.backend.cv4;
+import dmd.backend.dlist;
 import dmd.backend.dt;
 import dmd.backend.el;
 import dmd.backend.global;
@@ -181,7 +180,6 @@ private extern (C++) class S2irVisitor : Visitor
 
     override void visit(Statement s)
     {
-        s.print();
         assert(0);
     }
 
@@ -839,9 +837,13 @@ private extern (C++) class S2irVisitor : Visitor
         Blockx *blx = irs.blx;
 
         //printf("ExpStatement.toIR(), exp = %s\n", s.exp ? s.exp.toChars() : "");
-        incUsage(irs, s.loc);
         if (s.exp)
+        {
+            if (s.exp.hasCode)
+                incUsage(irs, s.loc);
+
             block_appendexp(blx.curblock, toElemDtor(s.exp, irs));
+        }
     }
 
     /**************************************
@@ -1513,7 +1515,7 @@ private extern (C++) class S2irVisitor : Visitor
     /****************************************
      */
 
-    override void visit(AsmStatement s)
+    override void visit(InlineAsmStatement s)
 //    { .visit(irs, s); }
     {
         block *bpre;
@@ -1588,7 +1590,6 @@ private extern (C++) class S2irVisitor : Visitor
                 default:
                     break;
             }
-            //c.print();
         }
 
         basm.bIasmrefparam = s.refparam;             // are parameters reference?
@@ -1641,7 +1642,7 @@ void insertFinallyBlockCalls(block *startblock)
     {
         printf("------- before ----------\n");
         numberBlocks(startblock);
-        for (block *b = startblock; b; b = b.Bnext) WRblock(b);
+        foreach (b; BlockRange(startblock)) WRblock(b);
         printf("-------------------------\n");
     }
 
@@ -1791,7 +1792,7 @@ void insertFinallyBlockCalls(block *startblock)
     {
         printf("------- after ----------\n");
         numberBlocks(startblock);
-        for (block *b = startblock; b; b = b.Bnext) WRblock(b);
+        foreach (b; BlockRange(startblock)) WRblock(b);
         printf("-------------------------\n");
     }
 }
@@ -1819,7 +1820,7 @@ void insertFinallyBlockGotos(block *startblock)
      * Actually, just make them into no-ops and let the optimizer
      * delete them.
      */
-    for (block *b = startblock; b; b = b.Bnext)
+    foreach (b; BlockRange(startblock))
     {
         b.Btry = null;
         switch (b.BC)
@@ -1852,8 +1853,7 @@ void insertFinallyBlockGotos(block *startblock)
     {
         printf("------- after ----------\n");
         numberBlocks(startblock);
-        for (block *b = startblock; b; b = b.Bnext) WRblock(b);
+        foreach (b; BlockRange(startblock)) WRblock(b);
         printf("-------------------------\n");
     }
 }
-

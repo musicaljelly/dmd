@@ -49,7 +49,7 @@ enum LOG = false;
  * Do an implicit cast.
  * Issue error if it can't be done.
  */
-extern (C++) Expression implicitCastTo(Expression e, Scope* sc, Type t)
+Expression implicitCastTo(Expression e, Scope* sc, Type t)
 {
     extern (C++) final class ImplicitCastTo : Visitor
     {
@@ -81,6 +81,46 @@ extern (C++) Expression implicitCastTo(Expression e, Scope* sc, Type t)
                     result.type = t;
                     return;
                 }
+
+                auto ad = isAggregate(e.type);
+                if (ad && ad.aliasthis)
+                {
+                    MATCH adMatch;
+                    if (ad.type.ty == Tstruct)
+                        adMatch = (cast(TypeStruct)(ad.type)).implicitConvToWithoutAliasThis(t);
+                    else
+                        adMatch = (cast(TypeClass)(ad.type)).implicitConvToWithoutAliasThis(t);
+
+                    if (!adMatch)
+                    {
+                        Type tob = t.toBasetype();
+                        Type t1b = e.type.toBasetype();
+                        AggregateDeclaration toad = isAggregate(tob);
+                        if (ad != toad)
+                        {
+                            if (t1b.ty == Tclass && tob.ty == Tclass)
+                            {
+                                ClassDeclaration t1cd = t1b.isClassHandle();
+                                ClassDeclaration tocd = tob.isClassHandle();
+                                int offset;
+                                if (tocd.isBaseOf(t1cd, &offset))
+                                {
+                                    result = new CastExp(e.loc, e, t);
+                                    result.type = t;
+                                    return;
+                                }
+                            }
+
+                            /* Forward the cast to our alias this member, rewrite to:
+                             *   cast(to)e1.aliasthis
+                             */
+                            result = resolveAliasThis(sc, e);
+                            result = result.castTo(sc, t);
+                            return;
+                       }
+                    }
+                }
+
                 result = e.castTo(sc, t);
                 return;
             }
@@ -144,7 +184,7 @@ extern (C++) Expression implicitCastTo(Expression e, Scope* sc, Type t)
             visit(cast(Expression)e);
 
             Type tb = result.type.toBasetype();
-            if (tb.ty == Tarray)
+            if (tb.ty == Tarray && global.params.useTypeInfo && Type.dtypeinfo)
                 semanticTypeInfo(sc, (cast(TypeDArray)tb).next);
         }
 
@@ -178,7 +218,7 @@ extern (C++) Expression implicitCastTo(Expression e, Scope* sc, Type t)
  * Return MATCH level of implicitly converting e to type t.
  * Don't do the actual cast; don't change e.
  */
-extern (C++) MATCH implicitConvTo(Expression e, Type t)
+MATCH implicitConvTo(Expression e, Type t)
 {
     extern (C++) final class ImplicitConvTo : Visitor
     {
@@ -547,116 +587,127 @@ extern (C++) MATCH implicitConvTo(Expression e, Type t)
             if (!e.committed && t.ty == Tpointer && t.nextOf().ty == Tvoid)
                 return;
 
-            if (e.type.ty == Tsarray || e.type.ty == Tarray || e.type.ty == Tpointer)
+            if (!(e.type.ty == Tsarray || e.type.ty == Tarray || e.type.ty == Tpointer))
+                return visit(cast(Expression)e);
+
+            TY tyn = e.type.nextOf().ty;
+
+            if (!(tyn == Tchar || tyn == Twchar || tyn == Tdchar))
+                return visit(cast(Expression)e);
+
+            switch (t.ty)
             {
-                TY tyn = e.type.nextOf().ty;
-                if (tyn == Tchar || tyn == Twchar || tyn == Tdchar)
+            case Tsarray:
+                if (e.type.ty == Tsarray)
                 {
-                    switch (t.ty)
+                    TY tynto = t.nextOf().ty;
+                    if (tynto == tyn)
                     {
-                    case Tsarray:
-                        if (e.type.ty == Tsarray)
+                        if ((cast(TypeSArray)e.type).dim.toInteger() == (cast(TypeSArray)t).dim.toInteger())
                         {
-                            TY tynto = t.nextOf().ty;
-                            if (tynto == tyn)
-                            {
-                                if ((cast(TypeSArray)e.type).dim.toInteger() == (cast(TypeSArray)t).dim.toInteger())
-                                {
-                                    result = MATCH.exact;
-                                }
-                                return;
-                            }
-                            if (tynto == Tchar || tynto == Twchar || tynto == Tdchar)
-                            {
-                                if (e.committed && tynto != tyn)
-                                    return;
-                                size_t fromlen = e.numberOfCodeUnits(tynto);
-                                size_t tolen = cast(size_t)(cast(TypeSArray)t).dim.toInteger();
-                                if (tolen < fromlen)
-                                    return;
-                                if (tolen != fromlen)
-                                {
-                                    // implicit length extending
-                                    result = MATCH.convert;
-                                    return;
-                                }
-                            }
-                            if (!e.committed && (tynto == Tchar || tynto == Twchar || tynto == Tdchar))
-                            {
-                                result = MATCH.exact;
-                                return;
-                            }
+                            result = MATCH.exact;
                         }
-                        else if (e.type.ty == Tarray)
+                        return;
+                    }
+                    if (tynto == Tchar || tynto == Twchar || tynto == Tdchar)
+                    {
+                        if (e.committed && tynto != tyn)
+                            return;
+                        size_t fromlen = e.numberOfCodeUnits(tynto);
+                        size_t tolen = cast(size_t)(cast(TypeSArray)t).dim.toInteger();
+                        if (tolen < fromlen)
+                            return;
+                        if (tolen != fromlen)
                         {
-                            TY tynto = t.nextOf().ty;
-                            if (tynto == Tchar || tynto == Twchar || tynto == Tdchar)
-                            {
-                                if (e.committed && tynto != tyn)
-                                    return;
-                                size_t fromlen = e.numberOfCodeUnits(tynto);
-                                size_t tolen = cast(size_t)(cast(TypeSArray)t).dim.toInteger();
-                                if (tolen < fromlen)
-                                    return;
-                                if (tolen != fromlen)
-                                {
-                                    // implicit length extending
-                                    result = MATCH.convert;
-                                    return;
-                                }
-                            }
-                            if (tynto == tyn)
-                            {
-                                result = MATCH.exact;
-                                return;
-                            }
-                            if (!e.committed && (tynto == Tchar || tynto == Twchar || tynto == Tdchar))
-                            {
-                                result = MATCH.exact;
-                                return;
-                            }
+                            // implicit length extending
+                            result = MATCH.convert;
+                            return;
                         }
-                        goto case; /+ fall through +/
-                    case Tarray:
-                    case Tpointer:
-                        Type tn = t.nextOf();
-                        MATCH m = MATCH.exact;
-                        if (e.type.nextOf().mod != tn.mod)
+                    }
+                    if (!e.committed && (tynto == Tchar || tynto == Twchar || tynto == Tdchar))
+                    {
+                        result = MATCH.exact;
+                        return;
+                    }
+                }
+                else if (e.type.ty == Tarray)
+                {
+                    TY tynto = t.nextOf().ty;
+                    if (tynto == Tchar || tynto == Twchar || tynto == Tdchar)
+                    {
+                        if (e.committed && tynto != tyn)
+                            return;
+                        size_t fromlen = e.numberOfCodeUnits(tynto);
+                        size_t tolen = cast(size_t)(cast(TypeSArray)t).dim.toInteger();
+                        if (tolen < fromlen)
+                            return;
+                        if (tolen != fromlen)
                         {
-                            // https://issues.dlang.org/show_bug.cgi?id=16183
-                            if (!tn.isConst() && !tn.isImmutable())
-                                return;
-                            m = MATCH.constant;
+                            // implicit length extending
+                            result = MATCH.convert;
+                            return;
                         }
-                        if (!e.committed)
+                    }
+                    if (tynto == tyn)
+                    {
+                        result = MATCH.exact;
+                        return;
+                    }
+                    if (!e.committed && (tynto == Tchar || tynto == Twchar || tynto == Tdchar))
+                    {
+                        result = MATCH.exact;
+                        return;
+                    }
+                }
+                goto case; /+ fall through +/
+            case Tarray:
+            case Tpointer:
+                Type tn = t.nextOf();
+                MATCH m = MATCH.exact;
+                if (e.type.nextOf().mod != tn.mod)
+                {
+                    // https://issues.dlang.org/show_bug.cgi?id=16183
+                    if (!tn.isConst() && !tn.isImmutable())
+                        return;
+                    m = MATCH.constant;
+                }
+                if (!e.committed)
+                {
+                    switch (tn.ty)
+                    {
+                    case Tchar:
+                        if (e.postfix == 'w' || e.postfix == 'd')
+                            m = MATCH.convert;
+                        result = m;
+                        return;
+                    case Twchar:
+                        if (e.postfix != 'w')
+                            m = MATCH.convert;
+                        result = m;
+                        return;
+                    case Tdchar:
+                        if (e.postfix != 'd')
+                            m = MATCH.convert;
+                        result = m;
+                        return;
+                    case Tenum:
+                        if ((cast(TypeEnum)tn).sym.isSpecial())
                         {
-                            switch (tn.ty)
-                            {
-                            case Tchar:
-                                if (e.postfix == 'w' || e.postfix == 'd')
-                                    m = MATCH.convert;
-                                result = m;
-                                return;
-                            case Twchar:
-                                if (e.postfix != 'w')
-                                    m = MATCH.convert;
-                                result = m;
-                                return;
-                            case Tdchar:
-                                if (e.postfix != 'd')
-                                    m = MATCH.convert;
-                                result = m;
-                                return;
-                            default:
-                                break;
-                            }
+                            /* Allow string literal -> const(wchar_t)[]
+                             */
+                            if (TypeBasic tob = tn.toBasetype().isTypeBasic())
+                            result = tn.implicitConvTo(tob);
+                            return;
                         }
                         break;
-
                     default:
                         break;
                     }
                 }
+                break;
+
+            default:
+                break;
             }
 
             visit(cast(Expression)e);
@@ -759,28 +810,25 @@ extern (C++) MATCH implicitConvTo(Expression e, Type t)
             Type tb = t.toBasetype();
             Type typeb = e.type.toBasetype();
 
-            if (tb.ty == Taarray && typeb.ty == Taarray)
+            if (!(tb.ty == Taarray && typeb.ty == Taarray))
+                return visit(cast(Expression)e);
+
+            result = MATCH.exact;
+            for (size_t i = 0; i < e.keys.dim; i++)
             {
-                result = MATCH.exact;
-                for (size_t i = 0; i < e.keys.dim; i++)
-                {
-                    Expression el = (*e.keys)[i];
-                    MATCH m = el.implicitConvTo((cast(TypeAArray)tb).index);
-                    if (m < result)
-                        result = m; // remember worst match
-                    if (result == MATCH.nomatch)
-                        break; // no need to check for worse
-                    el = (*e.values)[i];
-                    m = el.implicitConvTo(tb.nextOf());
-                    if (m < result)
-                        result = m; // remember worst match
-                    if (result == MATCH.nomatch)
-                        break; // no need to check for worse
-                }
-                return;
+                Expression el = (*e.keys)[i];
+                MATCH m = el.implicitConvTo((cast(TypeAArray)tb).index);
+                if (m < result)
+                    result = m; // remember worst match
+                if (result == MATCH.nomatch)
+                    break; // no need to check for worse
+                el = (*e.values)[i];
+                m = el.implicitConvTo(tb.nextOf());
+                if (m < result)
+                    result = m; // remember worst match
+                if (result == MATCH.nomatch)
+                    break; // no need to check for worse
             }
-            else
-                visit(cast(Expression)e);
         }
 
         override void visit(CallExp e)
@@ -876,8 +924,8 @@ extern (C++) MATCH implicitConvTo(Expression e, Type t)
              * and see if we can convert the function argument to the modded type
              */
 
-            size_t nparams = Parameter.dim(tf.parameters);
-            size_t j = (tf.linkage == LINK.d && tf.varargs == 1); // if TypeInfoArray was prepended
+            size_t nparams = tf.parameterList.length;
+            size_t j = (tf.linkage == LINK.d && tf.parameterList.varargs == VarArg.variadic); // if TypeInfoArray was prepended
             if (e.e1.op == TOK.dotVariable)
             {
                 /* Treat 'this' as just another function argument
@@ -897,7 +945,7 @@ extern (C++) MATCH implicitConvTo(Expression e, Type t)
                 }
                 if (i - j < nparams)
                 {
-                    Parameter fparam = Parameter.getNth(tf.parameters, i - j);
+                    Parameter fparam = tf.parameterList[i - j];
                     if (fparam.storageClass & STC.lazy_)
                         return; // not sure what to do with this
                     Type tparam = fparam.type;
@@ -1046,6 +1094,19 @@ extern (C++) MATCH implicitConvTo(Expression e, Type t)
             visit(cast(Expression)e);
         }
 
+        override void visit(AndExp e)
+        {
+            visit(cast(Expression)e);
+            if (result != MATCH.nomatch)
+                return;
+
+            MATCH m1 = e.e1.implicitConvTo(t);
+            MATCH m2 = e.e2.implicitConvTo(t);
+
+            // Pick the worst match
+            result = (m1 < m2) ? m1 : m2;
+        }
+
         override void visit(OrExp e)
         {
             visit(cast(Expression)e);
@@ -1179,8 +1240,9 @@ extern (C++) MATCH implicitConvTo(Expression e, Type t)
 
                 Expressions* args = (fd == e.allocator) ? e.newargs : e.arguments;
 
-                size_t nparams = Parameter.dim(tf.parameters);
-                size_t j = (tf.linkage == LINK.d && tf.varargs == 1); // if TypeInfoArray was prepended
+                size_t nparams = tf.parameterList.length;
+                // if TypeInfoArray was prepended
+                size_t j = (tf.linkage == LINK.d && tf.parameterList.varargs == VarArg.variadic);
                 for (size_t i = j; i < e.arguments.dim; ++i)
                 {
                     Expression earg = (*args)[i];
@@ -1191,7 +1253,7 @@ extern (C++) MATCH implicitConvTo(Expression e, Type t)
                     }
                     if (i - j < nparams)
                     {
-                        Parameter fparam = Parameter.getNth(tf.parameters, i - j);
+                        Parameter fparam = tf.parameterList[i - j];
                         if (fparam.storageClass & STC.lazy_)
                             return; // not sure what to do with this
                         Type tparam = fparam.type;
@@ -1379,7 +1441,7 @@ extern (C++) MATCH implicitConvTo(Expression e, Type t)
     return v.result;
 }
 
-extern (C++) Type toStaticArrayType(SliceExp e)
+Type toStaticArrayType(SliceExp e)
 {
     if (e.lwr && e.upr)
     {
@@ -1402,11 +1464,32 @@ extern (C++) Type toStaticArrayType(SliceExp e)
     return null;
 }
 
+// Try casting the alias this member. Return the expression if it succeeds, null otherwise.
+private Expression tryAliasThisCast(Expression e, Scope* sc, Type tob, Type t1b, Type t)
+{
+    Expression result;
+    AggregateDeclaration t1ad = isAggregate(t1b);
+    if (!t1ad)
+        return null;
+
+    AggregateDeclaration toad = isAggregate(tob);
+    if (t1ad == toad || !t1ad.aliasthis)
+        return null;
+
+    /* Forward the cast to our alias this member, rewrite to:
+     *   cast(to)e1.aliasthis
+     */
+    result = resolveAliasThis(sc, e);
+    const errors = global.startGagging();
+    result = result.castTo(sc, t);
+    return global.endGagging(errors) ? null : result;
+}
+
 /**************************************
  * Do an explicit cast.
  * Assume that the 'this' expression does not have any indirections.
  */
-extern (C++) Expression castTo(Expression e, Scope* sc, Type t)
+Expression castTo(Expression e, Scope* sc, Type t)
 {
     extern (C++) final class CastTo : Visitor
     {
@@ -1482,6 +1565,7 @@ extern (C++) Expression castTo(Expression e, Scope* sc, Type t)
             const(bool) tob_isA = (tob.isintegral() || tob.isfloating());
             const(bool) t1b_isA = (t1b.isintegral() || t1b.isfloating());
 
+            bool hasAliasThis;
             if (AggregateDeclaration t1ad = isAggregate(t1b))
             {
                 AggregateDeclaration toad = isAggregate(tob);
@@ -1495,13 +1579,7 @@ extern (C++) Expression castTo(Expression e, Scope* sc, Type t)
                         if (tocd.isBaseOf(t1cd, &offset))
                             goto Lok;
                     }
-
-                    /* Forward the cast to our alias this member, rewrite to:
-                     *   cast(to)e1.aliasthis
-                     */
-                    result = resolveAliasThis(sc, e);
-                    result = result.castTo(sc, t);
-                    return;
+                    hasAliasThis = true;
                 }
             }
             else if (tob.ty == Tvector && t1b.ty != Tvector)
@@ -1548,6 +1626,14 @@ extern (C++) Expression castTo(Expression e, Scope* sc, Type t)
             {
                 if (t1b.size(e.loc) == tob.size(e.loc))
                     goto Lok;
+
+                if (hasAliasThis)
+                {
+                    result = tryAliasThisCast(e, sc, tob, t1b, t);
+                    if (result)
+                        return;
+                }
+
                 auto ts = toAutoQualChars(e.type, t);
                 e.error("cannot cast expression `%s` of type `%s` to `%s` because of different sizes",
                     e.toChars(), ts[0], ts[1]);
@@ -1625,6 +1711,15 @@ extern (C++) Expression castTo(Expression e, Scope* sc, Type t)
             if (t1b.ty == Tvoid && tob.ty != Tvoid)
             {
             Lfail:
+                /* if the cast cannot be performed, maybe there is an alias
+                 * this that can be used for casting.
+                 */
+                if (hasAliasThis)
+                {
+                    result = tryAliasThisCast(e, sc, tob, t1b, t);
+                    if (result)
+                        return;
+                }
                 e.error("cannot cast expression `%s` of type `%s` to `%s`", e.toChars(), e.type.toChars(), t.toChars());
                 result = new ErrorExp();
                 return;
@@ -2308,7 +2403,7 @@ extern (C++) Expression castTo(Expression e, Scope* sc, Type t)
             {
                 printf("DelegateExp::castTo(this=%s, type=%s, t=%s)\n", e.toChars(), e.type.toChars(), t.toChars());
             }
-            static __gshared const(char)* msg = "cannot form delegate due to covariant return type";
+            __gshared const(char)* msg = "cannot form delegate due to covariant return type";
 
             Type tb = t.toBasetype();
             Type typeb = e.type.toBasetype();
@@ -2485,7 +2580,7 @@ extern (C++) Expression castTo(Expression e, Scope* sc, Type t)
  *      t       Target type
  *      flag    1: don't put an error when inference fails
  */
-extern (C++) Expression inferType(Expression e, Type t, int flag = 0)
+Expression inferType(Expression e, Type t, int flag = 0)
 {
     extern (C++) final class InferType : Visitor
     {
@@ -2587,7 +2682,7 @@ extern (C++) Expression inferType(Expression e, Type t, int flag = 0)
 /****************************************
  * Scale addition/subtraction to/from pointer.
  */
-extern (C++) Expression scaleFactor(BinExp be, Scope* sc)
+Expression scaleFactor(BinExp be, Scope* sc)
 {
     Type t1b = be.e1.type.toBasetype();
     Type t2b = be.e2.type.toBasetype();
@@ -2679,7 +2774,7 @@ private bool isVoidArrayLiteral(Expression e, Type other)
  *      true    success
  *      false   failed
  */
-extern (C++) bool typeMerge(Scope* sc, TOK op, Type* pt, Expression* pe1, Expression* pe2)
+bool typeMerge(Scope* sc, TOK op, Type* pt, Expression* pe1, Expression* pe2)
 {
     //printf("typeMerge() %s op %s\n", pe1.toChars(), pe2.toChars());
 
@@ -2757,9 +2852,6 @@ Lagain:
         t2 = Type.basic[ty2];
         e1 = e1.castTo(sc, t1);
         e2 = e2.castTo(sc, t2);
-        //printf("after typeCombine():\n");
-        //print();
-        //printf("ty = %d, ty1 = %d, ty2 = %d\n", ty, ty1, ty2);
         goto Lret;
     }
 
@@ -3322,7 +3414,6 @@ Lret:
             printf("\tt2 = %s\n", e2.type.toChars());
         printf("\ttype = %s\n", t.toChars());
     }
-    //print();
     return true;
 
 Lt1:
@@ -3341,7 +3432,7 @@ Lt2:
  * Returns:
  *    null on success, ErrorExp if error occurs
  */
-extern (C++) Expression typeCombine(BinExp be, Scope* sc)
+Expression typeCombine(BinExp be, Scope* sc)
 {
     Expression errorReturn()
     {
@@ -3380,7 +3471,7 @@ extern (C++) Expression typeCombine(BinExp be, Scope* sc)
  * Do integral promotions (convertchk).
  * Don't convert <array of> to <pointer to>
  */
-extern (C++) Expression integralPromotions(Expression e, Scope* sc)
+Expression integralPromotions(Expression e, Scope* sc)
 {
     //printf("integralPromotions %s %s\n", e.toChars(), e.type.toChars());
     switch (e.type.toBasetype().ty)
@@ -3492,7 +3583,7 @@ extern (C++) bool arrayTypeCompatibleWithoutCasting(Type t1, Type t2)
  * This is used to determine if implicit narrowing conversions will
  * be allowed.
  */
-extern (C++) IntRange getIntRange(Expression e)
+IntRange getIntRange(Expression e)
 {
     extern (C++) final class IntRangeVisitor : Visitor
     {

@@ -73,10 +73,7 @@ extern (D) void error(Loc loc, const(char)* format, ...)
  */
 extern (C++) void error(const(char)* filename, uint linnum, uint charnum, const(char)* format, ...)
 {
-    Loc loc;
-    loc.filename = filename;
-    loc.linnum = linnum;
-    loc.charnum = charnum;
+    const loc = Loc(filename, linnum, charnum);
     va_list ap;
     va_start(ap, format);
     verror(loc, format, ap);
@@ -299,12 +296,18 @@ extern (C++) void verrorSupplemental(const ref Loc loc, const(char)* format, va_
  */
 extern (C++) void vwarning(const ref Loc loc, const(char)* format, va_list ap)
 {
-    if (global.params.warnings && !global.gag)
+    if (global.params.warnings != Diagnostic.off)
     {
-        verrorPrint(loc, Classification.warning, "Warning: ", format, ap);
-        //halt();
-        if (global.params.warnings == 1)
-            global.warnings++; // warnings don't count if gagged
+        if (!global.gag)
+        {
+            verrorPrint(loc, Classification.warning, "Warning: ", format, ap);
+            if (global.params.warnings == Diagnostic.error)
+                global.warnings++;
+        }
+        else
+        {
+            global.gaggedWarnings++;
+        }
     }
 }
 
@@ -317,7 +320,7 @@ extern (C++) void vwarning(const ref Loc loc, const(char)* format, va_list ap)
  */
 extern (C++) void vwarningSupplemental(const ref Loc loc, const(char)* format, va_list ap)
 {
-    if (global.params.warnings && !global.gag)
+    if (global.params.warnings != Diagnostic.off && !global.gag)
         verrorPrint(loc, Classification.warning, "       ", format, ap);
 }
 
@@ -332,11 +335,20 @@ extern (C++) void vwarningSupplemental(const ref Loc loc, const(char)* format, v
  */
 extern (C++) void vdeprecation(const ref Loc loc, const(char)* format, va_list ap, const(char)* p1 = null, const(char)* p2 = null)
 {
-    static __gshared const(char)* header = "Deprecation: ";
-    if (global.params.useDeprecated == 0)
+    __gshared const(char)* header = "Deprecation: ";
+    if (global.params.useDeprecated == Diagnostic.error)
         verror(loc, format, ap, p1, p2, header);
-    else if (global.params.useDeprecated == 2 && !global.gag)
-        verrorPrint(loc, Classification.deprecation, header, format, ap, p1, p2);
+    else if (global.params.useDeprecated == Diagnostic.inform)
+    {
+        if (!global.gag)
+        {
+            verrorPrint(loc, Classification.deprecation, header, format, ap, p1, p2);
+        }
+        else
+        {
+            global.gaggedWarnings++;
+        }
+    }
 }
 
 /**
@@ -370,9 +382,9 @@ extern (C++) void vmessage(const ref Loc loc, const(char)* format, va_list ap)
  */
 extern (C++) void vdeprecationSupplemental(const ref Loc loc, const(char)* format, va_list ap)
 {
-    if (global.params.useDeprecated == 0)
+    if (global.params.useDeprecated == Diagnostic.error)
         verrorSupplemental(loc, format, ap);
-    else if (global.params.useDeprecated == 2 && !global.gag)
+    else if (global.params.useDeprecated == Diagnostic.inform && !global.gag)
         verrorPrint(loc, Classification.deprecation, "       ", format, ap);
 }
 

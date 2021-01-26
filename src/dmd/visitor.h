@@ -4,11 +4,10 @@
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
  * http://www.boost.org/LICENSE_1_0.txt
- * https://github.com/dlang/dmd/blob/master/src/visitor.h
+ * https://github.com/dlang/dmd/blob/master/src/dmd/visitor.h
  */
 
-#ifndef DMD_VISITOR_H
-#define DMD_VISITOR_H
+#pragma once
 
 #include <assert.h>
 
@@ -53,6 +52,8 @@ class DebugStatement;
 class GotoStatement;
 class LabelStatement;
 class AsmStatement;
+class InlineAsmStatement;
+class GccAsmStatement;
 class CompoundAsmStatement;
 class ImportStatement;
 
@@ -80,6 +81,7 @@ class TypeClass;
 class TypeTuple;
 class TypeSlice;
 class TypeNull;
+class TypeTraits;
 
 class Dsymbol;
 
@@ -411,6 +413,10 @@ public:
     virtual void visit(CompoundDeclarationStatement *s) { visit((CompoundStatement *)s); }
     virtual void visit(CompoundAsmStatement *s) { visit((CompoundStatement *)s); }
 
+    // AsmStatements
+    virtual void visit(InlineAsmStatement *s) { visit((AsmStatement *)s); }
+    virtual void visit(GccAsmStatement *s) { visit((AsmStatement *)s); }
+
     // Types
     virtual void visit(TypeBasic *t) { visit((Type *)t); }
     virtual void visit(TypeError *t) { visit((Type *)t); }
@@ -422,6 +428,7 @@ public:
     virtual void visit(TypeStruct *t) { visit((Type *)t); }
     virtual void visit(TypeNext *t) { visit((Type *)t); }
     virtual void visit(TypeQualified *t) { visit((Type *)t); }
+    virtual void visit(TypeTraits *t) { visit((Type *)t); }
 
     // TypeNext
     virtual void visit(TypeReference *t) { visit((TypeNext *)t); }
@@ -455,6 +462,7 @@ public:
     virtual void visit(NewExp *e) { visit((Expression *)e); }
     virtual void visit(AssocArrayLiteralExp *e) { visit((Expression *)e); }
     virtual void visit(ArrayLiteralExp *e) { visit((Expression *)e); }
+    virtual void visit(CompileExp *e) { visit((Expression *)e); }
     virtual void visit(FuncExp *e) { visit((Expression *)e); }
     virtual void visit(IntervalExp *e) { visit((Expression *)e); }
     virtual void visit(TypeExp *e) { visit((Expression *)e); }
@@ -487,7 +495,6 @@ public:
     virtual void visit(CallExp *e) { visit((UnaExp *)e); }
     virtual void visit(DotIdExp *e) { visit((UnaExp *)e); }
     virtual void visit(AssertExp *e) { visit((UnaExp *)e); }
-    virtual void visit(CompileExp *e) { visit((UnaExp *)e); }
     virtual void visit(ImportExp *e) { visit((UnaExp *)e); }
     virtual void visit(DotTemplateInstanceExp *e) { visit((UnaExp *)e); }
     virtual void visit(ArrayExp *e) { visit((UnaExp *)e); }
@@ -631,5 +638,3 @@ public:
     bool stop;
     StoppableVisitor() : stop(false) {}
 };
-
-#endif /* DMD_VISITOR_H */
