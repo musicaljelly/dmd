@@ -2,7 +2,7 @@
  * Compiler implementation of the
  * $(LINK2 http://www.dlang.org, D programming language).
  *
- * Copyright:   Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/libelf.d, _libelf.d)
@@ -36,6 +36,14 @@ import dmd.root.rmem;
 import dmd.root.stringtable;
 
 import dmd.scanelf;
+
+// Entry point (only public symbol in this module).
+public extern (C++) Library LibElf_factory()
+{
+    return new LibElf();
+}
+
+private: // for the remainder of this module
 
 enum LOG = false;
 
@@ -85,11 +93,10 @@ final class LibElf : Library
         if (!buf)
         {
             assert(module_name[0]);
-            File* file = File.create(cast(char*)module_name);
-            readFile(Loc.initial, file);
-            buf = file.buffer;
-            buflen = file.len;
-            file._ref = 1;
+            // read file and take buffer ownership
+            auto data = readFile(Loc.initial, module_name).extractData();
+            buf = data.ptr;
+            buflen = data.length;
             fromfile = 1;
         }
         if (buflen < 16)
@@ -169,8 +176,7 @@ final class LibElf : Library
                             if (c == '/')
                                 break;
                         }
-                        auto n = cast(char*)malloc(i + 1);
-                        assert(n);
+                        auto n = cast(char*)Mem.check(malloc(i + 1));
                         memcpy(n, filenametab + foff, i);
                         n[i] = 0;
                         om.name = n[0 .. i];
@@ -179,8 +185,7 @@ final class LibElf : Library
                     {
                         /* Pick short name out of header
                          */
-                        auto n = cast(char*)malloc(ELF_OBJECT_NAME_SIZE);
-                        assert(n);
+                        auto n = cast(char*)Mem.check(malloc(ELF_OBJECT_NAME_SIZE));
                         for (int i = 0; 1; i++)
                         {
                             if (i == ELF_OBJECT_NAME_SIZE)
@@ -474,11 +479,6 @@ private:
         }
         assert(libbuf.offset == moffset);
     }
-}
-
-extern (C++) Library LibElf_factory()
-{
-    return new LibElf();
 }
 
 /*****************************************************************************/
