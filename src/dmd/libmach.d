@@ -2,7 +2,7 @@
  * Compiler implementation of the
  * $(LINK2 http://www.dlang.org, D programming language).
  *
- * Copyright:   Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/libmach.d, _libmach.d)
@@ -36,6 +36,14 @@ import dmd.root.rmem;
 import dmd.root.stringtable;
 
 import dmd.scanmach;
+
+// Entry point (only public symbol in this module).
+public extern (C++) Library LibMach_factory()
+{
+    return new LibMach();
+}
+
+private: // for the remainder of this module
 
 enum LOG = false;
 
@@ -85,14 +93,12 @@ final class LibMach : Library
         if (!buf)
         {
             assert(module_name[0]);
-            File* file = File.create(cast(char*)module_name);
-            readFile(Loc.initial, file);
-            buf = file.buffer;
-            buflen = file.len;
-            file._ref = 1;
+            // read file and take buffer ownership
+            auto data = readFile(Loc.initial, module_name).extractData();
+            buf = data.ptr;
+            buflen = data.length;
             fromfile = 1;
         }
-        int reason = 0;
         if (buflen < 16)
         {
             static if (LOG)
@@ -445,11 +451,6 @@ private:
         }
         assert(libbuf.offset == moffset);
     }
-}
-
-extern (C++) Library LibMach_factory()
-{
-    return new LibMach();
 }
 
 /*****************************************************************************/

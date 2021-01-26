@@ -1,5 +1,5 @@
 
-/* Copyright (C) 1999-2018 by The D Language Foundation, All Rights Reserved
+/* Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
  * All Rights Reserved, written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -42,19 +42,12 @@ public:
     virtual bool equals(RootObject *o);
 
     /**
-     * Return <0, ==0, or >0 if this is less than, equal to, or greater than obj.
-     * Useful for sorting Objects.
-     */
-    virtual int compare(RootObject *obj);
-
-    /**
      * Pretty-print an Object. Useful for debugging the old-fashioned way.
      */
     virtual const char *toChars();
     /// This function is `extern(D)` and should not be called from C++,
     /// as the ABI does not match on some platforms
-    virtual DArray<const char> toString();
-    virtual void toBuffer(OutBuffer *buf);
+    virtual DString toString();
 
     /**
      * Used as a replacement for dynamic_cast. Returns a unique number
