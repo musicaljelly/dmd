@@ -235,7 +235,7 @@
   <ItemGroup>
     <CustomBuild Include="..\..\VERSION">
       <Message>Creating VERSION...</Message>
-      <Command>$(_rdmdExe) ..\..\config.d $(OutDir) ..\..\VERSION</Command>
+      <Command>"C:\Program Files (x86)\LDC\bin\rdmd.exe" -m32 ..\..\config.d $(OutDir) ..\..\VERSION</Command>
       <Outputs>$(OutDir)VERSION;%(Outputs)</Outputs>
     </CustomBuild>
   </ItemGroup>
