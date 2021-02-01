@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * A library in the Mach-O format, used on macOS.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/libmach.d, _libmach.d)
@@ -33,6 +32,7 @@ import dmd.root.filename;
 import dmd.root.outbuffer;
 import dmd.root.port;
 import dmd.root.rmem;
+import dmd.root.string;
 import dmd.root.stringtable;
 
 import dmd.scanmach;
@@ -60,11 +60,11 @@ final class LibMach : Library
 {
     MachObjModules objmodules; // MachObjModule[]
     MachObjSymbols objsymbols; // MachObjSymbol[]
-    StringTable tab;
+    StringTable!(MachObjSymbol*) tab;
 
     extern (D) this()
     {
-        tab._init(14000);
+        tab._init(14_000);
     }
 
     /***************************************
@@ -73,18 +73,18 @@ final class LibMach : Library
      * If the buffer is NULL, use module_name as the file name
      * and load the file.
      */
-    override void addObject(const(char)* module_name, const ubyte[] buffer)
+    override void addObject(const(char)[] module_name, const ubyte[] buffer)
     {
-        if (!module_name)
-            module_name = "";
         static if (LOG)
         {
-            printf("LibMach::addObject(%s)\n", module_name);
+            printf("LibMach::addObject(%.*s)\n",
+                   cast(int)module_name.length, module_name.ptr);
         }
 
         void corrupt(int reason)
         {
-            error("corrupt Mach object module %s %d", module_name, reason);
+            error("corrupt Mach object module %.*s %d",
+                  cast(int)module_name.length, module_name.ptr, reason);
         }
 
         int fromfile = 0;
@@ -94,7 +94,7 @@ final class LibMach : Library
         {
             assert(module_name[0]);
             // read file and take buffer ownership
-            auto data = readFile(Loc.initial, module_name).extractData();
+            auto data = readFile(Loc.initial, module_name).extractSlice();
             buf = data.ptr;
             buflen = data.length;
             fromfile = 1;
@@ -107,7 +107,7 @@ final class LibMach : Library
             }
             return corrupt(__LINE__);
         }
-        if (memcmp(buf, cast(char*)"!<arch>\n", 8) == 0)
+        if (memcmp(buf, "!<arch>\n".ptr, 8) == 0)
         {
             /* Library file.
              * Pull each object module out of the library and add it
@@ -133,8 +133,8 @@ final class LibMach : Library
                     return corrupt(__LINE__);
                 if (offset + size > buflen)
                     return corrupt(__LINE__);
-                if (memcmp(header.object_name.ptr, cast(char*)"__.SYMDEF       ", 16) == 0 ||
-                    memcmp(header.object_name.ptr, cast(char*)"__.SYMDEF SORTED", 16) == 0)
+                if (memcmp(header.object_name.ptr, "__.SYMDEF       ".ptr, 16) == 0 ||
+                    memcmp(header.object_name.ptr, "__.SYMDEF SORTED".ptr, 16) == 0)
                 {
                     /* Instead of rescanning the object modules we pull from a
                      * library, just use the already created symbol table.
@@ -153,7 +153,7 @@ final class LibMach : Library
                     om.length = cast(uint)(size + MachLibHeader.sizeof);
                     om.offset = 0;
                     const n = cast(const(char)*)(om.base + MachLibHeader.sizeof);
-                    om.name = n[0 .. strlen(n)];
+                    om.name = n.toDString();
                     om.file_time = cast(uint)strtoul(header.file_time.ptr, &endptr, 10);
                     om.user_id = cast(uint)strtoul(header.user_id.ptr, &endptr, 10);
                     om.group_id = cast(uint)strtoul(header.group_id.ptr, &endptr, 10);
@@ -208,13 +208,13 @@ final class LibMach : Library
         om.base = cast(ubyte*)buf;
         om.length = cast(uint)buflen;
         om.offset = 0;
-        const n = cast(const(char)*)FileName.name(module_name); // remove path, but not extension
-        om.name = n[0 .. strlen(n)];
+        const n = FileName.name(module_name); // remove path, but not extension
+        om.name = n;
         om.scan = 1;
         if (fromfile)
         {
             stat_t statbuf;
-            int i = stat(module_name, &statbuf);
+            int i = module_name.toCStringThen!(slice => stat(slice.ptr, &statbuf));
             if (i == -1) // error, errno is set
                 return corrupt(__LINE__);
             om.file_time = statbuf.st_ctime;
@@ -368,7 +368,7 @@ private:
         }
         libbuf.reserve(moffset);
         /************* Write the library ******************/
-        libbuf.write(cast(const(char)*)"!<arch>\n", 8);
+        libbuf.write("!<arch>\n");
         MachObjModule om;
         om.base = null;
         om.length = cast(uint)(hoffset - (8 + MachLibHeader.sizeof));
@@ -380,76 +380,76 @@ private:
         om.file_mode = (1 << 15) | (6 << 6) | (4 << 3) | (4 << 0); // 0100644
         MachLibHeader h;
         MachOmToHeader(&h, &om);
-        memcpy(h.object_name.ptr, cast(const(char)*)"__.SYMDEF", 9);
+        memcpy(h.object_name.ptr, "__.SYMDEF".ptr, 9);
         int len = sprintf(h.file_size.ptr, "%u", om.length);
         assert(len <= 10);
         memset(h.file_size.ptr + len, ' ', 10 - len);
-        libbuf.write(&h, h.sizeof);
+        libbuf.write((&h)[0 .. 1]);
         char[4] buf;
         Port.writelongLE(cast(uint)(objsymbols.dim * 8), buf.ptr);
-        libbuf.write(buf.ptr, 4);
+        libbuf.write(buf[0 .. 4]);
         int stringoff = 0;
         for (size_t i = 0; i < objsymbols.dim; i++)
         {
             MachObjSymbol* os = objsymbols[i];
             Port.writelongLE(stringoff, buf.ptr);
-            libbuf.write(buf.ptr, 4);
+            libbuf.write(buf[0 .. 4]);
             Port.writelongLE(os.om.offset, buf.ptr);
-            libbuf.write(buf.ptr, 4);
+            libbuf.write(buf[0 .. 4]);
             stringoff += os.name.length + 1;
         }
         Port.writelongLE(stringoff, buf.ptr);
-        libbuf.write(buf.ptr, 4);
+        libbuf.write(buf[0 .. 4]);
         for (size_t i = 0; i < objsymbols.dim; i++)
         {
             MachObjSymbol* os = objsymbols[i];
             libbuf.writestring(os.name);
             libbuf.writeByte(0);
         }
-        while (libbuf.offset & 3)
+        while (libbuf.length & 3)
             libbuf.writeByte(0);
-        //if (libbuf.offset & 4)
-        //    libbuf.write(pad, 4);
+        //if (libbuf.length & 4)
+        //    libbuf.write(pad[0 .. 4]);
         static if (LOG)
         {
-            printf("\tlibbuf.moffset = x%x\n", libbuf.offset);
+            printf("\tlibbuf.moffset = x%x\n", libbuf.length);
         }
-        assert(libbuf.offset == hoffset);
+        assert(libbuf.length == hoffset);
         /* Write out each of the object modules
          */
         for (size_t i = 0; i < objmodules.dim; i++)
         {
             MachObjModule* om2 = objmodules[i];
-            if (libbuf.offset & 1)
+            if (libbuf.length & 1)
                 libbuf.writeByte('\n'); // module alignment
-            assert(libbuf.offset == om2.offset);
+            assert(libbuf.length == om2.offset);
             if (om2.scan)
             {
                 MachOmToHeader(&h, om2);
-                libbuf.write(&h, h.sizeof); // module header
-                libbuf.write(om2.name.ptr, om2.name.length);
+                libbuf.write((&h)[0 .. 1]); // module header
+                libbuf.write(om2.name.ptr[0 .. om2.name.length]);
                 int nzeros = 8 - ((om2.name.length + 4) & 7);
                 if (nzeros < 4)
                     nzeros += 8; // emulate mysterious behavior of ar
                 libbuf.fill0(nzeros);
-                libbuf.write(om2.base, om2.length); // module contents
+                libbuf.write(om2.base[0 .. om2.length]); // module contents
                 // obj modules are padded out to 8 bytes in length with 0x0A
                 int filealign = om2.length & 7;
                 if (filealign)
                 {
-                    libbuf.write(pad, 8 - filealign);
+                    libbuf.write(pad[0 .. 8 - filealign]);
                 }
             }
             else
             {
-                libbuf.write(om2.base, om2.length); // module contents
+                libbuf.write(om2.base[0 .. om2.length]); // module contents
             }
         }
         static if (LOG)
         {
-            printf("moffset = x%x, libbuf.offset = x%x\n", moffset, libbuf.offset);
+            printf("moffset = x%x, libbuf.length = x%x\n", moffset, libbuf.length);
         }
-        assert(libbuf.offset == moffset);
+        assert(libbuf.length == moffset);
     }
 }
 
@@ -497,12 +497,12 @@ extern (C++) void MachOmToHeader(MachLibHeader* h, MachObjModule* om)
     len = sprintf(h.file_time.ptr, "%llu", cast(long)om.file_time);
     assert(len <= 12);
     memset(h.file_time.ptr + len, ' ', 12 - len);
-    if (om.user_id > 999999) // yes, it happens
+    if (om.user_id > 999_999) // yes, it happens
         om.user_id = 0; // don't really know what to do here
     len = sprintf(h.user_id.ptr, "%u", om.user_id);
     assert(len <= 6);
     memset(h.user_id.ptr + len, ' ', 6 - len);
-    if (om.group_id > 999999) // yes, it happens
+    if (om.group_id > 999_999) // yes, it happens
         om.group_id = 0; // don't really know what to do here
     len = sprintf(h.group_id.ptr, "%u", om.group_id);
     assert(len <= 6);

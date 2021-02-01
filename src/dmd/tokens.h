@@ -1,6 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include "root/dcompat.h"
 #include "root/port.h"
 #include "globals.h"
 
@@ -130,9 +131,9 @@ enum
         TOKalign, TOKextern, TOKprivate, TOKprotected, TOKpublic, TOKexport,
         TOKstatic, TOKfinal, TOKconst, TOKabstract,
         TOKdebug, TOKdeprecated, TOKin, TOKout, TOKinout, TOKlazy,
-        TOKauto, TOKpackage, TOKmanifest, TOKimmutable,
+        TOKauto, TOKpackage, TOKimmutable,
 
-// 183
+// 182
         // Statements
         TOKif, TOKelse, TOKwhile, TOKfor, TOKdo, TOKswitch,
         TOKcase, TOKdefault, TOKbreak, TOKcontinue, TOKwith,
@@ -141,7 +142,7 @@ enum
         TOKscope,
         TOKon_scope_exit, TOKon_scope_failure, TOKon_scope_success,
 
-// 207
+// 206
         // Contracts
         TOKinvariant,
 
@@ -153,7 +154,7 @@ enum
         TOKref,
         TOKmacro,
 
-// 212
+// 211
         TOKparameters,
         TOKtraits,
         TOKoverloadset,
@@ -174,7 +175,7 @@ enum
         TOKvector,
         TOKpound,
 
-// 231
+// 230
         TOKinterval,
         TOKvoidexp,
         TOKcantexp,
@@ -198,10 +199,10 @@ struct Token
 {
     Token *next;
     Loc loc;
-    const utf8_t *ptr;         // pointer to first character of this token within buffer
+    const utf8_t *ptr;    // pointer to first character of this token within buffer
     TOK value;
-    const utf8_t *blockComment; // doc comment string prior to this token
-    const utf8_t *lineComment;  // doc comment for previous token
+    DString blockComment; // doc comment string prior to this token
+    DString lineComment;  // doc comment for previous token
     union
     {
         // Integers
@@ -226,7 +227,7 @@ struct Token
     int isKeyword();
     const char *toChars() const;
 
-    static const char *toChars(TOK value);
+    static const char *toChars(unsigned char value);
 };
 
 #if defined(__GNUC__)

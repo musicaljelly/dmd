@@ -28,7 +28,10 @@ subPackage {
     "src/dmd/identifier.d" \
     "src/dmd/lexer.d" \
     "src/dmd/tokens.d" \
-    "src/dmd/utf.d"
+    "src/dmd/utf.d" \
+    "src/dmd/utils.d"
+
+  versions "CallbackAPI"
 
   preGenerateCommands `
     "$${DUB_EXE}" \
@@ -59,6 +62,8 @@ subPackage {
     "src/dmd/permissivevisitor.d" \
     "src/dmd/strictvisitor.d"
 
+  versions "CallbackAPI"
+
   dependency "dmd:lexer" version="*"
 }
 
@@ -66,15 +71,35 @@ subPackage {
   name "frontend"
   targetType "library"
   sourcePaths "src/dmd"
-  stringImportPaths "res"
+  stringImportPaths "src/dmd/res"
 
   versions \
     "NoBackend" \
     "GC" \
     "NoMain" \
-    "MARS"
+    "MARS" \
+    "CallbackAPI"
 
   excludedSourceFiles "src/dmd/backend/*"
+  excludedSourceFiles "src/dmd/root/*"
+  excludedSourceFiles "src/dmd/{\
+    astbase,\
+    console,\
+    entity,\
+    errors,\
+    filecache,\
+    globals,\
+    id,\
+    identifier,\
+    lexer,\
+    parse,\
+    permissivevisitor,\
+    strictvisitor,\
+    tokens,\
+    transitivevisitor,\
+    utf,\
+    utils\
+  }.d"
   excludedSourceFiles "src/dmd/{\
     dmsc,\
     e2ir,\
@@ -83,10 +108,22 @@ subPackage {
     iasm,\
     iasmdmd,\
     iasmgcc,\
+    irstate,\
+    lib,\
+    libelf,\
+    libmach,\
+    libmscoff,\
+    libomf,\
+    link,\
     objc_glue,\
     s2ir,\
+    scanelf,\
+    scanmach,\
+    scanmscoff,\
+    scanomf,\
     tocsym,\
     toctype,\
+    tocvdebug,\
     toobj,\
     todt,\
     toir\

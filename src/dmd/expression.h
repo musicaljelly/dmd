@@ -1,6 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -17,7 +17,7 @@
 #include "visitor.h"
 #include "tokens.h"
 
-#include "root/rmem.h"
+#include "root/dcompat.h"
 
 class Type;
 class TypeVector;
@@ -46,13 +46,7 @@ struct Symbol;          // back end symbol
 #endif
 
 void expandTuples(Expressions *exps);
-TupleDeclaration *isAliasThisTuple(Expression *e);
-int expandAliasThisTuples(Expressions *exps, size_t starti = 0);
-bool arrayExpressionSemantic(Expressions *exps, Scope *sc, bool preserveErrors = false);
-TemplateDeclaration *getFuncTemplateDecl(Dsymbol *s);
 bool isTrivialExp(Expression *e);
-
-Expression *toDelegate(Expression *e, Type* t, Scope *sc);
 bool hasSideEffect(Expression *e);
 bool canThrow(Expression *e, FuncDeclaration *func, bool mustNotThrow);
 
@@ -80,7 +74,7 @@ public:
     // kludge for template.isExpression()
     DYNCAST dyncast() const { return DYNCAST_EXPRESSION; }
 
-    const char *toChars();
+    const char *toChars() const;
     void error(const char *format, ...) const;
     void warning(const char *format, ...) const;
     void deprecation(const char *format, ...) const;
@@ -223,6 +217,7 @@ public:
     ModuleInitExp* isModuleInitExp();
     FuncInitExp* isFuncInitExp();
     PrettyFuncInitExp* isPrettyFuncInitExp();
+    ClassReferenceExp* isClassReferenceExp();
 
     void accept(Visitor *v) { v->visit(this); }
 };
@@ -234,7 +229,7 @@ public:
 
     static IntegerExp *create(Loc loc, dinteger_t value, Type *type);
     static void emplace(UnionExp *pue, Loc loc, dinteger_t value, Type *type);
-    bool equals(RootObject *o);
+    bool equals(const RootObject *o) const;
     dinteger_t toInteger();
     real_t toReal();
     real_t toImaginary();
@@ -264,7 +259,7 @@ public:
 
     static RealExp *create(Loc loc, real_t value, Type *type);
     static void emplace(UnionExp *pue, Loc loc, real_t value, Type *type);
-    bool equals(RootObject *o);
+    bool equals(const RootObject *o) const;
     dinteger_t toInteger();
     uinteger_t toUInteger();
     real_t toReal();
@@ -281,7 +276,7 @@ public:
 
     static ComplexExp *create(Loc loc, complex_t value, Type *type);
     static void emplace(UnionExp *pue, Loc loc, complex_t value, Type *type);
-    bool equals(RootObject *o);
+    bool equals(const RootObject *o) const;
     dinteger_t toInteger();
     uinteger_t toUInteger();
     real_t toReal();
@@ -325,6 +320,7 @@ class ThisExp : public Expression
 public:
     VarDeclaration *var;
 
+    Expression *syntaxCopy();
     bool isBool(bool result);
     bool isLvalue();
     Expression *toLvalue(Scope *sc, Expression *e);
@@ -335,16 +331,13 @@ public:
 class SuperExp : public ThisExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class NullExp : public Expression
 {
 public:
-    unsigned char committed;    // !=0 if type is committed
-
-    bool equals(RootObject *o);
+    bool equals(const RootObject *o) const;
     bool isBool(bool result);
     StringExp *toStringExp();
     void accept(Visitor *v) { v->visit(this); }
@@ -364,7 +357,7 @@ public:
     static StringExp *create(Loc loc, void *s, size_t len);
     static void emplace(UnionExp *pue, Loc loc, char *s);
     static void emplace(UnionExp *pue, Loc loc, void *s, size_t len);
-    bool equals(RootObject *o);
+    bool equals(const RootObject *o) const;
     StringExp *toStringExp();
     StringExp *toUTF8(Scope *sc);
     bool isBool(bool result);
@@ -375,7 +368,6 @@ public:
     void accept(Visitor *v) { v->visit(this); }
     size_t numberOfCodeUnits(int tynto = 0) const;
     void writeTo(void* dest, bool zero, int tyto = 0) const;
-    char *toPtr();
 };
 
 // Tuple
@@ -396,7 +388,7 @@ public:
     static TupleExp *create(Loc loc, Expressions *exps);
     TupleExp *toTupleExp();
     Expression *syntaxCopy();
-    bool equals(RootObject *o);
+    bool equals(const RootObject *o) const;
 
     void accept(Visitor *v) { v->visit(this); }
 };
@@ -411,7 +403,7 @@ public:
     static ArrayLiteralExp *create(Loc loc, Expressions *elements);
     static void emplace(UnionExp *pue, Loc loc, Expressions *elements);
     Expression *syntaxCopy();
-    bool equals(RootObject *o);
+    bool equals(const RootObject *o) const;
     Expression *getElement(d_size_t i); // use opIndex instead
     Expression *opIndex(d_size_t i);
     bool isBool(bool result);
@@ -427,7 +419,7 @@ public:
     Expressions *values;
     OwnedBy ownedByCtfe;
 
-    bool equals(RootObject *o);
+    bool equals(const RootObject *o) const;
     Expression *syntaxCopy();
     bool isBool(bool result);
 
@@ -461,10 +453,11 @@ public:
     int stageflags;
 
     bool useStaticInit;         // if this is true, use the StructDeclaration's init symbol
+    bool isOriginal;            // used when moving instances to indicate `this is this.origin`
     OwnedBy ownedByCtfe;
 
     static StructLiteralExp *create(Loc loc, StructDeclaration *sd, void *elements, Type *stype = NULL);
-    bool equals(RootObject *o);
+    bool equals(const RootObject *o) const;
     Expression *syntaxCopy();
     Expression *getField(Type *type, unsigned offset);
     int getFieldIndex(Type *type, unsigned offset);
@@ -547,8 +540,8 @@ class SymbolExp : public Expression
 {
 public:
     Declaration *var;
-    bool hasOverloads;
     Dsymbol *originalScope;
+    bool hasOverloads;
 
     void accept(Visitor *v) { v->visit(this); }
 };
@@ -570,8 +563,9 @@ public:
 class VarExp : public SymbolExp
 {
 public:
+    bool delegateWasExtracted;
     static VarExp *create(Loc loc, Declaration *var, bool hasOverloads = true);
-    bool equals(RootObject *o);
+    bool equals(const RootObject *o) const;
     int checkModifiable(Scope *sc, int flag);
     bool isLvalue();
     Expression *toLvalue(Scope *sc, Expression *e);
@@ -601,9 +595,9 @@ public:
     TemplateDeclaration *td;
     TOK tok;
 
-    bool equals(RootObject *o);
+    bool equals(const RootObject *o) const;
     Expression *syntaxCopy();
-    const char *toChars();
+    const char *toChars() const;
     bool checkType();
     bool checkValue();
 
@@ -649,7 +643,6 @@ public:
 class HaltExp : public Expression
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -705,7 +698,6 @@ public:
 class BinAssignExp : public BinExp
 {
 public:
-
     bool isLvalue();
     Expression *toLvalue(Scope *sc, Expression *ex);
     Expression *modifiableLvalue(Scope *sc, Expression *e);
@@ -803,6 +795,7 @@ public:
     Expressions *arguments;     // function arguments
     FuncDeclaration *f;         // symbol to call
     bool directcall;            // true if a virtual call is devirtualized
+    bool inDebugStatement;      // true if this was in a debug statement
     VarDeclaration *vthis2;     // container for multi-context
 
     static CallExp *create(Loc loc, Expression *e, Expressions *exps);
@@ -821,7 +814,6 @@ public:
 class AddrExp : public UnaExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -839,21 +831,18 @@ public:
 class NegExp : public UnaExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class UAddExp : public UnaExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class ComExp : public UnaExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -1029,8 +1018,9 @@ public:
     void accept(Visitor *v) { v->visit(this); }
 };
 
-enum MemorySet
+enum class MemorySet
 {
+    none            = 0,    // simple assignment
     blockAssign     = 1,    // setting the contents of an array
     referenceInit   = 2     // setting the reference of STCref variable
 };
@@ -1038,7 +1028,7 @@ enum MemorySet
 class AssignExp : public BinExp
 {
 public:
-    int memset;         // combination of MemorySet flags
+    MemorySet memset;
 
     bool isLvalue();
     Expression *toLvalue(Scope *sc, Expression *ex);
@@ -1140,91 +1130,78 @@ public:
 class AddExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class MinExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class CatExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class MulExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class DivExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class ModExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class PowExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class ShlExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class ShrExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class UshrExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class AndExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class OrExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class XorExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -1238,14 +1215,12 @@ public:
 class CmpExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
 class InExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -1260,7 +1235,6 @@ public:
 class EqualExp : public BinExp
 {
 public:
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -1295,8 +1269,6 @@ public:
 class DefaultInitExp : public Expression
 {
 public:
-    TOK subop;             // which of the derived classes this is
-
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -1395,6 +1367,7 @@ private:
 
 class ObjcClassReferenceExp : public Expression
 {
+public:
     ClassDeclaration* classDeclaration;
 
     void accept(Visitor *v) { v->visit(this); }

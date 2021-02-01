@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1984-1998 by Symantec
- *              Copyright (C) 2000-2019 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      https://github.com/dlang/dmd/blob/master/src/dmd/backend/symbol.d
@@ -960,7 +960,8 @@ version (SCPP_HTOD)
                 list_free(&f.Fthunks,cast(list_free_fp)&symbol_free);
               }
                 list_free(&f.Fsymtree,cast(list_free_fp)&symbol_free);
-                f.typesTable.__dtor();
+                version (MARS)
+                    f.typesTable.dtor();
                 func_free(f);
             }
             switch (s.Sclass)

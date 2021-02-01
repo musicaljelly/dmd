@@ -1,6 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -36,7 +36,7 @@ public:
     // kludge for template.isType()
     DYNCAST dyncast() const { return DYNCAST_TUPLE; }
 
-    const char *toChars() { return objects.toChars(); }
+    const char *toChars() const { return objects.toChars(); }
 };
 
 struct TemplatePrevious
@@ -66,6 +66,9 @@ public:
     bool literal;               // this template declaration is a literal
     bool ismixin;               // template declaration is only to be used as a mixin
     bool isstatic;              // this is static template declaration
+    bool isTrivialAliasSeq;     // matches `template AliasSeq(T...) { alias AliasSeq = T; }
+    bool isTrivialAlias;        // matches pattern `template Alias(T) { alias Alias = qualifiers(T); }`
+    bool deprecated_;           // this template declaration is deprecated
     Prot protection;
     int inuse;                  // for recursive expansion detection
 
@@ -75,7 +78,7 @@ public:
     bool overloadInsert(Dsymbol *s);
     bool hasStaticCtorOrDtor();
     const char *kind() const;
-    const char *toChars();
+    const char *toChars() const;
 
     Prot prot();
 
@@ -85,6 +88,7 @@ public:
     TemplateDeclaration *isTemplateDeclaration() { return this; }
 
     TemplateTupleParameter *isVariadic();
+    bool isDeprecated() const;
     bool isOverloadable() const;
 
     void accept(Visitor *v) { v->visit(this); }
@@ -132,7 +136,7 @@ public:
 
     /* Create dummy argument based on parameter.
      */
-    virtual void *dummyArg() = 0;
+    virtual RootObject *dummyArg() = 0;
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -152,7 +156,7 @@ public:
     RootObject *specialization();
     RootObject *defaultArg(Loc instLoc, Scope *sc);
     bool hasDefaultArg();
-    void *dummyArg();
+    RootObject *dummyArg();
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -184,7 +188,7 @@ public:
     RootObject *specialization();
     RootObject *defaultArg(Loc instLoc, Scope *sc);
     bool hasDefaultArg();
-    void *dummyArg();
+    RootObject *dummyArg();
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -205,7 +209,7 @@ public:
     RootObject *specialization();
     RootObject *defaultArg(Loc instLoc, Scope *sc);
     bool hasDefaultArg();
-    void *dummyArg();
+    RootObject *dummyArg();
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -222,7 +226,7 @@ public:
     RootObject *specialization();
     RootObject *defaultArg(Loc instLoc, Scope *sc);
     bool hasDefaultArg();
-    void *dummyArg();
+    RootObject *dummyArg();
     void accept(Visitor *v) { v->visit(this); }
 };
 
@@ -253,11 +257,6 @@ public:
     Dsymbol *aliasdecl;                 // !=NULL if instance is an alias for its sole member
     TemplateInstance *inst;             // refer to existing instance
     ScopeDsymbol *argsym;               // argument symbol table
-    int inuse;                          // for recursive expansion detection
-    int nest;                           // for recursive pretty printing detection
-    bool semantictiargsdone;            // has semanticTiargs() been done?
-    bool havetempdecl;                  // if used second constructor
-    bool gagged;                        // if the instantiation is done with error gagging
     hash_t hash;                        // cached result of toHash()
     Expressions *fargs;                 // for function template, these are the function arguments
 
@@ -271,11 +270,16 @@ public:
     TemplateInstance *tnext;            // non-first instantiated instances
     Module *minst;                      // the top module that instantiated this instance
 
+private:
+    unsigned short _nest;                // for recursive pretty printing detection, 3 MSBs reserved for flags
+public:
+    unsigned char inuse;                 // for recursive expansion detection
+
     Dsymbol *syntaxCopy(Dsymbol *);
     Dsymbol *toAlias();                 // resolve real symbol
     const char *kind() const;
     bool oneMember(Dsymbol **ps, Identifier *ident);
-    const char *toChars();
+    const char *toChars() const;
     const char* toPrettyCharsHelper();
     void printInstantiationTrace();
     Identifier *getIdent();
@@ -295,10 +299,9 @@ public:
     Dsymbol *syntaxCopy(Dsymbol *s);
     const char *kind() const;
     bool oneMember(Dsymbol **ps, Identifier *ident);
-    int apply(Dsymbol_apply_ft_t fp, void *param);
     bool hasPointers();
     void setFieldOffset(AggregateDeclaration *ad, unsigned *poffset, bool isunion);
-    const char *toChars();
+    const char *toChars() const;
 
     TemplateMixin *isTemplateMixin() { return this; }
     void accept(Visitor *v) { v->visit(this); }
@@ -310,9 +313,4 @@ Type *isType(RootObject *o);
 Tuple *isTuple(RootObject *o);
 Parameter *isParameter(RootObject *o);
 TemplateParameter *isTemplateParameter(RootObject *o);
-bool arrayObjectIsError(const Objects *args);
 bool isError(const RootObject *const o);
-Type *getType(RootObject *o);
-Dsymbol *getDsymbol(RootObject *o);
-
-RootObject *objectSyntaxCopy(RootObject *o);

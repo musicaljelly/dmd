@@ -1,4 +1,5 @@
 /**
+EXTRA_FILES: cppmangle2.d
 TEST_OUTPUT:
 ---
 ---
@@ -187,7 +188,7 @@ extern (C) int foosize6();
 void test6()
 {
     S6 f = foo6();
-    printf("%d %d\n", foosize6(), S6.sizeof);
+    printf("%d %d\n", foosize6(), cast(int)S6.sizeof);
     assert(foosize6() == S6.sizeof);
     assert(f.i == 42);
     printf("f.d = %g\n", f.d);
@@ -211,7 +212,7 @@ struct S
 
 void test7()
 {
-    printf("%d %d\n", foo7(), S.sizeof);
+    printf("%d %d\n", foo7(), cast(int)S.sizeof);
     assert(foo7() == S.sizeof);
 }
 
@@ -275,6 +276,13 @@ void test10()
     MyEnumType e;
     foo10(e,e);
 }
+
+// https://issues.dlang.org/show_bug.cgi?id=19504
+extern(C++) struct Class19504 {
+    pragma(mangle, "HOHOHO")
+    ~this();
+}
+static assert(Class19504.__xdtor.mangleof == "HOHOHO");
 
 /**************************************/
 // https://issues.dlang.org/show_bug.cgi?id=10058
@@ -486,6 +494,11 @@ extern(C++)
     X func_18957_2(X)(X* v);
 }
 
+extern (C++)
+{
+    void func_20413(pair!(int, float), pair!(float, int));
+}
+
 version (Posix)
 {
     // https://issues.dlang.org/show_bug.cgi?id=17947
@@ -513,6 +526,8 @@ version (Posix)
 
     static assert(func_18957_2.mangleof == `_Z12func_18957_2PSaIiE`);
     static assert(func_18957_2!(allocator!int).mangleof == `_Z12func_18957_2ISaIiEET_PS1_`);
+
+    static assert(func_20413.mangleof == `_Z10func_20413St4pairIifES_IfiE`);
 }
 
 /**************************************/
@@ -1214,4 +1229,54 @@ version (Posix)
     {
         set20224!int x;
     }
+}
+
+/**************************************/
+
+version (Posix)
+{
+    extern (C++) struct Loc2 {};
+    extern (C++) class FuncDeclaration
+    {
+        static FuncDeclaration create(ref const Loc2, ref const Loc2);
+    };
+    extern (C++) FuncDeclaration FuncDeclaration_create(ref const Loc2, ref const Loc2);
+
+    static assert(FuncDeclaration_create.mangleof == `_Z22FuncDeclaration_createRK4Loc2S1_`);
+    static assert(FuncDeclaration.create.mangleof == `_ZN15FuncDeclaration6createERK4Loc2S2_`);
+}
+
+enum Enum19542 = func19542!(int).mangleof;
+
+extern(C++, `bar`)
+{
+    void func19542(T)();
+}
+
+// https://issues.dlang.org/show_bug.cgi?id=20700
+// Only testing on WIn64 because the mangling includes 'E',
+// and the bug can be tested on either platform
+version (Win64) extern(C++)
+{
+    void test20700_1(Struct20700);
+    extern(C++, class) struct Struct20700 {}
+    void test20700_2(Struct20700);
+
+    // Note: Needs to be `V` (`class`), not `U` (`struct`)
+    static assert(test20700_1.mangleof == `?test20700_1@@YAXVStruct20700@@@Z`);
+    static assert(test20700_2.mangleof == `?test20700_2@@YAXVStruct20700@@@Z`);
+
+    // Test that the scope is not "sticky" on the arguments
+    void test20700_3(TStruct20700_1!DefaultClass20700_1);
+    extern(C++, class) struct TStruct20700_1 (T1, T2 = DefaultStruct20700_1) {}
+    extern(C++, class) struct DefaultStruct20700_1 {}
+    extern(C++, struct) class DefaultClass20700_1 {}
+    static assert(test20700_3.mangleof == `?test20700_3@@YAXV?$TStruct20700_1@PEAUDefaultClass20700_1@@VDefaultStruct20700_1@@@@@Z`);
+
+    // Each test needs to be independent symbol to trigger a new semantic pass
+    void test20700_4(TStruct20700_2!(DefaultClass20700_2, DefaultStruct20700_2));
+    extern(C++, struct) class TStruct20700_2 (T1, T2 = DefaultClass20700_2) {}
+    extern(C++, class) struct DefaultStruct20700_2 {}
+    extern(C++, struct) class DefaultClass20700_2 {}
+    static assert(test20700_4.mangleof == `?test20700_4@@YAXPEAU?$TStruct20700_2@PEAUDefaultClass20700_2@@VDefaultStruct20700_2@@@@@Z`);
 }

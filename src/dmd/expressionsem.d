@@ -1,8 +1,9 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Semantic analysis of expressions.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Specification: ($LINK2 https://dlang.org/spec/expression.html, Expressions)
+ *
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/expressionsem.d, _expressionsem.d)
@@ -22,6 +23,7 @@ import dmd.arraytypes;
 import dmd.attrib;
 import dmd.astcodegen;
 import dmd.canthrow;
+import dmd.chkformat;
 import dmd.ctorflow;
 import dmd.dscope;
 import dmd.dsymbol;
@@ -60,6 +62,7 @@ import dmd.root.file;
 import dmd.root.filename;
 import dmd.root.outbuffer;
 import dmd.root.rootobject;
+import dmd.root.string;
 import dmd.semantic2;
 import dmd.semantic3;
 import dmd.sideeffect;
@@ -115,14 +118,14 @@ bool expressionsToString(ref OutBuffer buf, Scope* sc, Expressions* exps)
         // because in most contexts we don't want the conversion to succeed.
         IntegerExp ie = e4.isIntegerExp();
         const ty = (ie && ie.type) ? ie.type.ty : Terror;
-        if (ty == Tchar || ty == Twchar || ty == Tdchar)
+        if (ty.isSomeChar)
         {
-            auto tsa = new TypeSArray(ie.type, new IntegerExp(1));
+            auto tsa = new TypeSArray(ie.type, IntegerExp.literal!1);
             e4 = new ArrayLiteralExp(ex.loc, tsa, ie);
         }
 
         if (StringExp se = e4.toStringExp())
-            buf.writestring(se.toUTF8(sc).peekSlice());
+            buf.writestring(se.toUTF8(sc).peekString());
         else
             buf.writestring(e4.toString());
     }
@@ -174,7 +177,7 @@ private Expression extractOpDollarSideEffect(Scope* sc, UnaExp ue)
     // https://issues.dlang.org/show_bug.cgi?id=12585
     // Extract the side effect part if ue.e1 is comma.
 
-    if (!isTrivialExp(e1))
+    if ((sc.flags & SCOPE.ctfe) ? hasSideEffect(e1) : !isTrivialExp(e1)) // match logic in extractSideEffect()
     {
         /* Even if opDollar is needed, 'e1' should be evaluate only once. So
          * Rewrite:
@@ -215,7 +218,7 @@ Expression resolveOpDollar(Scope* sc, ArrayExp ae, Expression* pe0)
             if (ae.arguments.dim == 1)
                 return null;
             ae.error("multi-dimensional slicing requires template `opSlice`");
-            return new ErrorExp();
+            return ErrorExp.get();
         }
         //printf("[%d] e = %s\n", i, e.toChars());
 
@@ -267,7 +270,7 @@ Expression resolveOpDollar(Scope* sc, ArrayExp ae, Expression* pe0)
         if (!e.type)
         {
             ae.error("`%s` has no value", e.toChars());
-            e = new ErrorExp();
+            e = ErrorExp.get();
         }
         if (e.op == TOK.error)
             return e;
@@ -322,13 +325,13 @@ Expression resolveOpDollar(Scope* sc, ArrayExp ae, IntervalExp ie, Expression* p
 
     sc = sc.pop();
 
-    return errors ? new ErrorExp() : ae;
+    return errors ? ErrorExp.get() : ae;
 }
 
 /******************************
  * Perform semantic() on an array of Expressions.
  */
-extern (C++) bool arrayExpressionSemantic(Expressions* exps, Scope* sc, bool preserveErrors = false)
+bool arrayExpressionSemantic(Expressions* exps, Scope* sc, bool preserveErrors = false)
 {
     bool err = false;
     if (exps)
@@ -443,7 +446,7 @@ private Expression searchUFCS(Scope* sc, UnaExp ue, Identifier ident)
     }
 
     if (!s)
-        return ue.e1.type.Type.getProperty(loc, ident, 0);
+        return ue.e1.type.Type.getProperty(sc, loc, ident, 0);
 
     FuncDeclaration f = s.isFuncDeclaration();
     if (f)
@@ -462,7 +465,7 @@ private Expression searchUFCS(Scope* sc, UnaExp ue, Identifier ident)
         DotTemplateInstanceExp dti = cast(DotTemplateInstanceExp)ue;
         auto ti = new TemplateInstance(loc, s.ident, dti.ti.tiargs);
         if (!ti.updateTempDecl(sc, s))
-            return new ErrorExp();
+            return ErrorExp.get();
         return new ScopeExp(loc, ti);
     }
     else
@@ -511,12 +514,12 @@ private Expression resolveUFCS(Scope* sc, CallExp ce)
                 if (!ce.arguments || ce.arguments.dim != 1)
                 {
                     ce.error("expected key as argument to `aa.remove()`");
-                    return new ErrorExp();
+                    return ErrorExp.get();
                 }
                 if (!eleft.type.isMutable())
                 {
                     ce.error("cannot remove key from `%s` associative array `%s`", MODtoChars(t.mod), eleft.toChars());
-                    return new ErrorExp();
+                    return ErrorExp.get();
                 }
                 Expression key = (*ce.arguments)[0];
                 key = key.expressionSemantic(sc);
@@ -526,7 +529,7 @@ private Expression resolveUFCS(Scope* sc, CallExp ce)
                 key = key.implicitCastTo(sc, taa.index);
 
                 if (key.checkValue() || key.checkSharedAccess(sc))
-                    return new ErrorExp();
+                    return ErrorExp.get();
 
                 semanticTypeInfo(sc, taa.index);
 
@@ -535,10 +538,6 @@ private Expression resolveUFCS(Scope* sc, CallExp ce)
         }
         else
         {
-            // even opDispatch and ufcs must have valid arguments.
-            if (arrayExpressionSemantic(ce.arguments, sc))
-                return new ErrorExp();
-
             if (Expression ey = die.semanticY(sc, 1))
             {
                 if (ey.op == TOK.error)
@@ -550,6 +549,15 @@ private Expression resolveUFCS(Scope* sc, CallExp ce)
                     e = ce.syntaxCopy().expressionSemantic(sc);
                     if (!global.endGagging(errors))
                         return e;
+
+                    // even opDispatch and UFCS must have valid arguments,
+                    // so now that we've seen indication of a problem,
+                    // check them for issues.
+                    Expressions* originalArguments = Expression.arraySyntaxCopy(ce.arguments);
+
+                    if (arrayExpressionSemantic(originalArguments, sc))
+                        return ErrorExp.get();
+
                     /* fall down to UFCS */
                 }
                 else
@@ -662,7 +670,7 @@ private Expression resolveUFCSProperties(Scope* sc, Expression e1, Expression e2
         auto a1 = new Expressions(1);
         (*a1)[0] = eleft;
         ex = new CallExp(loc, ex, a1);
-        ex = ex.trySemantic(sc);
+        auto e1PassSemantic = ex.trySemantic(sc);
 
         /* f(e1, e2)
          */
@@ -670,16 +678,24 @@ private Expression resolveUFCSProperties(Scope* sc, Expression e1, Expression e2
         (*a2)[0] = eleft;
         (*a2)[1] = e2;
         e = new CallExp(loc, e, a2);
-        if (ex)
+        e = e.trySemantic(sc);
+        if (!e1PassSemantic && !e)
         {
-            // if fallback setter exists, gag errors
-            e = e.trySemantic(sc);
-            if (!e)
-            {
-                checkPropertyCall(ex);
-                ex = new AssignExp(loc, ex, e2);
-                return ex.expressionSemantic(sc);
-            }
+            /* https://issues.dlang.org/show_bug.cgi?id=20448
+             *
+             * If both versions have failed to pass semantic,
+             * f(e1) = e2 gets priority in error printing
+             * because f might be a templated function that
+             * failed to instantiate and we have to print
+             * the instantiation errors.
+             */
+            return e1.expressionSemantic(sc);
+        }
+        else if (ex && !e)
+        {
+            checkPropertyCall(ex);
+            ex = new AssignExp(loc, ex, e2);
+            return ex.expressionSemantic(sc);
         }
         else
         {
@@ -708,28 +724,14 @@ private Expression resolveUFCSProperties(Scope* sc, Expression e1, Expression e2
 Expression resolvePropertiesOnly(Scope* sc, Expression e1)
 {
     //printf("e1 = %s %s\n", Token::toChars(e1.op), e1.toChars());
-    OverloadSet os;
-    FuncDeclaration fd;
-    TemplateDeclaration td;
 
-    if (e1.op == TOK.dot)
+    Expression handleOverloadSet(OverloadSet os)
     {
-        DotExp de = cast(DotExp)e1;
-        if (de.e2.op == TOK.overloadSet)
-        {
-            os = (cast(OverExp)de.e2).vars;
-            goto Los;
-        }
-    }
-    else if (e1.op == TOK.overloadSet)
-    {
-        os = (cast(OverExp)e1).vars;
-    Los:
         assert(os);
         foreach (s; os.a)
         {
-            fd = s.isFuncDeclaration();
-            td = s.isTemplateDeclaration();
+            auto fd = s.isFuncDeclaration();
+            auto td = s.isTemplateDeclaration();
             if (fd)
             {
                 if ((cast(TypeFunction)fd.type).isproperty)
@@ -737,61 +739,71 @@ Expression resolvePropertiesOnly(Scope* sc, Expression e1)
             }
             else if (td && td.onemember && (fd = td.onemember.isFuncDeclaration()) !is null)
             {
-                if ((cast(TypeFunction)fd.type).isproperty || (fd.storage_class2 & STC.property) || (td._scope.stc & STC.property))
-                {
+                if ((cast(TypeFunction)fd.type).isproperty ||
+                    (fd.storage_class2 & STC.property) ||
+                    (td._scope.stc & STC.property))
                     return resolveProperties(sc, e1);
-                }
             }
         }
+        return e1;
     }
-    else if (e1.op == TOK.dotTemplateInstance)
+
+    Expression handleTemplateDecl(TemplateDeclaration td)
     {
-        DotTemplateInstanceExp dti = cast(DotTemplateInstanceExp)e1;
-        if (dti.ti.tempdecl && (td = dti.ti.tempdecl.isTemplateDeclaration()) !is null)
-            goto Ltd;
+        assert(td);
+        if (td.onemember)
+        {
+            if (auto fd = td.onemember.isFuncDeclaration())
+            {
+                if ((cast(TypeFunction)fd.type).isproperty ||
+                    (fd.storage_class2 & STC.property) ||
+                    (td._scope.stc & STC.property))
+                    return resolveProperties(sc, e1);
+            }
+        }
+        return e1;
     }
-    else if (e1.op == TOK.dotTemplateDeclaration)
+
+    Expression handleFuncDecl(FuncDeclaration fd)
     {
-        td = (cast(DotTemplateExp)e1).td;
-        goto Ltd;
+        assert(fd);
+        if ((cast(TypeFunction)fd.type).isproperty)
+            return resolveProperties(sc, e1);
+        return e1;
     }
+
+    if (auto de = e1.isDotExp())
+    {
+        if (auto os = de.e2.isOverExp())
+            return handleOverloadSet(os.vars);
+    }
+    else if (auto oe = e1.isOverExp())
+        return handleOverloadSet(oe.vars);
+    else if (auto dti = e1.isDotTemplateInstanceExp())
+    {
+        if (dti.ti.tempdecl)
+            if (auto td = dti.ti.tempdecl.isTemplateDeclaration())
+                return handleTemplateDecl(td);
+    }
+    else if (auto dte = e1.isDotTemplateExp())
+        return handleTemplateDecl(dte.td);
     else if (e1.op == TOK.scope_)
     {
         Dsymbol s = (cast(ScopeExp)e1).sds;
         TemplateInstance ti = s.isTemplateInstance();
         if (ti && !ti.semanticRun && ti.tempdecl)
-        {
-            if ((td = ti.tempdecl.isTemplateDeclaration()) !is null)
-                goto Ltd;
-        }
+            if (auto td = ti.tempdecl.isTemplateDeclaration())
+                return handleTemplateDecl(td);
     }
     else if (e1.op == TOK.template_)
-    {
-        td = (cast(TemplateExp)e1).td;
-    Ltd:
-        assert(td);
-        if (td.onemember && (fd = td.onemember.isFuncDeclaration()) !is null)
-        {
-            if ((cast(TypeFunction)fd.type).isproperty || (fd.storage_class2 & STC.property) || (td._scope.stc & STC.property))
-            {
-                return resolveProperties(sc, e1);
-            }
-        }
-    }
+        return handleTemplateDecl((cast(TemplateExp)e1).td);
     else if (e1.op == TOK.dotVariable && e1.type.ty == Tfunction)
     {
         DotVarExp dve = cast(DotVarExp)e1;
-        fd = dve.var.isFuncDeclaration();
-        goto Lfd;
+        return handleFuncDecl(dve.var.isFuncDeclaration());
     }
     else if (e1.op == TOK.variable && e1.type && e1.type.ty == Tfunction && (sc.intypeof || !(cast(VarExp)e1).var.needThis()))
-    {
-        fd = (cast(VarExp)e1).var.isFuncDeclaration();
-    Lfd:
-        assert(fd);
-        if ((cast(TypeFunction)fd.type).isproperty)
-            return resolveProperties(sc, e1);
-    }
+        return handleFuncDecl((cast(VarExp)e1).var.isFuncDeclaration());
     return e1;
 }
 
@@ -864,17 +876,17 @@ Lagain:
                 error(loc, "circular reference to %s `%s`", v.kind(), v.toPrettyChars());
             else            // variable type cannot be determined
                 error(loc, "forward reference to %s `%s`", v.kind(), v.toPrettyChars());
-            return new ErrorExp();
+            return ErrorExp.get();
         }
         if (v.type.ty == Terror)
-            return new ErrorExp();
+            return ErrorExp.get();
 
         if ((v.storage_class & STC.manifest) && v._init)
         {
             if (v.inuse)
             {
                 error(loc, "circular initialization of %s `%s`", v.kind(), v.toPrettyChars());
-                return new ErrorExp();
+                return ErrorExp.get();
             }
             e = v.expandInitializer(loc);
             v.inuse++;
@@ -885,7 +897,7 @@ Lagain:
 
         // Change the ancestor lambdas to delegate before hasThis(sc) call.
         if (v.checkNestedReference(sc, loc))
-            return new ErrorExp();
+            return ErrorExp.get();
 
         if (v.needThis() && hasThis(sc))
             e = new DotVarExp(loc, new ThisExp(loc), v);
@@ -904,10 +916,10 @@ Lagain:
     {
         f = f.toAliasFunc();
         if (!f.functionSemantic())
-            return new ErrorExp();
+            return ErrorExp.get();
 
         if (!hasOverloads && f.checkForwardRef(loc))
-            return new ErrorExp();
+            return ErrorExp.get();
 
         auto fd = s.isFuncDeclaration();
         fd.type = f.type;
@@ -930,7 +942,7 @@ Lagain:
         if (!imp.pkg)
         {
             .error(loc, "forward reference of import `%s`", imp.toChars());
-            return new ErrorExp();
+            return ErrorExp.get();
         }
         auto ie = new ScopeExp(loc, imp.pkg);
         return ie.expressionSemantic(sc);
@@ -970,7 +982,7 @@ Lagain:
     {
         ti.dsymbolSemantic(sc);
         if (!ti.inst || ti.errors)
-            return new ErrorExp();
+            return ErrorExp.get();
         s = ti.toAlias();
         if (!s.isTemplateInstance())
             goto Lagain;
@@ -994,7 +1006,7 @@ Lagain:
     }
 
     .error(loc, "%s `%s` is not a variable", s.kind(), s.toChars());
-    return new ErrorExp();
+    return ErrorExp.get();
 }
 
 /*************************************************************
@@ -1025,7 +1037,7 @@ L1:
     }
     else if (ad && ad.isClassDeclaration && ad.isClassDeclaration.classKind == ClassKind.objc &&
              var.isFuncDeclaration && var.isFuncDeclaration.isStatic &&
-             var.isFuncDeclaration.selector)
+             var.isFuncDeclaration.objc.selector)
     {
         return new ObjcClassReferenceExp(e1.loc, cast(ClassDeclaration) ad);
     }
@@ -1039,7 +1051,7 @@ L1:
         FuncDeclaration f = hasThis(sc);
         if (f && f.isThis2)
         {
-            if (followInstantiationContext(f, ad))
+            if (f.followInstantiationContext(ad))
             {
                 e1 = new VarExp(loc, f.vthis);
                 e1 = new PtrExp(loc, e1);
@@ -1073,7 +1085,7 @@ L1:
                 /* e1 is the 'this' pointer for an inner class: tcd.
                  * Rewrite it as the 'this' pointer for the outer class.
                  */
-                auto vthis = followInstantiationContext(tcd, ad) ? tcd.vthis2 : tcd.vthis;
+                auto vthis = tcd.followInstantiationContext(ad) ? tcd.vthis2 : tcd.vthis;
                 e1 = new DotVarExp(loc, e1, vthis);
                 e1.type = vthis.type;
                 e1.type = e1.type.addMod(t.mod);
@@ -1082,7 +1094,7 @@ L1:
 
                 // Skip up over nested functions, and get the enclosing
                 // class type.
-                e1 = getThisSkipNestedFuncs(loc, sc, toParentP(tcd, ad), ad, e1, t, var);
+                e1 = getThisSkipNestedFuncs(loc, sc, tcd.toParentP(ad), ad, e1, t, var);
                 if (e1.op == TOK.error)
                     return e1;
                 goto L1;
@@ -1093,7 +1105,7 @@ L1:
             if (flag)
                 return null;
             e1.error("`this` for `%s` needs to be type `%s` not type `%s`", var.toChars(), ad.toChars(), t.toChars());
-            return new ErrorExp();
+            return ErrorExp.get();
         }
     }
     return e1;
@@ -1134,7 +1146,7 @@ private Expression resolvePropertiesX(Scope* sc, Expression e1, Expression e2 = 
         {
             e2 = e2.expressionSemantic(sc);
             if (e2.op == TOK.error)
-                return new ErrorExp();
+                return ErrorExp.get();
             e2 = resolveProperties(sc, e2);
 
             Expressions a;
@@ -1145,7 +1157,7 @@ private Expression resolvePropertiesX(Scope* sc, Expression e1, Expression e2 = 
                 if (FuncDeclaration f = resolveFuncCall(loc, sc, os.a[i], tiargs, tthis, &a, FuncResolveFlag.quiet))
                 {
                     if (f.errors)
-                        return new ErrorExp();
+                        return ErrorExp.get();
                     fd = f;
                     assert(fd.type.ty == Tfunction);
                 }
@@ -1162,12 +1174,15 @@ private Expression resolvePropertiesX(Scope* sc, Expression e1, Expression e2 = 
                 if (FuncDeclaration f = resolveFuncCall(loc, sc, os.a[i], tiargs, tthis, null, FuncResolveFlag.quiet))
                 {
                     if (f.errors)
-                        return new ErrorExp();
+                        return ErrorExp.get();
                     fd = f;
                     assert(fd.type.ty == Tfunction);
                     TypeFunction tf = cast(TypeFunction)fd.type;
                     if (!tf.isref && e2)
-                        goto Leproplvalue;
+                    {
+                        error(loc, "%s is not an lvalue", e1.toChars());
+                        return ErrorExp.get();
+                    }
                 }
             }
             if (fd)
@@ -1246,7 +1261,7 @@ private Expression resolvePropertiesX(Scope* sc, Expression e1, Expression e2 = 
         {
             e2 = e2.expressionSemantic(sc);
             if (e2.op == TOK.error)
-                return new ErrorExp();
+                return ErrorExp.get();
             e2 = resolveProperties(sc, e2);
 
             Expressions a;
@@ -1256,7 +1271,7 @@ private Expression resolvePropertiesX(Scope* sc, Expression e1, Expression e2 = 
             if (fd && fd.type)
             {
                 if (fd.errors)
-                    return new ErrorExp();
+                    return ErrorExp.get();
                 assert(fd.type.ty == Tfunction);
                 Expression e = new CallExp(loc, e1, e2);
                 return e.expressionSemantic(sc);
@@ -1267,7 +1282,7 @@ private Expression resolvePropertiesX(Scope* sc, Expression e1, Expression e2 = 
             if (fd && fd.type)
             {
                 if (fd.errors)
-                    return new ErrorExp();
+                    return ErrorExp.get();
                 assert(fd.type.ty == Tfunction);
                 TypeFunction tf = cast(TypeFunction)fd.type;
                 if (!e2 || tf.isref)
@@ -1294,7 +1309,7 @@ private Expression resolvePropertiesX(Scope* sc, Expression e1, Expression e2 = 
         VarExp ve = cast(VarExp)e1;
         VarDeclaration v = ve.var.isVarDeclaration();
         if (v && ve.checkPurity(sc, v))
-            return new ErrorExp();
+            return ErrorExp.get();
     }
     if (e2)
         return null;
@@ -1302,50 +1317,44 @@ private Expression resolvePropertiesX(Scope* sc, Expression e1, Expression e2 = 
     if (e1.type && e1.op != TOK.type) // function type is not a property
     {
         /* Look for e1 being a lazy parameter; rewrite as delegate call
+         * only if the symbol wasn't already treated as a delegate
          */
-        if (e1.op == TOK.variable)
+        auto ve = e1.isVarExp();
+        if (ve && ve.var.storage_class & STC.lazy_ && !ve.delegateWasExtracted)
         {
-            VarExp ve = cast(VarExp)e1;
-            if (ve.var.storage_class & STC.lazy_)
-            {
                 Expression e = new CallExp(loc, e1);
                 return e.expressionSemantic(sc);
-            }
         }
         else if (e1.op == TOK.dotVariable)
         {
             // Check for reading overlapped pointer field in @safe code.
             if (checkUnsafeAccess(sc, e1, true, true))
-                return new ErrorExp();
+                return ErrorExp.get();
         }
         else if (e1.op == TOK.dot)
         {
             e1.error("expression has no value");
-            return new ErrorExp();
+            return ErrorExp.get();
         }
         else if (e1.op == TOK.call)
         {
             CallExp ce = cast(CallExp)e1;
             // Check for reading overlapped pointer field in @safe code.
             if (checkUnsafeAccess(sc, ce.e1, true, true))
-                return new ErrorExp();
+                return ErrorExp.get();
         }
     }
 
     if (!e1.type)
     {
         error(loc, "cannot resolve type for %s", e1.toChars());
-        e1 = new ErrorExp();
+        e1 = ErrorExp.get();
     }
     return e1;
 
 Leprop:
     error(loc, "not a property %s", e1.toChars());
-    return new ErrorExp();
-
-Leproplvalue:
-    error(loc, "%s is not an lvalue", e1.toChars());
-    return new ErrorExp();
+    return ErrorExp.get();
 }
 
 extern (C++) Expression resolveProperties(Scope* sc, Expression e)
@@ -1353,7 +1362,7 @@ extern (C++) Expression resolveProperties(Scope* sc, Expression e)
     //printf("resolveProperties(%s)\n", e.toChars());
     e = resolvePropertiesX(sc, e);
     if (e.checkRightThis(sc))
-        return new ErrorExp();
+        return ErrorExp.get();
     return e;
 }
 
@@ -1428,10 +1437,18 @@ private bool arrayExpressionToCommonType(Scope* sc, Expressions* exps, Type* pt)
             Expression ex = condexp.expressionSemantic(sc);
             if (ex.op == TOK.error)
                 e = ex;
-            else
+            else if (e.op == TOK.function_ || e.op == TOK.delegate_)
             {
+                // https://issues.dlang.org/show_bug.cgi?id=21285
+                // Functions and delegates don't convert correctly with castTo below
                 (*exps)[j0] = condexp.e1;
                 e = condexp.e2;
+            }
+            else
+            {
+                // Convert to common type
+                (*exps)[j0] = condexp.e1.castTo(sc, condexp.type);
+                e = condexp.e2.castTo(sc, condexp.type);
             }
         }
         j0 = i;
@@ -1565,12 +1582,15 @@ private Expression rewriteOpAssign(BinExp exp)
 
 /****************************************
  * Preprocess arguments to function.
+ * Input:
+ *      reportErrors    whether or not to report errors here.  Some callers are not
+ *                      checking actual function params, so they'll do their own error reporting
  * Output:
  *      exps[]  tuples expanded, properties resolved, rewritten in place
  * Returns:
  *      true    a semantic error occurred
  */
-private bool preFunctionParameters(Scope* sc, Expressions* exps)
+private bool preFunctionParameters(Scope* sc, Expressions* exps, const bool reportErrors = true)
 {
     bool err = false;
     if (exps)
@@ -1588,20 +1608,26 @@ private bool preFunctionParameters(Scope* sc, Expressions* exps)
 
                 if (arg.op == TOK.type)
                 {
-                    arg.error("cannot pass type `%s` as a function argument", arg.toChars());
-                    arg = new ErrorExp();
+                    if (reportErrors)
+                    {
+                        arg.error("cannot pass type `%s` as a function argument", arg.toChars());
+                        arg = ErrorExp.get();
+                    }
                     err = true;
                 }
             }
             else if (arg.type.toBasetype().ty == Tfunction)
             {
-                arg.error("cannot pass function `%s` as a function argument", arg.toChars());
-                arg = new ErrorExp();
+                if (reportErrors)
+                {
+                    arg.error("cannot pass function `%s` as a function argument", arg.toChars());
+                    arg = ErrorExp.get();
+                }
                 err = true;
             }
             else if (checkNonAssignmentArrayOp(arg))
             {
-                arg = new ErrorExp();
+                arg = ErrorExp.get();
                 err = true;
             }
             (*exps)[i] = arg;
@@ -1686,6 +1712,18 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
             fd.functionSemantic3();
         }
     }
+
+    /* If calling a pragma(inline, true) function,
+     * set flag to later scan for inlines.
+     */
+    if (fd && fd.inlining == PINLINE.always)
+    {
+        if (sc._module)
+            sc._module.hasAlwaysInlines = true;
+        if (sc.func)
+            sc.func.hasAlwaysInlines = true;
+    }
+
     const isCtorCall = fd && fd.needThis() && fd.isCtorDeclaration();
 
     const size_t n = (nargs > nparams) ? nargs : nparams; // n = max(nargs, nparams)
@@ -1711,7 +1749,7 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
             }
 
             Parameter p = tf.parameterList[i];
-            const bool isRef = (p.storageClass & (STC.ref_ | STC.out_)) != 0;
+            const bool isRef = p.isReference();
 
             if (!arg)
             {
@@ -1730,7 +1768,7 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
             }
             else
             {
-                if (arg.op == TOK.default_)
+                if (isDefaultInitOp(arg.op))
                 {
                     arg = arg.resolveLoc(loc, sc);
                     (*arguments)[i] = arg;
@@ -1939,10 +1977,26 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
                 {
                     //printf("arg.type = %s, p.type = %s\n", arg.type.toChars(), p.type.toChars());
                     arg = arg.implicitCastTo(sc, tprm);
-                    arg = arg.optimize(WANTvalue, (p.storageClass & (STC.ref_ | STC.out_)) != 0);
+                    arg = arg.optimize(WANTvalue, p.isReference());
                 }
             }
-            if (p.storageClass & STC.ref_)
+
+            // Support passing rvalue to `in` parameters
+            if ((p.storageClass & (STC.in_ | STC.ref_)) == (STC.in_ | STC.ref_))
+            {
+                if (!arg.isLvalue())
+                {
+                    auto v = copyToTemp(STC.exptemp, "__rvalue", arg);
+                    Expression ev = new DeclarationExp(arg.loc, v);
+                    ev = new CommaExp(arg.loc, ev, new VarExp(arg.loc, v));
+                    arg = ev.expressionSemantic(sc);
+                }
+                arg = arg.toLvalue(sc, arg);
+
+                // Look for mutable misaligned pointer, etc., in @safe mode
+                err |= checkUnsafeAccess(sc, arg, false, true);
+            }
+            else if (p.storageClass & STC.ref_)
             {
                 if (global.params.rvalueRefParam &&
                     !arg.isLvalue() &&
@@ -2000,7 +2054,7 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
                  * Check arg to see if it matters.
                  */
                 if (global.params.vsafe)
-                    err |= checkParamArgumentEscape(sc, fd, p, arg, false);
+                    err |= checkParamArgumentEscape(sc, fd, p, arg, false, false);
             }
             else
             {
@@ -2009,7 +2063,20 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
                 Expression a = arg;
                 if (a.op == TOK.cast_)
                     a = (cast(CastExp)a).e1;
-                if (a.op == TOK.function_)
+
+                ArrayLiteralExp ale;
+                if (p.type.toBasetype().ty == Tarray && !(p.storageClass & STC.return_) &&
+                    (ale = a.isArrayLiteralExp()) !is null)
+                {
+                    // allocate the array literal as temporary static array on the stack
+                    ale.type = ale.type.nextOf().sarrayOf(ale.elements ? ale.elements.length : 0);
+                    auto tmp = copyToTemp(0, "__arrayliteral_on_stack", ale);
+                    auto declareTmp = new DeclarationExp(ale.loc, tmp);
+                    auto castToSlice = new CastExp(ale.loc, new VarExp(ale.loc, tmp), p.type);
+                    arg = CommaExp.combine(declareTmp, castToSlice);
+                    arg = arg.expressionSemantic(sc);
+                }
+                else if (a.op == TOK.function_)
                 {
                     /* Function literals can only appear once, so if this
                      * appearance was scoped, there cannot be any others.
@@ -2030,21 +2097,22 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
                         FuncDeclaration f = ve.var.isFuncDeclaration();
                         if (f)
                         {
-                            f.tookAddressOf--;
+                            if (f.tookAddressOf)
+                                --f.tookAddressOf;
                             //printf("--tookAddressOf = %d\n", f.tookAddressOf);
                         }
                     }
                 }
             }
-            if (!(p.storageClass & (STC.ref_ | STC.out_)))
+            if (!p.isReference())
                 err |= arg.checkSharedAccess(sc);
 
-            arg = arg.optimize(WANTvalue, (p.storageClass & (STC.ref_ | STC.out_)) != 0);
+            arg = arg.optimize(WANTvalue, p.isReference());
 
             /* Determine if this parameter is the "first reference" parameter through which
              * later "return" arguments can be stored.
              */
-            if (i == 0 && !tthis && p.storageClass & (STC.ref_ | STC.out_) && p.type &&
+            if (i == 0 && !tthis && p.isReference() && p.type &&
                 (tf.next && tf.next.ty == Tvoid || isCtorCall))
             {
                 Type tb = p.type.baseElemOf();
@@ -2093,10 +2161,15 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
                 }
             }
 
-            // Do not allow types that need destructors
+            // Do not allow types that need destructors or copy constructors.
             if (arg.type.needsDestruction())
             {
                 arg.error("cannot pass types that need destruction as variadic arguments");
+                err = true;
+            }
+            if (arg.type.needsCopyOrPostblit())
+            {
+                arg.error("cannot pass types with postblits or copy constructors as variadic arguments");
                 err = true;
             }
 
@@ -2133,6 +2206,28 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
         (*arguments)[i] = arg;
     }
 
+    /* If calling C scanf(), printf(), or any variants, check the format string against the arguments
+     */
+    const isVa_list = tf.parameterList.varargs == VarArg.none;
+    if (fd && fd.flags & FUNCFLAG.printf)
+    {
+        if (auto se = (*arguments)[nparams - 1 - isVa_list].isStringExp())
+        {
+            checkPrintfFormat(se.loc, se.peekString(), (*arguments)[nparams .. nargs], isVa_list);
+        }
+    }
+    else if (fd && fd.flags & FUNCFLAG.scanf)
+    {
+        if (auto se = (*arguments)[nparams - 1 - isVa_list].isStringExp())
+        {
+            checkScanfFormat(se.loc, se.peekString(), (*arguments)[nparams .. nargs], isVa_list);
+        }
+    }
+    else
+    {
+        // TODO: not checking the "v" functions yet (for those, check format string only, not args)
+    }
+
     /* Remaining problems:
      * 1. order of evaluation - some function push L-to-R, others R-to-L. Until we resolve what array assignment does (which is
      *    implemented by calling a function) we'll defer this for now.
@@ -2145,7 +2240,7 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
     {
         /* TODO: tackle problem 1)
          */
-        const bool leftToRight = true; // TODO: something like !fd.isArrayOp
+        const bool leftToRight = true; // TODO: Any cases that need rightToLeft?
         if (!leftToRight)
             assert(nargs == nparams); // no variadics for RTL order, as they would probably be evaluated LTR and so add complexity
 
@@ -2197,7 +2292,7 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
             Expression arg = (*arguments)[i];
 
             Parameter parameter = (i >= nparams ? null : tf.parameterList[i]);
-            const bool isRef = (parameter && (parameter.storageClass & (STC.ref_ | STC.out_)));
+            const bool isRef = parameter && parameter.isReference();
             const bool isLazy = (parameter && (parameter.storageClass & STC.lazy_));
 
             /* Skip lazy parameters
@@ -2266,7 +2361,7 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
                  */
                 if (i == lastthrow)
                 {
-                    auto e = new AssignExp(gate.loc, new VarExp(gate.loc, gate), new IntegerExp(gate.loc, 1, Type.tbool));
+                    auto e = new AssignExp(gate.loc, new VarExp(gate.loc, gate), IntegerExp.createBool(true));
                     eprefix = Expression.combine(eprefix, e.expressionSemantic(sc));
                     gate = null;
                 }
@@ -2287,8 +2382,14 @@ private bool functionParameters(const ref Loc loc, Scope* sc,
     }
     //if (eprefix) printf("eprefix: %s\n", eprefix.toChars());
 
+    /* Test compliance with DIP1021
+     */
+    if (global.params.useDIP1021 &&
+        tf.trust != TRUST.system && tf.trust != TRUST.trusted)
+        err |= checkMutableArguments(sc, fd, tf, ethis, arguments, false);
+
     // If D linkage and variadic, add _arguments[] as first argument
-    if (tf.linkage == LINK.d && tf.parameterList.varargs == VarArg.variadic)
+    if (tf.isDstyleVariadic())
     {
         assert(arguments.dim >= nparams);
 
@@ -2366,6 +2467,8 @@ Package resolveIsPackage(Dsymbol sym)
         }
         pkg = imp.pkg;
     }
+    else if (auto mod = sym.isModule())
+        pkg = mod.isPackageFile ? mod.pkg : sym.isPackage();
     else
         pkg = sym.isPackage();
     if (pkg)
@@ -2410,7 +2513,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
     private void setError()
     {
-        result = new ErrorExp();
+        result = ErrorExp.get();
     }
 
     /**************************
@@ -2483,7 +2586,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             /* See if the symbol was a member of an enclosing 'with'
              */
             WithScopeSymbol withsym = scopesym.isWithScopeSymbol();
-            if (withsym && withsym.withstate.wthis)
+            if (withsym && withsym.withstate.wthis && symbolIsVisible(sc, s))
             {
                 /* Disallow shadowing
                  */
@@ -2518,13 +2621,20 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             {
                 if (withsym)
                 {
-                    if (auto t = withsym.withstate.exp.isTypeExp())
+                    if (withsym.withstate.exp.type.ty != Tvoid)
                     {
-                        e = new TypeExp(exp.loc, t.type);
-                        e = new DotIdExp(exp.loc, e, exp.ident);
-                        result = e.expressionSemantic(sc);
-                        return;
+                        // 'with (exp)' is a type expression
+                        // or 's' is not visible there (for error message)
+                        e = new TypeExp(exp.loc, withsym.withstate.exp.type);
                     }
+                    else
+                    {
+                        // 'with (exp)' is a Package/Module
+                        e = withsym.withstate.exp;
+                    }
+                    e = new DotIdExp(exp.loc, e, exp.ident);
+                    result = e.expressionSemantic(sc);
+                    return;
                 }
 
                 /* If f is really a function template,
@@ -2664,7 +2774,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         else
             exp.error("undefined identifier `%s`", exp.ident.toChars());
 
-        result = new ErrorExp();
+        result = ErrorExp.get();
     }
 
     override void visit(DsymbolExp e)
@@ -2736,7 +2846,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
     Lerr:
         e.error("`this` is only defined in non-static member functions, not `%s`", sc.parent.toChars());
-        result = new ErrorExp();
+        result = ErrorExp.get();
     }
 
     override void visit(SuperExp e)
@@ -2816,7 +2926,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
     Lerr:
         e.error("`super` is only allowed in non-static class member functions");
-        result = new ErrorExp();
+        result = ErrorExp.get();
     }
 
     override void visit(NullExp e)
@@ -2849,7 +2959,6 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
         OutBuffer buffer;
         size_t newlen = 0;
-        const(char)* p;
         size_t u;
         dchar c;
 
@@ -2858,10 +2967,9 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         case 'd':
             for (u = 0; u < e.len;)
             {
-                p = utf_decodeChar(e.string, e.len, u, c);
-                if (p)
+                if (const p = utf_decodeChar(e.peekString(), u, c))
                 {
-                    e.error("%s", p);
+                    e.error("%.*s", cast(int)p.length, p.ptr);
                     return setError();
                 }
                 else
@@ -2871,9 +2979,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 }
             }
             buffer.write4(0);
-            e.dstring = cast(dchar*)buffer.extractData();
-            e.len = newlen;
-            e.sz = 4;
+            e.setData(buffer.extractData(), newlen, 4);
             e.type = new TypeDArray(Type.tdchar.immutableOf());
             e.committed = 1;
             break;
@@ -2881,10 +2987,9 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         case 'w':
             for (u = 0; u < e.len;)
             {
-                p = utf_decodeChar(e.string, e.len, u, c);
-                if (p)
+                if (const p = utf_decodeChar(e.peekString(), u, c))
                 {
-                    e.error("%s", p);
+                    e.error("%.*s", cast(int)p.length, p.ptr);
                     return setError();
                 }
                 else
@@ -2896,9 +3001,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 }
             }
             buffer.writeUTF16(0);
-            e.wstring = cast(wchar*)buffer.extractData();
-            e.len = newlen;
-            e.sz = 2;
+            e.setData(buffer.extractData(), newlen, 2);
             e.type = new TypeDArray(Type.twchar.immutableOf());
             e.committed = 1;
             break;
@@ -3030,7 +3133,8 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         expandTuples(e.values);
         if (e.keys.dim != e.values.dim)
         {
-            e.error("number of keys is %u, must match number of values %u", e.keys.dim, e.values.dim);
+            e.error("number of keys is %llu, must match number of values %llu",
+                        cast(ulong) e.keys.dim, cast(ulong) e.values.dim);
             return setError();
         }
 
@@ -3109,7 +3213,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         if (exp.type.ty == Terror)
             return setError();
 
-        //printf("TypeExp::semantic(%s)\n", type.toChars());
+        //printf("TypeExp::semantic(%s)\n", exp.type.toChars());
         Expression e;
         Type t;
         Dsymbol s;
@@ -3117,6 +3221,16 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         dmd.typesem.resolve(exp.type, exp.loc, sc, &e, &t, &s, true);
         if (e)
         {
+            // `(Type)` is actually `(var)` so if `(var)` is a member requiring `this`
+            // then rewrite as `(this.var)` in case it would be followed by a DotVar
+            // to fix https://issues.dlang.org/show_bug.cgi?id=9490
+            VarExp ve = e.isVarExp();
+            if (ve && ve.var && exp.parens && !ve.var.isStatic() && !(sc.stc & STC.static_) &&
+                sc.func && sc.func.needThis && ve.var.toParent2().isAggregateDeclaration())
+            {
+                // printf("apply fix for issue 9490: add `this.` to `%s`...\n", e.toChars());
+                e = new DotVarExp(exp.loc, new ThisExp(exp.loc), ve.var, false);
+            }
             //printf("e = %s %s\n", Token::toChars(e.op), e.toChars());
             e = e.expressionSemantic(sc);
         }
@@ -3175,7 +3289,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                     AggregateDeclaration ad = p ? p.isAggregateDeclaration() : null;
                     if (fdthis && ad && fdthis.isMemberLocal() == ad && (td._scope.stc & STC.static_) == 0)
                     {
-                        Expression e = new DotTemplateInstanceExp(exp.loc, new ThisExp(exp.loc), ti.name, ti.tiargs);
+                        Expression e = new DotTemplateInstanceExp(exp.loc, new ThisExp(exp.loc), ti);
                         result = e.expressionSemantic(sc);
                         return;
                     }
@@ -3186,7 +3300,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                     AggregateDeclaration ad = os.parent.isAggregateDeclaration();
                     if (fdthis && ad && fdthis.isMemberLocal() == ad)
                     {
-                        Expression e = new DotTemplateInstanceExp(exp.loc, new ThisExp(exp.loc), ti.name, ti.tiargs);
+                        Expression e = new DotTemplateInstanceExp(exp.loc, new ThisExp(exp.loc), ti);
                         result = e.expressionSemantic(sc);
                         return;
                     }
@@ -3300,6 +3414,9 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return;
         }
 
+        //for error messages if the argument in [] is not convertible to size_t
+        const originalNewtype = exp.newtype;
+
         // https://issues.dlang.org/show_bug.cgi?id=11581
         // With the syntax `new T[edim]` or `thisexp.new T[edim]`,
         // T should be analyzed first and edim should go into arguments iff it's
@@ -3358,14 +3475,27 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         exp.newtype = exp.type; // in case type gets cast to something else
         Type tb = exp.type.toBasetype();
         //printf("tb: %s, deco = %s\n", tb.toChars(), tb.deco);
-
         if (arrayExpressionSemantic(exp.newargs, sc) ||
             preFunctionParameters(sc, exp.newargs))
         {
             return setError();
         }
-        if (arrayExpressionSemantic(exp.arguments, sc) ||
-            preFunctionParameters(sc, exp.arguments))
+        if (arrayExpressionSemantic(exp.arguments, sc))
+        {
+            return setError();
+        }
+        //https://issues.dlang.org/show_bug.cgi?id=20547
+        //exp.arguments are the "parameters" to [], not to a real function
+        //so the errors that come from preFunctionParameters are misleading
+        if (originalNewtype.ty == Tsarray)
+        {
+            if (preFunctionParameters(sc, exp.arguments, false))
+            {
+                exp.error("cannot create a `%s` with `new`", originalNewtype.toChars());
+                return setError();
+            }
+        }
+        else if (preFunctionParameters(sc, exp.arguments))
         {
             return setError();
         }
@@ -3376,7 +3506,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return setError();
         }
 
-        size_t nargs = exp.arguments ? exp.arguments.dim : 0;
+        const size_t nargs = exp.arguments ? exp.arguments.dim : 0;
         Expression newprefix = null;
 
         if (tb.ty == Tclass)
@@ -3675,8 +3805,16 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
             exp.type = exp.type.pointerTo();
         }
-        else if (tb.ty == Tarray && nargs)
+        else if (tb.ty == Tarray)
         {
+            if (!nargs)
+            {
+                // https://issues.dlang.org/show_bug.cgi?id=20422
+                // Without this check the compiler would give a misleading error
+                exp.error("missing length argument for array");
+                return setError();
+            }
+
             Type tn = tb.nextOf().baseElemOf();
             Dsymbol s = tn.toDsymbol(sc);
             AggregateDeclaration ad = s ? s.isAggregateDeclaration() : null;
@@ -3729,7 +3867,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         }
         else
         {
-            exp.error("new can only create structs, dynamic arrays or class objects, not `%s`'s", exp.type.toChars());
+            exp.error("cannot create a `%s` with `new`", exp.type.toChars());
             return setError();
         }
 
@@ -3917,7 +4055,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 if (exp.matchType(exp.fd.treq, sc, &fe) > MATCH.nomatch)
                     e = fe;
                 else
-                    e = new ErrorExp();
+                    e = ErrorExp.get();
             }
             goto Ldone;
         }
@@ -3934,7 +4072,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         {
             if (exp.fd.type && exp.fd.type.ty == Tfunction && !exp.fd.type.nextOf())
                 (cast(TypeFunction)exp.fd.type).next = Type.terror;
-            e = new ErrorExp();
+            e = ErrorExp.get();
             goto Ldone;
         }
 
@@ -3974,7 +4112,14 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         result = e;
     }
 
-    // used from CallExp::semantic()
+    /**
+     * Perform semantic analysis on function literals
+     *
+     * Test the following construct:
+     * ---
+     * (x, y, z) { return x + y + z; }(42, 84, 1992);
+     * ---
+     */
     Expression callExpSemantic(FuncExp exp, Scope* sc, Expressions* arguments)
     {
         if ((!exp.type || exp.type == Type.tvoid) && exp.td && arguments && arguments.dim)
@@ -4001,32 +4146,44 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                     dim = arguments.dim;
             }
 
-            if ((tfl.parameterList.varargs == VarArg.none && arguments.dim == dim) ||
-                (tfl.parameterList.varargs != VarArg.none && arguments.dim >= dim))
+            if ((tfl.parameterList.varargs == VarArg.none && arguments.dim > dim) ||
+                arguments.dim < dim)
             {
-                auto tiargs = new Objects();
-                tiargs.reserve(exp.td.parameters.dim);
+                OutBuffer buf;
+                foreach (idx, ref arg; *arguments)
+                    buf.printf("%s%s", (idx ? ", ".ptr : "".ptr), arg.type.toChars());
+                exp.error("function literal `%s%s` is not callable using argument types `(%s)`",
+                          exp.fd.toChars(), parametersTypeToChars(tfl.parameterList),
+                          buf.peekChars());
+                exp.errorSupplemental("too %s arguments, expected `%d`, got `%d`",
+                                      arguments.dim < dim ? "few".ptr : "many".ptr,
+                                      cast(int)dim, cast(int)arguments.dim);
+                return ErrorExp.get();
+            }
 
-                for (size_t i = 0; i < exp.td.parameters.dim; i++)
+            auto tiargs = new Objects();
+            tiargs.reserve(exp.td.parameters.dim);
+
+            for (size_t i = 0; i < exp.td.parameters.dim; i++)
+            {
+                TemplateParameter tp = (*exp.td.parameters)[i];
+                assert(dim <= tfl.parameterList.length);
+                foreach (u, p; tfl.parameterList)
                 {
-                    TemplateParameter tp = (*exp.td.parameters)[i];
-                    for (size_t u = 0; u < dim; u++)
+                    if (u == dim)
+                        break;
+
+                    if (p.type.ty == Tident && (cast(TypeIdentifier)p.type).ident == tp.ident)
                     {
-                        Parameter p = tfl.parameterList[u];
-                        if (p.type.ty == Tident && (cast(TypeIdentifier)p.type).ident == tp.ident)
-                        {
-                            Expression e = (*arguments)[u];
-                            tiargs.push(e.type);
-                            u = dim; // break inner loop
-                        }
+                        Expression e = (*arguments)[u];
+                        tiargs.push(e.type);
+                        break;
                     }
                 }
-
-                auto ti = new TemplateInstance(exp.loc, exp.td, tiargs);
-                return (new ScopeExp(exp.loc, ti)).expressionSemantic(sc);
             }
-            exp.error("cannot infer function literal type");
-            return new ErrorExp();
+
+            auto ti = new TemplateInstance(exp.loc, exp.td, tiargs);
+            return (new ScopeExp(exp.loc, ti)).expressionSemantic(sc);
         }
         return exp.expressionSemantic(sc);
     }
@@ -4043,7 +4200,6 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return; // semantic() already run
         }
 
-        Type t1;
         Objects* tiargs = null; // initial list of template arguments
         Expression ethis = null;
         Type tthis = null;
@@ -4201,7 +4357,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             else
             {
                 __gshared int nest;
-                if (++nest > 500)
+                if (++nest > global.recursionLimit)
                 {
                     exp.error("recursive evaluation of `%s`", exp.toChars());
                     --nest;
@@ -4260,7 +4416,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             }
         }
 
-        t1 = exp.e1.type ? exp.e1.type.toBasetype() : null;
+        Type t1 = exp.e1.type ? exp.e1.type.toBasetype() : null;
 
         if (exp.e1.op == TOK.error)
         {
@@ -4496,9 +4652,9 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 }
                 ethis = ue.e1;
                 tthis = ue.e1.type;
-                if (!(exp.f.type.ty == Tfunction && (cast(TypeFunction)exp.f.type).isscope))
+                if (!(exp.f.type.ty == Tfunction && (cast(TypeFunction)exp.f.type).isScopeQual))
                 {
-                    if (global.params.vsafe && checkParamArgumentEscape(sc, exp.f, null, ethis, false))
+                    if (global.params.vsafe && checkParamArgumentEscape(sc, exp.f, null, ethis, false, false))
                         return setError();
                 }
             }
@@ -4539,7 +4695,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 {
                     printf("ue.e1 = %s\n", ue.e1.toChars());
                     printf("f = %s\n", exp.f.toChars());
-                    printf("t = %s\n", t.toChars());
+                    printf("t1 = %s\n", t1.toChars());
                     printf("e1 = %s\n", exp.e1.toChars());
                     printf("e1.type = %s\n", exp.e1.type.toChars());
                 }
@@ -4642,6 +4798,9 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
             exp.e1 = new DotVarExp(exp.e1.loc, exp.e1, exp.f, false);
             exp.e1 = exp.e1.expressionSemantic(sc);
+            // https://issues.dlang.org/show_bug.cgi?id=21095
+            if (exp.e1.op == TOK.error)
+                return setError();
             t1 = exp.e1.type;
 
             // BUG: this should really be done by checking the static
@@ -4780,22 +4939,22 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 if (exp.f.checkNestedReference(sc, exp.loc))
                     return setError();
             }
-            else if (sc.func && sc.intypeof != 1 && !(sc.flags & SCOPE.ctfe))
+            else if (sc.func && sc.intypeof != 1 && !(sc.flags & (SCOPE.ctfe | SCOPE.debug_)))
             {
                 bool err = false;
-                if (!tf.purity && !(sc.flags & SCOPE.debug_) && sc.func.setImpure())
+                if (!tf.purity && sc.func.setImpure())
                 {
                     exp.error("`pure` %s `%s` cannot call impure %s `%s`",
                         sc.func.kind(), sc.func.toPrettyChars(), p, exp.e1.toChars());
                     err = true;
                 }
-                if (!tf.isnogc && sc.func.setGC() && !(sc.flags & SCOPE.debug_) )
+                if (!tf.isnogc && sc.func.setGC())
                 {
                     exp.error("`@nogc` %s `%s` cannot call non-@nogc %s `%s`",
                         sc.func.kind(), sc.func.toPrettyChars(), p, exp.e1.toChars());
                     err = true;
                 }
-                if (tf.trust <= TRUST.system && sc.func.setUnsafe() && !(sc.flags & SCOPE.debug_))
+                if (tf.trust <= TRUST.system && sc.func.setUnsafe())
                 {
                     exp.error("`@safe` %s `%s` cannot call `@system` %s `%s`",
                         sc.func.kind(), sc.func.toPrettyChars(), p, exp.e1.toChars());
@@ -5044,8 +5203,16 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 }
                 else
                 {
+                    /* https://issues.dlang.org/show_bug.cgi?id=21272
+                     * If we are in a foreach body we need to extract the
+                     * function containing the foreach
+                     */
+                    FuncDeclaration fes_enclosing_func;
+                    if (sc.func && sc.func.fes)
+                        fes_enclosing_func = sc.enclosing.enclosing.func;
+
                     // Disallow shadowing
-                    for (Scope* scx = sc.enclosing; scx && scx.func == sc.func; scx = scx.enclosing)
+                    for (Scope* scx = sc.enclosing; scx && (scx.func == sc.func || (fes_enclosing_func && scx.func == fes_enclosing_func)); scx = scx.enclosing)
                     {
                         Dsymbol s2;
                         if (scx.scopesym && scx.scopesym.symtab && (s2 = scx.scopesym.symtab.lookup(s.ident)) !is null && s != s2)
@@ -5055,8 +5222,15 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                             auto decl = s2.isDeclaration();
                             if (!decl || !(decl.storage_class & STC.local))
                             {
-                                e.error("%s `%s` is shadowing %s `%s`", s.kind(), s.ident.toChars(), s2.kind(), s2.toPrettyChars());
-                                return setError();
+                                if (sc.func.fes)
+                                {
+                                    e.deprecation("%s `%s` is shadowing %s `%s`. Rename the `foreach` variable.", s.kind(), s.ident.toChars(), s2.kind(), s2.toPrettyChars());
+                                }
+                                else
+                                {
+                                    e.error("%s `%s` is shadowing %s `%s`", s.kind(), s.ident.toChars(), s2.kind(), s2.toPrettyChars());
+                                    return setError();
+                                }
                             }
                         }
                     }
@@ -5133,12 +5307,12 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             if (tb.toDsymbol(sc).isClassDeclaration().classKind == ClassKind.cpp)
             {
                 error(exp.loc, "Runtime type information is not supported for `extern(C++)` classes");
-                e = new ErrorExp();
+                e = ErrorExp.get();
             }
             else if (!Type.typeinfoclass)
             {
                 error(exp.loc, "`object.TypeInfo_Class` could not be found, but is implicitly used");
-                e = new ErrorExp();
+                e = ErrorExp.get();
             }
             else
             {
@@ -5151,7 +5325,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         }
         else if (ta.ty == Terror)
         {
-            e = new ErrorExp();
+            e = ErrorExp.get();
         }
         else
         {
@@ -5191,29 +5365,68 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
          * is(targ id :  tok2)
          * is(targ id == tok2)
          */
+        Type tded = null;
 
-        //printf("IsExp::semantic(%s)\n", toChars());
+        void yes()
+        {
+            //printf("yes\n");
+            if (!e.id)
+            {
+                result = IntegerExp.createBool(true);
+                return;
+            }
+
+            Dsymbol s;
+            Tuple tup = isTuple(tded);
+            if (tup)
+                s = new TupleDeclaration(e.loc, e.id, &tup.objects);
+            else
+                s = new AliasDeclaration(e.loc, e.id, tded);
+            s.dsymbolSemantic(sc);
+
+            /* The reason for the !tup is unclear. It fails Phobos unittests if it is not there.
+             * More investigation is needed.
+             */
+            if (!tup && !sc.insert(s))
+                e.error("declaration `%s` is already defined", s.toChars());
+
+            unSpeculative(sc, s);
+
+            result = IntegerExp.createBool(true);
+        }
+        void no()
+        {
+            result = IntegerExp.createBool(false);
+            //printf("no\n");
+        }
+
+        static if (LOGSEMANTIC)
+        {
+            printf("IsExp::semantic(%s)\n", e.toChars());
+        }
         if (e.id && !(sc.flags & SCOPE.condition))
         {
             e.error("can only declare type aliases within `static if` conditionals or `static assert`s");
             return setError();
         }
 
-        Type tded = null;
         if (e.tok2 == TOK.package_ || e.tok2 == TOK.module_) // These is() expressions are special because they can work on modules, not just types.
         {
+            const oldErrors = global.startGagging();
             Dsymbol sym = e.targ.toDsymbol(sc);
+            global.endGagging(oldErrors);
+
             if (sym is null)
-                goto Lno;
+                return no();
             Package p = resolveIsPackage(sym);
             if (p is null)
-                goto Lno;
+                return no();
             if (e.tok2 == TOK.package_ && p.isModule()) // Note that isModule() will return null for package modules because they're not actually instances of Module.
-                goto Lno;
+                return no();
             else if(e.tok2 == TOK.module_ && !(p.isModule() || p.isPackageMod()))
-                goto Lno;
+                return no();
             tded = e.targ;
-            goto Lyes;
+            return yes();
         }
 
         {
@@ -5224,7 +5437,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             Type t = e.targ.trySemantic(e.loc, sc2);
             sc2.pop();
             if (!t) // errors, so condition is false
-                goto Lno;
+                return no();
             e.targ = t;
         }
 
@@ -5234,64 +5447,64 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             {
             case TOK.struct_:
                 if (e.targ.ty != Tstruct)
-                    goto Lno;
+                    return no();
                 if ((cast(TypeStruct)e.targ).sym.isUnionDeclaration())
-                    goto Lno;
+                    return no();
                 tded = e.targ;
                 break;
 
             case TOK.union_:
                 if (e.targ.ty != Tstruct)
-                    goto Lno;
+                    return no();
                 if (!(cast(TypeStruct)e.targ).sym.isUnionDeclaration())
-                    goto Lno;
+                    return no();
                 tded = e.targ;
                 break;
 
             case TOK.class_:
                 if (e.targ.ty != Tclass)
-                    goto Lno;
+                    return no();
                 if ((cast(TypeClass)e.targ).sym.isInterfaceDeclaration())
-                    goto Lno;
+                    return no();
                 tded = e.targ;
                 break;
 
             case TOK.interface_:
                 if (e.targ.ty != Tclass)
-                    goto Lno;
+                    return no();
                 if (!(cast(TypeClass)e.targ).sym.isInterfaceDeclaration())
-                    goto Lno;
+                    return no();
                 tded = e.targ;
                 break;
 
             case TOK.const_:
                 if (!e.targ.isConst())
-                    goto Lno;
+                    return no();
                 tded = e.targ;
                 break;
 
             case TOK.immutable_:
                 if (!e.targ.isImmutable())
-                    goto Lno;
+                    return no();
                 tded = e.targ;
                 break;
 
             case TOK.shared_:
                 if (!e.targ.isShared())
-                    goto Lno;
+                    return no();
                 tded = e.targ;
                 break;
 
             case TOK.inout_:
                 if (!e.targ.isWild())
-                    goto Lno;
+                    return no();
                 tded = e.targ;
                 break;
 
             case TOK.super_:
                 // If class or interface, get the base class and interfaces
                 if (e.targ.ty != Tclass)
-                    goto Lno;
+                    return no();
                 else
                 {
                     ClassDeclaration cd = (cast(TypeClass)e.targ).sym;
@@ -5310,7 +5523,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
             case TOK.enum_:
                 if (e.targ.ty != Tenum)
-                    goto Lno;
+                    return no();
                 if (e.id)
                     tded = (cast(TypeEnum)e.targ).sym.getMemtype(e.loc);
                 else
@@ -5322,7 +5535,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
             case TOK.delegate_:
                 if (e.targ.ty != Tdelegate)
-                    goto Lno;
+                    return no();
                 tded = (cast(TypeDelegate)e.targ).next; // the underlying function type
                 break;
 
@@ -5330,19 +5543,16 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             case TOK.parameters:
                 {
                     if (e.targ.ty != Tfunction)
-                        goto Lno;
+                        return no();
                     tded = e.targ;
 
                     /* Generate tuple from function parameter types.
                      */
                     assert(tded.ty == Tfunction);
                     auto tdedf = tded.isTypeFunction();
-                    size_t dim = tdedf.parameterList.length;
                     auto args = new Parameters();
-                    args.reserve(dim);
-                    for (size_t i = 0; i < dim; i++)
+                    foreach (i, arg; tdedf.parameterList)
                     {
-                        Parameter arg = tdedf.parameterList[i];
                         assert(arg && arg.type);
                         /* If one of the default arguments was an error,
                            don't return an invalid tuple
@@ -5371,7 +5581,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                     tded = (cast(TypeFunction)tded).next;
                 }
                 else
-                    goto Lno;
+                    return no();
                 break;
 
             case TOK.argumentTypes:
@@ -5382,13 +5592,13 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                  */
                 tded = target.toArgTypes(e.targ);
                 if (!tded)
-                    goto Lno;
+                    return no();
                 // not valid for a parameter
                 break;
 
             case TOK.vector:
                 if (e.targ.ty != Tvector)
-                    goto Lno;
+                    return no();
                 tded = (cast(TypeVector)e.targ).basetype;
                 break;
 
@@ -5398,8 +5608,8 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
             // https://issues.dlang.org/show_bug.cgi?id=18753
             if (tded)
-                goto Lyes;
-            goto Lno;
+                return yes();
+            return no();
         }
         else if (e.tspec && !e.id && !(e.parameters && e.parameters.dim))
         {
@@ -5408,22 +5618,41 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
              * is(targ : tspec)
              */
             e.tspec = e.tspec.typeSemantic(e.loc, sc);
-            //printf("targ  = %s, %s\n", targ.toChars(), targ.deco);
-            //printf("tspec = %s, %s\n", tspec.toChars(), tspec.deco);
+            //printf("targ  = %s, %s\n", e.targ.toChars(), e.targ.deco);
+            //printf("tspec = %s, %s\n", e.tspec.toChars(), e.tspec.deco);
 
             if (e.tok == TOK.colon)
             {
-                if (e.targ.implicitConvTo(e.tspec))
-                    goto Lyes;
+                // current scope is itself deprecated, or deprecations are not errors
+                const bool deprecationAllowed = sc.isDeprecated
+                    || global.params.useDeprecated != DiagnosticReporting.error;
+                const bool preventAliasThis = e.targ.hasDeprecatedAliasThis && !deprecationAllowed;
+
+                if (preventAliasThis && e.targ.ty == Tstruct)
+                {
+                    if ((cast(TypeStruct) e.targ).implicitConvToWithoutAliasThis(e.tspec))
+                        return yes();
+                    else
+                        return no();
+                }
+                else if (preventAliasThis && e.targ.ty == Tclass)
+                {
+                    if ((cast(TypeClass) e.targ).implicitConvToWithoutAliasThis(e.tspec))
+                        return yes();
+                    else
+                        return no();
+                }
+                else if (e.targ.implicitConvTo(e.tspec))
+                    return yes();
                 else
-                    goto Lno;
+                    return no();
             }
             else /* == */
             {
                 if (e.targ.equals(e.tspec))
-                    goto Lyes;
+                    return yes();
                 else
-                    goto Lno;
+                    return no();
             }
         }
         else if (e.tspec)
@@ -5448,7 +5677,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             //printf("tspec: %s\n", tspec.toChars());
             if (m <= MATCH.nomatch || (m != MATCH.exact && e.tok == TOK.equal))
             {
-                goto Lno;
+                return no();
             }
             else
             {
@@ -5467,14 +5696,14 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
                     m = tp.matchArg(e.loc, sc, &tiargs, i, e.parameters, &dedtypes, &s);
                     if (m <= MATCH.nomatch)
-                        goto Lno;
+                        return no();
                     s.dsymbolSemantic(sc);
                     if (!sc.insert(s))
                         e.error("declaration `%s` is already defined", s.toChars());
 
                     unSpeculative(sc, s);
                 }
-                goto Lyes;
+                return yes();
             }
         }
         else if (e.id)
@@ -5483,35 +5712,8 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
              * is(targ id)
              */
             tded = e.targ;
-            goto Lyes;
         }
-
-    Lyes:
-        if (e.id)
-        {
-            Dsymbol s;
-            Tuple tup = isTuple(tded);
-            if (tup)
-                s = new TupleDeclaration(e.loc, e.id, &tup.objects);
-            else
-                s = new AliasDeclaration(e.loc, e.id, tded);
-            s.dsymbolSemantic(sc);
-
-            /* The reason for the !tup is unclear. It fails Phobos unittests if it is not there.
-             * More investigation is needed.
-             */
-            if (!tup && !sc.insert(s))
-                e.error("declaration `%s` is already defined", s.toChars());
-
-            unSpeculative(sc, s);
-        }
-        //printf("Lyes\n");
-        result = new IntegerExp(e.loc, 1, Type.tbool);
-        return;
-
-    Lno:
-        //printf("Lno\n");
-        result = new IntegerExp(e.loc, 0, Type.tbool);
+        return yes();
     }
 
     override void visit(BinAssignExp exp)
@@ -5640,19 +5842,16 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return null;
 
         uint errors = global.errors;
-        const len = buf.offset;
+        const len = buf.length;
         const str = buf.extractChars()[0 .. len];
-        scope diagnosticReporter = new StderrDiagnosticReporter(global.params.useDeprecated);
-        scope p = new Parser!ASTCodegen(exp.loc, sc._module, str, false, diagnosticReporter);
+        scope p = new Parser!ASTCodegen(exp.loc, sc._module, str, false);
         p.nextToken();
         //printf("p.loc.linnum = %d\n", p.loc.linnum);
 
         Expression e = p.parseExpression();
-        if (p.errors)
-        {
-            assert(global.errors != errors); // should have caught all these cases
+        if (global.errors != errors)
             return null;
-        }
+
         if (p.token.value != TOK.endOfFile)
         {
             exp.error("incomplete mixin expression `%s`", str.ptr);
@@ -5705,12 +5904,23 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         if (!name)
         {
             e.error("file `%s` cannot be found or not in a path specified with `-J`", se.toChars());
+            e.errorSupplemental("Path(s) searched (as provided by `-J`):");
+            foreach (idx, path; *global.filePath)
+            {
+                const attr = FileName.exists(path);
+                const(char)* err = attr == 2 ? "" :
+                    (attr == 1 ? " (not a directory)" : " (path not found)");
+                e.errorSupplemental("[%zu]: `%s`%s", idx, path, err);
+            }
             return setError();
         }
 
         sc._module.contentImportedFiles.push(name);
         if (global.params.verbose)
-            message("file      %.*s\t(%s)", cast(int)se.len, se.string, name);
+        {
+            const slice = se.peekString();
+            message("file      %.*s\t(%s)", cast(int)slice.length, slice.ptr, name);
+        }
         if (global.params.moduleDeps !is null)
         {
             OutBuffer* ob = global.params.moduleDeps;
@@ -5724,7 +5934,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             ob.writestring(") : ");
             if (global.params.moduleDepsFile)
                 ob.writestring("string : ");
-            ob.write(se.string, se.len);
+            ob.write(se.peekString());
             ob.writestring(" (");
             escapePath(ob, name);
             ob.writestring(")");
@@ -5741,8 +5951,8 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             else
             {
                 // take ownership of buffer (probably leaking)
-                auto data = readResult.extractData();
-                se = new StringExp(e.loc, data.ptr, data.length);
+                auto data = readResult.extractSlice();
+                se = new StringExp(e.loc, data);
             }
         }
         result = se.expressionSemantic(sc);
@@ -5756,36 +5966,88 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             printf("AssertExp::semantic('%s')\n", exp.toChars());
         }
 
-        // save expression as a string before any semantic expansion
-        auto assertExpMsg = exp.msg ? null : exp.toChars();
+        const generateMsg = !exp.msg && global.params.checkAction == CHECKACTION.context;
+        Expression temporariesPrefix;
 
-        if (Expression ex = unaSemantic(exp, sc))
-        {
-            result = ex;
-            return;
-        }
-        exp.e1 = resolveProperties(sc, exp.e1);
-        // BUG: see if we can do compile time elimination of the Assert
-        exp.e1 = exp.e1.optimize(WANTvalue);
-        exp.e1 = exp.e1.toBoolean(sc);
-
-        if (!exp.msg && global.params.checkAction == CHECKACTION.context)
+        if (generateMsg)
         // no message - use assert expression as msg
         {
+            if (!verifyHookExist(exp.loc, *sc, Id._d_assert_fail, "generating assert messages"))
+                return setError();
+
             /*
             {
               auto a = e1, b = e2;
               assert(a == b, _d_assert_fail!"=="(a, b));
             }()
             */
+
+            /*
+            Stores the result of an operand expression into a temporary
+            if necessary, e.g. if it is an impure fuction call containing side
+            effects as in https://issues.dlang.org/show_bug.cgi?id=20114
+
+            Params:
+                op = an expression which may require a temporary (added to
+                     `temporariesPrefix`: `auto tmp = op`) and will be replaced
+                     by `tmp` if necessary
+
+            Returns: (possibly replaced) `op`
+            */
+            Expression maybePromoteToTmp(ref Expression op)
+            {
+                // https://issues.dlang.org/show_bug.cgi?id=20989
+                // Flag that _d_assert_fail will never dereference `array.ptr` to avoid safety
+                // errors for `assert(!array.ptr)` => `_d_assert_fail!"!"(array.ptr)`
+                {
+                    auto die = op.isDotIdExp();
+                    if (die && die.ident == Id.ptr)
+                        die.noderef = true;
+                }
+
+                op = op.expressionSemantic(sc);
+                op = resolveProperties(sc, op);
+                if (op.hasSideEffect)
+                {
+                    const stc = op.isLvalue() ? STC.ref_ : 0;
+                    auto tmp = copyToTemp(stc, "__assertOp", op);
+                    tmp.dsymbolSemantic(sc);
+
+                    auto decl = new DeclarationExp(op.loc, tmp);
+                    temporariesPrefix = Expression.combine(temporariesPrefix, decl);
+
+                    op = new VarExp(op.loc, tmp);
+                    op = op.expressionSemantic(sc);
+                }
+                return op;
+            }
+
+            // if the assert condition is a mixin expression, try to compile it
+            if (auto ce = exp.e1.isCompileExp())
+            {
+                if (auto e1 = compileIt(ce))
+                    exp.e1 = e1;
+            }
+
+            Expressions* es;
+            Objects* tiargs;
+            Loc loc = exp.e1.loc;
+
             const tok = exp.e1.op;
             bool isEqualsCallExpression;
             if (tok == TOK.call)
             {
                 const callExp = cast(CallExp) exp.e1;
-                const callExpIdent = callExp.f.ident;
-                isEqualsCallExpression = callExpIdent == Id.__equals ||
-                                         callExpIdent == Id.eq;
+
+                // https://issues.dlang.org/show_bug.cgi?id=20331
+                // callExp.f may be null if the assert contains a call to
+                // a function pointer or literal
+                if (const callExpFunc = callExp.f)
+                {
+                    const callExpIdent = callExpFunc.ident;
+                    isEqualsCallExpression = callExpIdent == Id.__equals ||
+                                             callExpIdent == Id.eq;
+                }
             }
             if (tok == TOK.equal || tok == TOK.notEqual ||
                 tok == TOK.lessThan || tok == TOK.greaterThan ||
@@ -5794,23 +6056,13 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 tok == TOK.in_ ||
                 isEqualsCallExpression)
             {
-                if (!verifyHookExist(exp.loc, *sc, Id._d_assert_fail, "generating assert messages"))
-                    return setError();
-
-                auto es = new Expressions(2);
-                auto tiargs = new Objects(3);
-                Loc loc = exp.e1.loc;
+                es = new Expressions(2);
+                tiargs = new Objects(3);
 
                 if (isEqualsCallExpression)
                 {
                     auto callExp = cast(CallExp) exp.e1;
                     auto args = callExp.arguments;
-
-                    // template args
-                    static immutable compMsg = "==";
-                    Expression comp = new StringExp(loc, cast(char*) compMsg.ptr);
-                    comp = comp.expressionSemantic(sc);
-                    (*tiargs)[0] = comp;
 
                     // structs with opEquals get rewritten to a DotVarExp:
                     // a.opEquals(b)
@@ -5819,59 +6071,111 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                     {
                         auto dv = callExp.e1.isDotVarExp();
                         assert(dv);
-                        (*tiargs)[1] = dv.e1.type;
-                        (*tiargs)[2] = (*args)[0].type;
 
                         // runtime args
-                        (*es)[0] = dv.e1;
-                        (*es)[1] = (*args)[0];
+                        (*es)[0] = maybePromoteToTmp(dv.e1);
+                        (*es)[1] = maybePromoteToTmp((*args)[0]);
                     }
                     else
                     {
-                        (*tiargs)[1] = (*args)[0].type;
-                        (*tiargs)[2] = (*args)[1].type;
-
                         // runtime args
-                        (*es)[0] = (*args)[0];
-                        (*es)[1] = (*args)[1];
+                        (*es)[0] = maybePromoteToTmp((*args)[0]);
+                        (*es)[1] = maybePromoteToTmp((*args)[1]);
                     }
                 }
                 else
                 {
                     auto binExp = cast(EqualExp) exp.e1;
 
-                    // template args
-                    Expression comp = new StringExp(loc, cast(char*) Token.toChars(exp.e1.op));
-                    comp = comp.expressionSemantic(sc);
-                    (*tiargs)[0] = comp;
-                    (*tiargs)[1] = binExp.e1.type;
-                    (*tiargs)[2] = binExp.e2.type;
-
                     // runtime args
-                    (*es)[0] = binExp.e1;
-                    (*es)[1] = binExp.e2;
+                    (*es)[0] = maybePromoteToTmp(binExp.e1);
+                    (*es)[1] = maybePromoteToTmp(binExp.e2);
                 }
 
-                Expression __assertFail = new IdentifierExp(exp.loc, Id.empty);
-                auto assertFail = new DotIdExp(loc, __assertFail, Id.object);
+                // template args
+                Expression comp = new StringExp(loc, isEqualsCallExpression ? "==" : Token.toString(exp.e1.op));
+                comp = comp.expressionSemantic(sc);
+                (*tiargs)[0] = comp;
+                (*tiargs)[1] = (*es)[0].type;
+                (*tiargs)[2] = (*es)[1].type;
+            }
 
-                auto dt = new DotTemplateInstanceExp(loc, assertFail, Id._d_assert_fail, tiargs);
-                auto ec = CallExp.create(Loc.initial, dt, es);
-                exp.msg = ec;
+            // Format exp.e1 before any additional boolean conversion
+            // Ignore &&/|| because "assert(...) failed" is more informative than "false != true"
+            else if (tok != TOK.andAnd && tok != TOK.orOr)
+            {
+                es = new Expressions(1);
+                tiargs = new Objects(2);
+
+                if (auto ne = exp.e1.isNotExp())
+                {
+                    // Fetch the (potential non-bool) expression and fold
+                    // (n) negations into (n % 2) negations, e.g. !!a => a
+                    for (bool neg = true; ; neg = !neg)
+                    {
+                        if (auto ne2 = ne.e1.isNotExp())
+                            ne = ne2;
+                        else
+                        {
+                            (*es)[0] = maybePromoteToTmp(ne.e1);
+                            (*tiargs)[0] = new StringExp(loc, neg ? "!" : "");
+                            break;
+                        }
+                    }
+                }
+                else
+                {   // Simply format exp.e1
+                    (*es)[0] = maybePromoteToTmp(exp.e1);
+                    // No special treatment for other operators to avoid redundant template instantions
+                    (*tiargs)[0] = new StringExp(loc, "");
+                }
+
+                (*tiargs)[1] = (*es)[0].type;
+
+                // Passing __ctfe to auto ref infers ref and aborts compilation:
+                // "cannot modify compiler-generated variable __ctfe"
+                auto ve = (*es)[0].isVarExp();
+                if (ve && ve.var.ident == Id.ctfe)
+                {
+                    exp.msg = new StringExp(loc, "assert(__ctfe) failed!");
+                    goto LSkip;
+                }
             }
             else
             {
                 OutBuffer buf;
-                buf.printf("%s failed", assertExpMsg);
-                exp.msg = new StringExp(Loc.initial, buf.extractChars());
+                buf.printf("%s failed", exp.toChars());
+                exp.msg = new StringExp(Loc.initial, buf.extractSlice());
+                goto LSkip;
             }
+
+            Expression __assertFail = new IdentifierExp(exp.loc, Id.empty);
+            auto assertFail = new DotIdExp(loc, __assertFail, Id.object);
+
+            auto dt = new DotTemplateInstanceExp(loc, assertFail, Id._d_assert_fail, tiargs);
+            auto ec = CallExp.create(Loc.initial, dt, es);
+            exp.msg = ec;
         }
+
+        LSkip:
+        if (Expression ex = unaSemantic(exp, sc))
+        {
+            result = ex;
+            return;
+        }
+
+        exp.e1 = resolveProperties(sc, exp.e1);
+        // BUG: see if we can do compile time elimination of the Assert
+        exp.e1 = exp.e1.optimize(WANTvalue);
+        exp.e1 = exp.e1.toBoolean(sc);
+
         if (exp.msg)
         {
             exp.msg = expressionSemantic(exp.msg, sc);
             exp.msg = resolveProperties(sc, exp.msg);
             exp.msg = exp.msg.implicitCastTo(sc, Type.tchar.constOf().arrayOf());
             exp.msg = exp.msg.optimize(WANTvalue);
+            checkParamArgumentEscape(sc, null, null, exp.msg, true, false);
         }
 
         if (exp.e1.op == TOK.error)
@@ -5907,8 +6211,12 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 return;
             }
         }
+
         exp.type = Type.tvoid;
-        result = exp;
+
+        result = !temporariesPrefix
+            ? exp
+            : Expression.combine(temporariesPrefix, exp).expressionSemantic(sc);
     }
 
     override void visit(DotIdExp exp)
@@ -5985,18 +6293,28 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             {
                 RootObject o = (*tup.objects)[i];
                 Expression e;
+                Declaration var;
                 if (o.dyncast() == DYNCAST.expression)
                 {
                     e = cast(Expression)o;
-                    if (e.op == TOK.dSymbol)
-                    {
-                        Dsymbol s = (cast(DsymbolExp)e).s;
-                        e = new DotVarExp(exp.loc, ev, s.isDeclaration());
-                    }
+                    if (auto se = e.isDsymbolExp())
+                        var = se.s.isDeclaration();
+                    else if (auto ve = e.isVarExp())
+                        if (!ve.var.isFuncDeclaration())
+                            // Exempt functions for backwards compatibility reasons.
+                            // See: https://issues.dlang.org/show_bug.cgi?id=20470#c1
+                            var = ve.var;
                 }
                 else if (o.dyncast() == DYNCAST.dsymbol)
                 {
-                    e = new DsymbolExp(exp.loc, cast(Dsymbol)o);
+                    Dsymbol s = cast(Dsymbol) o;
+                    Declaration d = s.isDeclaration();
+                    if (!d || d.isFuncDeclaration())
+                        // Exempt functions for backwards compatibility reasons.
+                        // See: https://issues.dlang.org/show_bug.cgi?id=20470#c1
+                        e = new DsymbolExp(exp.loc, s);
+                    else
+                        var = d;
                 }
                 else if (o.dyncast() == DYNCAST.type)
                 {
@@ -6007,6 +6325,8 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                     exp.error("`%s` is not an expression", o.toChars());
                     return setError();
                 }
+                if (var)
+                    e = new DotVarExp(exp.loc, ev, var);
                 exps.push(e);
             }
 
@@ -6143,7 +6463,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         {
             if (auto v = expToVariable(e.e1))
             {
-                if (!checkAddressVar(sc, e, v))
+                if (!checkAddressVar(sc, e.e1, v))
                     return setError();
             }
         }
@@ -6272,6 +6592,50 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 }
             }
         }
+        /* https://issues.dlang.org/show_bug.cgi?id=809
+         *
+         * If the address of a lazy variable is taken,
+         * the expression is rewritten so that the type
+         * of it is the delegate type. This means that
+         * the symbol is not going to represent a call
+         * to the delegate anymore, but rather, the
+         * actual symbol.
+         */
+        if (auto ve = exp.e1.isVarExp())
+        {
+            if (ve.var.storage_class & STC.lazy_)
+            {
+                exp.e1 = exp.e1.expressionSemantic(sc);
+                exp.e1 = resolveProperties(sc, exp.e1);
+                if (auto callExp = exp.e1.isCallExp())
+                {
+                    if (callExp.e1.type.toBasetype().ty == Tdelegate)
+                    {
+                        /* https://issues.dlang.org/show_bug.cgi?id=20551
+                         *
+                         * Cannot take address of lazy parameter in @safe code
+                         * because it might end up being a pointer to undefined
+                         * memory.
+                         */
+                        if (sc.func && !sc.intypeof && !(sc.flags & SCOPE.debug_) && sc.func.setUnsafe())
+                        {
+                            exp.error("cannot take address of lazy parameter `%s` in `@safe` function `%s`",
+                                     ve.toChars(), sc.func.toChars());
+                            setError();
+                        }
+                        else
+                        {
+                            VarExp ve2 = callExp.e1.isVarExp();
+                            ve2.delegateWasExtracted = true;
+                            ve2.var.storage_class |= STC.scope_;
+                            result = ve2;
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+
         exp.e1 = exp.e1.toLvalue(sc, null);
         if (exp.e1.op == TOK.error)
         {
@@ -6338,7 +6702,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             {
                 if (VarDeclaration v = expToVariable(dve.e1))
                 {
-                    if (!checkAddressVar(sc, exp, v))
+                    if (!checkAddressVar(sc, exp.e1, v))
                         return setError();
                 }
             }
@@ -6349,7 +6713,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             VarDeclaration v = ve.var.isVarDeclaration();
             if (v)
             {
-                if (!checkAddressVar(sc, exp, v))
+                if (!checkAddressVar(sc, exp.e1, v))
                     return setError();
 
                 ve.checkPurity(sc, v);
@@ -6397,7 +6761,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                     }
                     if (sc.func && !sc.intypeof)
                     {
-                        if (sc.func.setUnsafe() && !(sc.flags & SCOPE.debug_))
+                        if (!(sc.flags & SCOPE.debug_) && sc.func.setUnsafe())
                         {
                             exp.error("`this` reference necessary to take address of member `%s` in `@safe` function `%s`", f.toChars(), sc.func.toChars());
                         }
@@ -6409,7 +6773,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         {
             if (VarDeclaration v = expToVariable(exp.e1))
             {
-                if (!checkAddressVar(sc, exp, v))
+                if (!checkAddressVar(sc, exp.e1, v))
                     return setError();
             }
         }
@@ -6419,7 +6783,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             if (ce.e1.type.ty == Tfunction)
             {
                 TypeFunction tf = cast(TypeFunction)ce.e1.type;
-                if (tf.isref && sc.func && !sc.intypeof && sc.func.setUnsafe() && !(sc.flags & SCOPE.debug_))
+                if (tf.isref && sc.func && !sc.intypeof && !(sc.flags & SCOPE.debug_) && sc.func.setUnsafe())
                 {
                     exp.error("cannot take address of `ref return` of `%s()` in `@safe` function `%s`",
                         ce.e1.toChars(), sc.func.toChars());
@@ -6435,7 +6799,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
              */
             if (VarDeclaration v = expToVariable(exp.e1))
             {
-                if (global.params.vsafe && !checkAddressVar(sc, exp, v))
+                if (global.params.vsafe && !checkAddressVar(sc, exp.e1, v))
                     return setError();
 
                 exp.e1.checkPurity(sc, v);
@@ -6720,48 +7084,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             if (tb.ty == Tstruct)
             {
                 ad = (cast(TypeStruct)tb).sym;
-                auto f = ad.aggDelete;
-                auto fd = ad.dtor;
-                if (!f)
-                {
-                    semanticTypeInfo(sc, tb);
-                    break;
-                }
-
-                /* Construct:
-                 *      ea = copy e1 to a tmp to do side effects only once
-                 *      eb = call destructor
-                 *      ec = call deallocator
-                 */
-                Expression ea = null;
-                Expression eb = null;
-                Expression ec = null;
-                VarDeclaration v = null;
-                if (fd && f)
-                {
-                    v = copyToTemp(0, "__tmpea", exp.e1);
-                    v.dsymbolSemantic(sc);
-                    ea = new DeclarationExp(exp.loc, v);
-                    ea.type = v.type;
-                }
-                if (fd)
-                {
-                    Expression e = ea ? new VarExp(exp.loc, v) : exp.e1;
-                    e = new DotVarExp(Loc.initial, e, fd, false);
-                    eb = new CallExp(exp.loc, e);
-                    eb = eb.expressionSemantic(sc);
-                }
-                if (f)
-                {
-                    Type tpv = Type.tvoid.pointerTo();
-                    Expression e = ea ? new VarExp(exp.loc, v) : exp.e1.castTo(sc, tpv);
-                    e = new CallExp(exp.loc, new VarExp(exp.loc, f, false), e);
-                    ec = e.expressionSemantic(sc);
-                }
-                ea = Expression.combine(ea, eb, ec);
-                assert(ea);
-                result = ea;
-                return;
+                semanticTypeInfo(sc, tb);
             }
             break;
 
@@ -6790,19 +7113,14 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 err |= exp.checkSafety(sc, ad.dtor);
                 err |= exp.checkNogc(sc, ad.dtor);
             }
-            if (ad.aggDelete && tb.ty != Tarray)
-            {
-                err |= exp.checkPurity(sc, ad.aggDelete);
-                err |= exp.checkSafety(sc, ad.aggDelete);
-                err |= exp.checkNogc(sc, ad.aggDelete);
-            }
             if (err)
                 return setError();
         }
 
         if (!sc.intypeof && sc.func &&
             !exp.isRAII &&
-            sc.func.setUnsafe() && !(sc.flags & SCOPE.debug_))
+            !(sc.flags & SCOPE.debug_) &&
+            sc.func.setUnsafe())
         {
             exp.error("`%s` is not `@safe` but is used in `@safe` function `%s`", exp.toChars(), sc.func.toChars());
             err = true;
@@ -6942,6 +7260,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         if (tob.ty == Tvector && t1b.ty != Tvector)
         {
             result = new VectorExp(exp.loc, exp.e1, exp.to);
+            result = result.expressionSemantic(sc);
             return;
         }
 
@@ -6954,9 +7273,9 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
         // Check for unsafe casts
         if (!sc.intypeof &&
+            !(sc.flags & SCOPE.debug_) &&
             !isSafeCast(ex, t1b, tob) &&
-            (!sc.func && sc.stc & STC.safe || sc.func && sc.func.setUnsafe()) &&
-            !(sc.flags & SCOPE.debug_))
+            (!sc.func && sc.stc & STC.safe || sc.func && sc.func.setUnsafe()))
         {
             exp.error("cast from `%s` to `%s` not allowed in safe code", exp.e1.type.toChars(), exp.to.toChars());
             return setError();
@@ -6985,8 +7304,8 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 auto tFrom = t1b.nextOf();
                 auto tTo = tob.nextOf();
 
-                // https://issues.dlang.org/show_bug.cgi?id=19954
-                if (exp.e1.op != TOK.string_ || tTo.ty == Tarray)
+                // https://issues.dlang.org/show_bug.cgi?id=20130
+                if (exp.e1.op != TOK.string_ || !ex.isStringExp)
                 {
                     const uint fromSize = cast(uint)tFrom.size();
                     const uint toSize = cast(uint)tTo.size();
@@ -7075,7 +7394,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         else if (exp.e1.type.ty == Tvoid)
             checkElem(exp.e1);
 
-        result = res ? new ErrorExp() : exp;
+        result = res ? ErrorExp.get() : exp;
     }
 
     override void visit(VectorArrayExp e)
@@ -7183,7 +7502,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 exp.error("need upper and lower bound to slice pointer");
                 return setError();
             }
-            if (sc.func && !sc.intypeof && sc.func.setUnsafe() && !(sc.flags & SCOPE.debug_))
+            if (sc.func && !sc.intypeof && !(sc.flags & SCOPE.debug_) && sc.func.setUnsafe())
             {
                 exp.error("pointer slicing not allowed in safe functions");
                 return setError();
@@ -7212,7 +7531,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                         }
                     }
 
-                    if (v && !checkAddressVar(sc, exp, v))
+                    if (v && !checkAddressVar(sc, exp.e1, v))
                         return setError();
                 }
             }
@@ -7438,7 +7757,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         else
             exp.error("cannot use `[]` operator on expression of type `%s`", exp.e1.type.toChars());
 
-        result = new ErrorExp();
+        result = ErrorExp.get();
     }
 
     override void visit(DotExp exp)
@@ -7469,7 +7788,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             result = e.expressionSemantic(sc);
             return;
         }
-        if (!exp.type)
+        if (!exp.type || exp.e1.op == TOK.this_)
             exp.type = exp.e2.type;
         result = exp;
     }
@@ -7500,7 +7819,9 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return setError();
 
         e.type = e.e2.type;
-        if (e.type !is Type.tvoid && !e.allowCommaExp && !e.isGenerated)
+        if (e.type is Type.tvoid)
+            discardValue(e.e1);
+        else if (!e.allowCommaExp && !e.isGenerated)
             e.error("Using the result of a comma expression is not allowed");
         result = e;
     }
@@ -7679,7 +8000,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             if (exp.e2.op == TOK.int64 && exp.e2.toInteger() == 0)
             {
             }
-            else if (sc.func && sc.func.setUnsafe() && !(sc.flags & SCOPE.debug_))
+            else if (sc.func && !(sc.flags & SCOPE.debug_) && sc.func.setUnsafe())
             {
                 exp.error("safe function `%s` cannot index pointer `%s`", sc.func.toPrettyChars(), exp.e1.toChars());
                 return setError();
@@ -7905,9 +8226,9 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
         // Rewrite as e1+=1 or e1-=1
         if (exp.op == TOK.prePlusPlus)
-            e = new AddAssignExp(exp.loc, exp.e1, new IntegerExp(exp.loc, 1, Type.tint32));
+            e = new AddAssignExp(exp.loc, exp.e1, IntegerExp.literal!1);
         else
-            e = new MinAssignExp(exp.loc, exp.e1, new IntegerExp(exp.loc, 1, Type.tint32));
+            e = new MinAssignExp(exp.loc, exp.e1, IntegerExp.literal!1);
         result = e.expressionSemantic(sc);
     }
 
@@ -7929,16 +8250,16 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         {
             // https://issues.dlang.org/show_bug.cgi?id=14606
             // Always use BlitExp for the special expression: (struct = 0)
-            return new IntegerExp(loc, 0, Type.tint32);
+            return IntegerExp.literal!0;
         }
 
         if (sd.isNested())
         {
             auto sle = new StructLiteralExp(loc, sd, null, t);
             if (!sd.fill(loc, sle.elements, true))
-                return new ErrorExp();
+                return ErrorExp.get();
             if (checkFrameAccess(loc, sc, sd, sle.elements.dim))
-                return new ErrorExp();
+                return ErrorExp.get();
 
             sle.type = t;
             return sle;
@@ -8115,6 +8436,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 {
                     return setResult(resolveUFCSProperties(sc, e1x, exp.e2));
                 }
+
                 e1x = e;
             }
             else if (auto die = e1x.isDotIdExp())
@@ -8204,7 +8526,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 }
                 if (dim == 0)
                 {
-                    e = new IntegerExp(exp.loc, 0, Type.tint32);
+                    e = IntegerExp.literal!0;
                     e = new CastExp(exp.loc, e, Type.tvoid); // avoid "has no effect" error
                     e = Expression.combine(tup1.e0, tup2.e0, e);
                 }
@@ -8273,7 +8595,8 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         Lnomatch:
         }
 
-        exp.e1.checkSharedAccess(sc);
+        if (exp.op == TOK.assign)  // skip TOK.blit and TOK.construct, which are initializations
+            exp.e1.checkSharedAccess(sc);
 
         /* Inside constructor, if this is the first assignment of object field,
          * rewrite this to initializing the field.
@@ -8310,13 +8633,13 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         else if (exp.op == TOK.construct && exp.e1.op == TOK.variable &&
                  (cast(VarExp)exp.e1).var.storage_class & (STC.out_ | STC.ref_))
         {
-            exp.memset |= MemorySet.referenceInit;
+            exp.memset = MemorySet.referenceInit;
         }
 
         /* If it is an assignment from a 'foreign' type,
          * check for operator overloading.
          */
-        if (exp.memset & MemorySet.referenceInit)
+        if (exp.memset == MemorySet.referenceInit)
         {
             // If this is an initialization of a reference,
             // do nothing
@@ -8376,7 +8699,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                         dvx.e1 = e1x;
                         auto cx = cast(CallExp)ce.copy();
                         cx.e1 = dvx;
-                        if (global.params.vsafe && checkConstructorEscape(sc, cx, false))
+                        if (checkConstructorEscape(sc, cx, false))
                             return setError();
 
                         Expression e0;
@@ -8579,7 +8902,15 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                      *          ? __aatmp[__aakey].opAssign(__aaval)
                      *          : ConstructExp(__aatmp[__aakey], __aaval));
                      */
-                    IndexExp ie = cast(IndexExp)e1x;
+                    // ensure we keep the expr modifiable
+                    Expression esetting = (cast(IndexExp)e1x).markSettingAAElem();
+                    if (esetting.op == TOK.error)
+                    {
+                        result = esetting;
+                        return;
+                    }
+                    assert(esetting.op == TOK.index);
+                    IndexExp ie = cast(IndexExp) esetting;
                     Type t2 = e2x.type.toBasetype();
 
                     Expression e0 = null;
@@ -8731,8 +9062,41 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 if (exp.op != TOK.assign)
                 {
                     // If multidimensional static array, treat as one large array
-                    const dim = t1.numberOfElems(exp.loc);
-                    e1x.type = t1.baseElemOf().sarrayOf(dim);
+                    //
+                    // Find the appropriate array type depending on the assignment, e.g.
+                    // int[3] = int => int[3]
+                    // int[3][2] = int => int[6]
+                    // int[3][2] = int[] => int[3][2]
+                    // int[3][2][4] + int => int[24]
+                    // int[3][2][4] + int[] => int[3][8]
+                    ulong dim = t1.isTypeSArray().dim.toUInteger();
+                    auto type = t1.nextOf();
+
+                    for (TypeSArray tsa; (tsa = type.isTypeSArray()) !is null; )
+                    {
+                        import core.checkedint : mulu;
+
+                        // Accumulate skipped dimensions
+                        bool overflow = false;
+                        dim = mulu(dim, tsa.dim.toUInteger(), overflow);
+                        if (overflow || dim >= uint.max)
+                        {
+                            // dym exceeds maximum array size
+                            exp.error("static array `%s` size overflowed to %llu",
+                                        e1x.type.toChars(), cast(ulong) dim);
+                            return setError();
+                        }
+
+                        // Move to the element type
+                        type = tsa.nextOf().toBasetype();
+
+                        // Rewrite ex1 as a static array if a matching type was found
+                        if (e2x.implicitConvTo(type) > MATCH.nomatch)
+                        {
+                            e1x.type = type.sarrayOf(dim);
+                            break;
+                        }
+                    }
                 }
                 auto sle = new SliceExp(e1x.loc, e1x, null, null);
                 sle.arrayop = true;
@@ -8779,17 +9143,17 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             if (global.params.tracegc)
             {
                 auto funcname = (sc.callsc && sc.callsc.func) ? sc.callsc.func.toPrettyChars() : sc.func.toPrettyChars();
-                arguments.push(new StringExp(exp.loc, cast(char*)exp.loc.filename));
+                arguments.push(new StringExp(exp.loc, exp.loc.filename.toDString()));
                 arguments.push(new IntegerExp(exp.loc, exp.loc.linnum, Type.tint32));
-                arguments.push(new StringExp(exp.loc, cast(char*)funcname));
+                arguments.push(new StringExp(exp.loc, funcname.toDString()));
             }
             arguments.push(ale.e1);
             arguments.push(exp.e2);
 
             Expression ce = new CallExp(ale.loc, id, arguments);
             auto res = ce.expressionSemantic(sc);
-            if (global.params.verbose)
-                message("lowered   %s =>\n          %s", exp.toChars(), res.toChars());
+            // if (global.params.verbose)
+            //     message("lowered   %s =>\n          %s", exp.toChars(), res.toChars());
             return setResult(res);
         }
         else if (auto se = exp.e1.isSliceExp())
@@ -8809,7 +9173,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             {
                 exp.error("slice `%s` is not mutable, struct `%s` has immutable members",
                     exp.e1.toChars(), tn.baseElemOf().toChars());
-                result = new ErrorExp();
+                result = ErrorExp.get();
                 return;
             }
 
@@ -8832,7 +9196,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 {
                     exp.error("array `%s` is not mutable, struct `%s` has immutable members",
                         exp.e1.toChars(), tn.baseElemOf().toChars());
-                    result = new ErrorExp();
+                    result = ErrorExp.get();
                     return;
                 }
             }
@@ -8876,7 +9240,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         {
             // Check for block assignment. If it is of type void[], void[][], etc,
             // '= null' is the only allowable block assignment (Bug 7493)
-            exp.memset |= MemorySet.blockAssign;    // make it easy for back end to tell what this is
+            exp.memset = MemorySet.blockAssign;    // make it easy for back end to tell what this is
             e2x = e2x.implicitCastTo(sc, t1.nextOf());
             if (exp.op != TOK.blit && e2x.isLvalue() && exp.e1.checkPostblit(sc, t1.nextOf()))
                 return setError();
@@ -8974,7 +9338,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             }
             if (t1n.toBasetype.ty == Tvoid && t2n.toBasetype.ty == Tvoid)
             {
-                if (!sc.intypeof && sc.func && sc.func.setUnsafe() && !(sc.flags & SCOPE.debug_))
+                if (!sc.intypeof && sc.func && !(sc.flags & SCOPE.debug_) && sc.func.setUnsafe())
                 {
                     exp.error("cannot copy `void[]` to `void[]` in `@safe` code");
                     return setError();
@@ -9036,7 +9400,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         if ((t2.ty == Tarray || t2.ty == Tsarray) && isArrayOpValid(exp.e2))
         {
             // Look for valid array operations
-            if (!(exp.memset & MemorySet.blockAssign) &&
+            if (exp.memset != MemorySet.blockAssign &&
                 exp.e1.op == TOK.slice &&
                 (isUnaArrayOp(exp.e2.op) || isBinArrayOp(exp.e2.op)))
             {
@@ -9050,7 +9414,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
             // Drop invalid array operations in e2
             //  d = a[] + b[], d = (a[] + b[])[0..2], etc
-            if (checkNonAssignmentArrayOp(exp.e2, !(exp.memset & MemorySet.blockAssign) && exp.op == TOK.assign))
+            if (checkNonAssignmentArrayOp(exp.e2, exp.memset != MemorySet.blockAssign && exp.op == TOK.assign))
                 return setError();
 
             // Remains valid array assignments
@@ -9522,7 +9886,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             else
             {
                 exp.error("can't subtract `%s` from pointer", t2.toChars());
-                e = new ErrorExp();
+                e = ErrorExp.get();
             }
             result = e;
             return;
@@ -10092,40 +10456,10 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return;
         }
 
-        // For built-in numeric types, there are several cases.
-        // TODO: backend support, especially for  e1 ^^ 2.
-
         // First, attempt to fold the expression.
         e = exp.optimize(WANTvalue);
         if (e.op != TOK.pow)
         {
-            e = e.expressionSemantic(sc);
-            result = e;
-            return;
-        }
-
-        // Determine if we're raising to an integer power.
-        sinteger_t intpow = 0;
-        if (exp.e2.op == TOK.int64 && (cast(sinteger_t)exp.e2.toInteger() == 2 || cast(sinteger_t)exp.e2.toInteger() == 3))
-            intpow = exp.e2.toInteger();
-        else if (exp.e2.op == TOK.float64 && (exp.e2.toReal() == real_t(cast(sinteger_t)exp.e2.toReal())))
-            intpow = cast(sinteger_t)exp.e2.toReal();
-
-        // Deal with x^^2, x^^3 immediately, since they are of practical importance.
-        if (intpow == 2 || intpow == 3)
-        {
-            // Replace x^^2 with (tmp = x, tmp*tmp)
-            // Replace x^^3 with (tmp = x, tmp*tmp*tmp)
-            auto tmp = copyToTemp(0, "__powtmp", exp.e1);
-            Expression de = new DeclarationExp(exp.loc, tmp);
-            Expression ve = new VarExp(exp.loc, tmp);
-
-            /* Note that we're reusing ve. This should be ok.
-             */
-            Expression me = new MulExp(exp.loc, ve, ve);
-            if (intpow == 3)
-                me = new MulExp(exp.loc, me, ve);
-            e = new CommaExp(exp.loc, de, me);
             e = e.expressionSemantic(sc);
             result = e;
             return;
@@ -10141,7 +10475,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
         if (exp.e2.op == TOK.float64 && exp.e2.toReal() == CTFloat.half)
         {
-            // Replace e1 ^^ 0.5 with .std.math.sqrt(x)
+            // Replace e1 ^^ 0.5 with .std.math.sqrt(e1)
             e = new CallExp(exp.loc, new DotIdExp(exp.loc, e, Id._sqrt), exp.e1);
         }
         else
@@ -10430,6 +10764,11 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
     override void visit(LogicalExp exp)
     {
+        static if (LOGSEMANTIC)
+        {
+            printf("LogicalExp::semantic() %s\n", exp.toChars());
+        }
+
         if (exp.type)
         {
             result = exp;
@@ -10454,7 +10793,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             e1x = e1x.optimize(WANTvalue);
             if (e1x.isBool(exp.op == TOK.orOr))
             {
-                result = new IntegerExp(exp.loc, exp.op == TOK.orOr, Type.tbool);
+                result = IntegerExp.createBool(exp.op == TOK.orOr);
                 return;
             }
         }
@@ -10544,7 +10883,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             }
             if (e.op == TOK.call)
             {
-                e = new CmpExp(cmpop, exp.loc, e, new IntegerExp(exp.loc, 0, Type.tint32));
+                e = new CmpExp(cmpop, exp.loc, e, IntegerExp.literal!0);
                 e = e.expressionSemantic(sc);
             }
             result = e;
@@ -10719,6 +11058,37 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         }
         if (exp.e1.op == TOK.type || exp.e2.op == TOK.type)
         {
+            /* https://issues.dlang.org/show_bug.cgi?id=12520
+             * empty tuples are represented as types so special cases are added
+             * so that they can be compared for equality with tuples of values.
+             */
+            static auto extractTypeTupAndExpTup(Expression e)
+            {
+                static struct Result { bool ttEmpty; bool te; }
+                auto tt = e.op == TOK.type ? e.isTypeExp().type.isTypeTuple() : null;
+                return Result(tt && (!tt.arguments || !tt.arguments.dim), e.isTupleExp() !is null);
+            }
+            auto tups1 = extractTypeTupAndExpTup(exp.e1);
+            auto tups2 = extractTypeTupAndExpTup(exp.e2);
+            // AliasSeq!() == AliasSeq!(<at least a value>)
+            if (tups1.ttEmpty && tups2.te)
+            {
+                result = IntegerExp.createBool(exp.op != TOK.equal);
+                return;
+            }
+            // AliasSeq!(<at least a value>) == AliasSeq!()
+            else if (tups1.te && tups2.ttEmpty)
+            {
+                result = IntegerExp.createBool(exp.op != TOK.equal);
+                return;
+            }
+            // AliasSeq!() == AliasSeq!()
+            else if (tups1.ttEmpty && tups2.ttEmpty)
+            {
+                result = IntegerExp.createBool(exp.op == TOK.equal);
+                return;
+            }
+            // otherwise, two types are really not comparable
             result = exp.incompatibleTypes();
             return;
         }
@@ -10746,7 +11116,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 if (ve1.var == ve2.var)
                 {
                     // They are the same, result is 'true' for ==, 'false' for !=
-                    result = new IntegerExp(exp.loc, (exp.op == TOK.equal), Type.tbool);
+                    result = IntegerExp.createBool(exp.op == TOK.equal);
                     return;
                 }
             }
@@ -10755,12 +11125,13 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         Type t1 = exp.e1.type.toBasetype();
         Type t2 = exp.e2.type.toBasetype();
 
-        bool needsDirectEq(Type t1, Type t2)
+        // Indicates whether the comparison of the 2 specified array types
+        // requires an object.__equals() lowering.
+        static bool needsDirectEq(Type t1, Type t2, Scope* sc)
         {
             Type t1n = t1.nextOf().toBasetype();
             Type t2n = t2.nextOf().toBasetype();
-            if (((t1n.ty == Tchar || t1n.ty == Twchar || t1n.ty == Tdchar) &&
-                 (t2n.ty == Tchar || t2n.ty == Twchar || t2n.ty == Tdchar)) ||
+            if ((t1n.ty.isSomeChar && t2n.ty.isSomeChar) ||
                 (t1n.ty == Tvoid || t2n.ty == Tvoid))
             {
                 return false;
@@ -10771,13 +11142,16 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             Type t = t1n;
             while (t.toBasetype().nextOf())
                 t = t.nextOf().toBasetype();
-            if (t.ty != Tstruct)
-                return false;
+            if (auto ts = t.isTypeStruct())
+            {
+                // semanticTypeInfo() makes sure hasIdentityEquals has been computed
+                if (global.params.useTypeInfo && Type.dtypeinfo)
+                    semanticTypeInfo(sc, ts);
 
-            if (global.params.useTypeInfo && Type.dtypeinfo)
-                semanticTypeInfo(sc, t);
+                return ts.sym.hasIdentityEquals; // has custom opEquals
+            }
 
-            return (cast(TypeStruct)t).sym.hasIdentityEquals;
+            return false;
         }
 
         if (auto e = exp.op_overload(sc))
@@ -10787,7 +11161,11 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         }
 
 
-        if (!(t1.ty == Tarray && t2.ty == Tarray && needsDirectEq(t1, t2)))
+        const isArrayComparison = (t1.ty == Tarray || t1.ty == Tsarray) &&
+                                  (t2.ty == Tarray || t2.ty == Tsarray);
+        const needsArrayLowering = isArrayComparison && needsDirectEq(t1, t2, sc);
+
+        if (!needsArrayLowering)
         {
             if (auto e = typeCombine(exp, sc))
             {
@@ -10803,26 +11181,20 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
         exp.type = Type.tbool;
 
-        // Special handling for array comparisons
-        if (!(t1.ty == Tarray && t2.ty == Tarray && needsDirectEq(t1, t2)))
+        if (!isArrayComparison)
         {
-            if (!arrayTypeCompatible(exp.loc, exp.e1.type, exp.e2.type))
+            if (exp.e1.type != exp.e2.type && exp.e1.type.isfloating() && exp.e2.type.isfloating())
             {
-                if (exp.e1.type != exp.e2.type && exp.e1.type.isfloating() && exp.e2.type.isfloating())
-                {
-                    // Cast both to complex
-                    exp.e1 = exp.e1.castTo(sc, Type.tcomplex80);
-                    exp.e2 = exp.e2.castTo(sc, Type.tcomplex80);
-                }
+                // Cast both to complex
+                exp.e1 = exp.e1.castTo(sc, Type.tcomplex80);
+                exp.e2 = exp.e2.castTo(sc, Type.tcomplex80);
             }
         }
 
-        if (t1.ty == Tarray && t2.ty == Tarray)
+        // lower some array comparisons to object.__equals(e1, e2)
+        if (needsArrayLowering || (t1.ty == Tarray && t2.ty == Tarray))
         {
-            //printf("Lowering to __equals %s %s\n", e1.toChars(), e2.toChars());
-
-            // For e1 and e2 of struct type, lowers e1 == e2 to object.__equals(e1, e2)
-            // and e1 != e2 to !(object.__equals(e1, e2)).
+            //printf("Lowering to __equals %s %s\n", exp.e1.toChars(), exp.e2.toChars());
 
             if (!verifyHookExist(exp.loc, *sc, Id.__equals, "equal checks on arrays"))
                 return setError();
@@ -10841,7 +11213,13 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             {
                 __equals = new NotExp(exp.loc, __equals);
             }
-            __equals = __equals.expressionSemantic(sc);
+            __equals = __equals.trySemantic(sc); // for better error message
+            if (!__equals)
+            {
+                exp.error("incompatible types for array comparison: `%s` and `%s`",
+                          exp.e1.type.toChars(), exp.e2.type.toChars());
+                __equals = ErrorExp.get();
+            }
 
             result = __equals;
             return;
@@ -11227,13 +11605,18 @@ Expression semanticX(DotIdExp exp, Scope* sc)
                 {
                     if (f.checkForwardRef(exp.loc))
                     {
-                        return new ErrorExp();
+                        return ErrorExp.get();
+                    }
+                    if (f.flags & (FUNCFLAG.purityInprocess | FUNCFLAG.safetyInprocess |
+                                   FUNCFLAG.nothrowInprocess | FUNCFLAG.nogcInprocess))
+                    {
+                        f.error(exp.loc, "cannot retrieve its `.mangleof` while inferring attributes");
+                        return ErrorExp.get();
                     }
                 }
                 OutBuffer buf;
                 mangleToBuffer(ds, &buf);
-                const s = buf.peekSlice();
-                Expression e = new StringExp(exp.loc, buf.extractChars(), s.length);
+                Expression e = new StringExp(exp.loc, buf.extractSlice());
                 e = e.expressionSemantic(sc);
                 return e;
             }
@@ -11286,12 +11669,12 @@ Expression semanticX(DotIdExp exp, Scope* sc)
     if ((exp.e1.op == TOK.dotTemplateDeclaration || exp.e1.op == TOK.template_) && exp.ident != Id.stringof)
     {
         exp.error("template `%s` does not have property `%s`", exp.e1.toChars(), exp.ident.toChars());
-        return new ErrorExp();
+        return ErrorExp.get();
     }
     if (!exp.e1.type)
     {
         exp.error("expression `%s` does not have property `%s`", exp.e1.toChars(), exp.ident.toChars());
-        return new ErrorExp();
+        return ErrorExp.get();
     }
 
     return exp;
@@ -11370,7 +11753,7 @@ Expression semanticY(DotIdExp exp, Scope* sc, int flag)
         if (s)
         {
             auto p = s.isPackage();
-            if (p && checkAccess(exp.loc, sc, p))
+            if (p && checkAccess(sc, p))
             {
                 s = null;
             }
@@ -11399,10 +11782,10 @@ Expression semanticY(DotIdExp exp, Scope* sc, int flag)
                         exp.error("circular reference to %s `%s`", v.kind(), v.toPrettyChars());
                     else
                         exp.error("forward reference to %s `%s`", v.kind(), v.toPrettyChars());
-                    return new ErrorExp();
+                    return ErrorExp.get();
                 }
                 if (v.type.ty == Terror)
-                    return new ErrorExp();
+                    return ErrorExp.get();
 
                 if ((v.storage_class & STC.manifest) && v._init && !exp.wantsym)
                 {
@@ -11413,7 +11796,7 @@ Expression semanticY(DotIdExp exp, Scope* sc, int flag)
                     if (v.inuse)
                     {
                         error(exp.loc, "circular initialization of %s `%s`", v.kind(), v.toPrettyChars());
-                        return new ErrorExp();
+                        return ErrorExp.get();
                     }
                     e = v.expandInitializer(exp.loc);
                     v.inuse++;
@@ -11447,7 +11830,7 @@ Expression semanticY(DotIdExp exp, Scope* sc, int flag)
             {
                 //printf("it's a function\n");
                 if (!f.functionSemantic())
-                    return new ErrorExp();
+                    return ErrorExp.get();
                 if (f.needThis())
                 {
                     if (!eleft)
@@ -11537,8 +11920,7 @@ Expression semanticY(DotIdExp exp, Scope* sc, int flag)
         }
         else if (exp.ident == Id.stringof)
         {
-            const p = ie.toString();
-            e = new StringExp(exp.loc, cast(char*)p.ptr, p.length);
+            e = new StringExp(exp.loc, ie.toString());
             e = e.expressionSemantic(sc);
             return e;
         }
@@ -11549,7 +11931,7 @@ Expression semanticY(DotIdExp exp, Scope* sc, int flag)
         if (flag)
             return null;
         s = ie.sds.search_correct(exp.ident);
-        if (s)
+        if (s && symbolIsVisible(sc, s))
         {
             if (s.isPackage())
                 exp.error("undefined identifier `%s` in %s `%s`, perhaps add `static import %s;`", exp.ident.toChars(), ie.sds.kind(), ie.sds.toPrettyChars(), s.toPrettyChars());
@@ -11558,7 +11940,7 @@ Expression semanticY(DotIdExp exp, Scope* sc, int flag)
         }
         else
             exp.error("undefined identifier `%s` in %s `%s`", exp.ident.toChars(), ie.sds.kind(), ie.sds.toPrettyChars());
-        return new ErrorExp();
+        return ErrorExp.get();
     }
     else if (t1b.ty == Tpointer && exp.e1.type.ty != Tenum && exp.ident != Id._init && exp.ident != Id.__sizeof && exp.ident != Id.__xalignof && exp.ident != Id.offsetof && exp.ident != Id._mangleof && exp.ident != Id.stringof)
     {
@@ -11603,10 +11985,20 @@ Expression semanticY(DotTemplateInstanceExp exp, Scope* sc, int flag)
 
     static Expression errorExp()
     {
-        return new ErrorExp();
+        return ErrorExp.get();
     }
 
-    auto die = new DotIdExp(exp.loc, exp.e1, exp.ti.name);
+    Expression e1 = exp.e1;
+
+    if (exp.ti.tempdecl && exp.ti.tempdecl.parent && exp.ti.tempdecl.parent.isTemplateMixin())
+    {
+        // if 'ti.tempdecl' happens to be found in a mixin template don't lose that info
+        // and do the symbol search in that context (Issue: 19476)
+        auto tm = cast(TemplateMixin)exp.ti.tempdecl.parent;
+        e1 = new DotExp(exp.e1.loc, exp.e1, new ScopeExp(tm.loc, tm));
+    }
+
+    auto die = new DotIdExp(exp.loc, e1, exp.ti.name);
 
     Expression e = die.semanticX(sc);
     if (e == die)
@@ -11834,22 +12226,22 @@ bool checkSharedAccess(Expression e, Scope* sc)
 
 
 /****************************************************
- * Determine if `exp`, which takes the address of `v`, can do so safely.
+ * Determine if `exp`, which gets its address taken, can do so safely.
  * Params:
  *      sc = context
- *      exp = expression that takes the address of `v`
+ *      exp = expression having its address taken
  *      v = the variable getting its address taken
  * Returns:
  *      `true` if ok, `false` for error
  */
-private bool checkAddressVar(Scope* sc, UnaExp exp, VarDeclaration v)
+bool checkAddressVar(Scope* sc, Expression exp, VarDeclaration v)
 {
     //printf("checkAddressVar(exp: %s, v: %s)\n", exp.toChars(), v.toChars());
     if (v)
     {
         if (!v.canTakeAddressOf())
         {
-            exp.error("cannot take address of `%s`", exp.e1.toChars());
+            exp.error("cannot take address of `%s`", exp.toChars());
             return false;
         }
         if (sc.func && !sc.intypeof && !v.isDataseg())
@@ -11860,13 +12252,15 @@ private bool checkAddressVar(Scope* sc, UnaExp exp, VarDeclaration v)
                 // Taking the address of v means it cannot be set to 'scope' later
                 v.storage_class &= ~STC.maybescope;
                 v.doNotInferScope = true;
-                if (v.storage_class & STC.scope_ && sc.func.setUnsafe() && !(sc.flags & SCOPE.debug_))
+                if (exp.type.hasPointers() && v.storage_class & STC.scope_ &&
+                    !(sc.flags & SCOPE.debug_) && sc.func.setUnsafe())
                 {
                     exp.error("cannot take address of `scope` %s `%s` in `@safe` function `%s`", p, v.toChars(), sc.func.toChars());
                     return false;
                 }
             }
-            else if (sc.func.setUnsafe() && !(sc.flags & SCOPE.debug_))
+            else if (!(sc.flags & SCOPE.debug_) &&
+                     sc.func.setUnsafe())
             {
                 exp.error("cannot take address of %s `%s` in `@safe` function `%s`", p, v.toChars(), sc.func.toChars());
                 return false;
@@ -11931,9 +12325,9 @@ Expression getThisSkipNestedFuncs(const ref Loc loc, Scope* sc, Dsymbol s, Aggre
                 if (n > 1)
                     e1 = e1.expressionSemantic(sc);
                 e1 = new PtrExp(loc, e1);
-                uint i = followInstantiationContext(f, ad);
+                uint i = f.followInstantiationContext(ad);
                 e1 = new IndexExp(loc, e1, new IntegerExp(i));
-                s = toParentP(f, ad);
+                s = f.toParentP(ad);
                 continue;
             }
         }
@@ -11942,7 +12336,7 @@ Expression getThisSkipNestedFuncs(const ref Loc loc, Scope* sc, Dsymbol s, Aggre
             if (flag)
                 return null;
             e1.error("need `this` of type `%s` to access member `%s` from static function `%s`", ad.toChars(), var.toChars(), f.toChars());
-            e1 = new ErrorExp();
+            e1 = ErrorExp.get();
             return e1;
         }
         s = s.toParent2();

@@ -1,11 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Contains the `Id` struct with a list of predefined symbols the compiler knows about.
  *
- * This module contains the `Id` struct with a list of predefined symbols the
- * compiler knows about.
- *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/id.d, _id.d)
@@ -23,7 +19,7 @@ import dmd.tokens;
  *
  * All static fields in this struct represents a specific predefined symbol.
  */
-struct Id
+extern (C++) struct Id
 {
     static __gshared:
 
@@ -46,7 +42,7 @@ struct Id
      * This can be used to restore the state set by `initialize` to its original
      * state.
      */
-    void deinitialize()
+    extern (D) void deinitialize()
     {
         mixin(msgtable.generate(&deinitializer));
     }
@@ -133,6 +129,8 @@ immutable Msgtable[] msgtable =
     { "_assert", "assert" },
     { "_unittest", "unittest" },
     { "_body", "body" },
+    { "printf" },
+    { "scanf" },
 
     { "TypeInfo" },
     { "TypeInfo_Class" },
@@ -203,6 +201,7 @@ immutable Msgtable[] msgtable =
     { "future", "__future" },
     { "property" },
     { "nogc" },
+    { "live" },
     { "safe" },
     { "trusted" },
     { "system" },
@@ -307,7 +306,6 @@ immutable Msgtable[] msgtable =
     { "monitorexit", "_d_monitorexit" },
     { "criticalenter", "_d_criticalenter" },
     { "criticalexit", "_d_criticalexit" },
-    { "__ArrayEq" },
     { "__ArrayPostblit" },
     { "__ArrayDtor" },
     { "_d_delThrowable" },
@@ -336,7 +334,7 @@ immutable Msgtable[] msgtable =
     { "main" },
     { "WinMain" },
     { "DllMain" },
-    { "entrypoint", "__entrypoint" },
+    { "CMain", "_d_cmain" },
     { "rt_init" },
     { "__cmp" },
     { "__equals"},
@@ -349,6 +347,8 @@ immutable Msgtable[] msgtable =
     { "_d_arraysetlengthTTrace"},
 
     // varargs implementation
+    { "stdc" },
+    { "stdarg" },
     { "va_start" },
 
     // Builtin functions
@@ -357,22 +357,59 @@ immutable Msgtable[] msgtable =
     { "etc" },
     { "attribute" },
     { "math" },
+    { "trig" },
     { "sin" },
     { "cos" },
     { "tan" },
     { "_sqrt", "sqrt" },
     { "_pow", "pow" },
     { "atan2" },
+    { "rint" },
+    { "ldexp" },
     { "rndtol" },
+    { "exp" },
     { "expm1" },
     { "exp2" },
     { "yl2x" },
     { "yl2xp1" },
+    { "log" },
+    { "log2" },
+    { "log10" },
+    { "round" },
+    { "floor" },
+    { "trunc" },
+    { "fmax" },
+    { "fmin" },
+    { "fma" },
+    { "isnan" },
+    { "isInfinity" },
+    { "isfinite" },
+    { "ceil" },
+    { "copysign" },
     { "fabs" },
+    { "toPrec" },
+    { "simd" },
+    { "__prefetch"},
+    { "__simd_sto"},
+    { "__simd"},
+    { "__simd_ib"},
     { "bitop" },
     { "bsf" },
     { "bsr" },
+    { "btc" },
+    { "btr" },
+    { "bts" },
     { "bswap" },
+    { "volatile"},
+    { "volatileLoad"},
+    { "volatileStore"},
+    { "_popcnt"},
+    { "inp"},
+    { "inpl"},
+    { "inpw"},
+    { "outp"},
+    { "outpl"},
+    { "outpw"},
 
     // Traits
     { "isAbstractClass" },
@@ -405,6 +442,7 @@ immutable Msgtable[] msgtable =
     { "identifier" },
     { "getProtection" },
     { "parent" },
+    { "child" },
     { "getMember" },
     { "getOverloads" },
     { "getVirtualFunctions" },
@@ -428,6 +466,9 @@ immutable Msgtable[] msgtable =
     { "isZeroInit" },
     { "getTargetInfo" },
     { "getLocation" },
+    { "hasPostblit" },
+    { "hasCopyConstructor" },
+    { "isCopyable" },
 
     // For C++ mangling
     { "allocator" },
@@ -438,6 +479,7 @@ immutable Msgtable[] msgtable =
     { "char_traits" },
 
     // Compiler recognized UDA's
+    { "udaGNUAbiTag", "gnuAbiTag" },
     { "udaSelector", "selector" },
 
     // C names, for undefined identifier error messages

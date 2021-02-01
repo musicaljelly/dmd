@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Define the implicit `opEquals`, `opAssign`, post blit, copy constructor and destructor for structs.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/clone.d, _clone.d)
@@ -316,7 +315,7 @@ FuncDeclaration buildOpAssign(StructDeclaration sd, Scope* sc)
         auto idswap = Identifier.generateId("__swap");
         auto swap = new VarDeclaration(loc, sd.type, idswap, new VoidInitializer(loc));
         swap.storage_class |= STC.nodtor | STC.temp | STC.ctfe;
-        if (tdtor.isscope)
+        if (tdtor.isScopeQual)
             swap.storage_class |= STC.scope_;
         auto e1 = new DeclarationExp(loc, swap);
 
@@ -332,7 +331,10 @@ FuncDeclaration buildOpAssign(StructDeclaration sd, Scope* sc)
     }
     /* postblit was called when the value was passed to opAssign, we just need to blit the result */
     else if (sd.postblit)
+    {
         e = new BlitExp(loc, new ThisExp(loc), new IdentifierExp(loc, Id.p));
+        sd.hasBlitAssign = true;
+    }
     else
     {
         /* Do memberwise copy.
@@ -423,18 +425,18 @@ bool needOpEquals(StructDeclaration sd)
             if (ts.sym.aliasthis) // https://issues.dlang.org/show_bug.cgi?id=14806
                 goto Lneed;
         }
-        if (tv.isfloating())
+        if (tvbase.isfloating())
         {
             // This is necessray for:
             //  1. comparison of +0.0 and -0.0 should be true.
             //  2. comparison of NANs should be false always.
             goto Lneed;
         }
-        if (tv.ty == Tarray)
+        if (tvbase.ty == Tarray)
             goto Lneed;
-        if (tv.ty == Taarray)
+        if (tvbase.ty == Taarray)
             goto Lneed;
-        if (tv.ty == Tclass)
+        if (tvbase.ty == Tclass)
             goto Lneed;
     }
 Ldontneed:
@@ -744,18 +746,18 @@ private bool needToHash(StructDeclaration sd)
             if (ts.sym.aliasthis) // https://issues.dlang.org/show_bug.cgi?id=14948
                 goto Lneed;
         }
-        if (tv.isfloating())
+        if (tvbase.isfloating())
         {
             /* This is necessary because comparison of +0.0 and -0.0 should be true,
              * i.e. not a bit compare.
              */
             goto Lneed;
         }
-        if (tv.ty == Tarray)
+        if (tvbase.ty == Tarray)
             goto Lneed;
-        if (tv.ty == Taarray)
+        if (tvbase.ty == Taarray)
             goto Lneed;
-        if (tv.ty == Tclass)
+        if (tvbase.ty == Tclass)
             goto Lneed;
     }
 Ldontneed:
@@ -806,8 +808,8 @@ FuncDeclaration buildXtoHash(StructDeclaration sd, Scope* sc)
      * If sd is a nested struct, and if it's nested in a class, the calculated
      * hash value will also contain the result of parent class's toHash().
      */
-    const(char)* code =
-        "size_t h = 0;" ~
+    const(char)[] code =
+        ".object.size_t h = 0;" ~
         "foreach (i, T; typeof(p.tupleof))" ~
         // workaround https://issues.dlang.org/show_bug.cgi?id=17968
         "    static if(is(T* : const(.object.Object)*)) " ~
@@ -815,7 +817,7 @@ FuncDeclaration buildXtoHash(StructDeclaration sd, Scope* sc)
         "    else " ~
         "        h = h * 33 + typeid(T).getHash(cast(const void*)&p.tupleof[i]);" ~
         "return h;";
-    fop.fbody = new CompileStatement(loc, new StringExp(loc, cast(char*)code));
+    fop.fbody = new CompileStatement(loc, new StringExp(loc, code));
     Scope* sc2 = sc.push();
     sc2.stc = 0;
     sc2.linkage = LINK.d;
@@ -849,6 +851,7 @@ DtorDeclaration buildDtor(AggregateDeclaration ad, Scope* sc)
     StorageClass stc = STC.safe | STC.nothrow_ | STC.pure_ | STC.nogc;
     Loc declLoc = ad.dtors.dim ? ad.dtors[0].loc : ad.loc;
     Loc loc; // internal code should have no loc to prevent coverage
+    FuncDeclaration xdtor_fwd = null;
 
     // if the dtor is an extern(C++) prototype, then we expect it performs a full-destruction; we don't need to build a full-dtor
     const bool dtorIsCppPrototype = ad.dtors.dim == 1 && ad.dtors[0].linkage == LINK.cpp && !ad.dtors[0].fbody;
@@ -868,6 +871,15 @@ DtorDeclaration buildDtor(AggregateDeclaration ad, Scope* sc)
             auto sdv = (cast(TypeStruct)tv).sym;
             if (!sdv.dtor)
                 continue;
+
+            // fix: https://issues.dlang.org/show_bug.cgi?id=17257
+            // braces for shrink wrapping scope of a
+            {
+                xdtor_fwd = sdv.dtor; // this dtor is temporary it could be anything
+                auto a = new AliasDeclaration(Loc.initial, Id.__xdtor, xdtor_fwd);
+                a.addMember(sc, ad); // temporarily add to symbol table
+            }
+
             sdv.dtor.functionSemantic();
 
             stc = mergeFuncAttrs(stc, sdv.dtor);
@@ -1017,7 +1029,10 @@ DtorDeclaration buildDtor(AggregateDeclaration ad, Scope* sc)
         auto _alias = new AliasDeclaration(Loc.initial, Id.__xdtor, xdtor);
         _alias.dsymbolSemantic(sc);
         ad.members.push(_alias);
-        _alias.addMember(sc, ad); // add to symbol table
+        if (xdtor_fwd)
+            ad.symtab.update(_alias); // update forward dtor to correct one
+        else
+            _alias.addMember(sc, ad); // add to symbol table
     }
 
     return xdtor;
@@ -1131,10 +1146,12 @@ DtorDeclaration buildExternDDtor(AggregateDeclaration ad, Scope* sc)
 /******************************************
  * Create inclusive invariant for struct/class by aggregating
  * all the invariants in invs[].
- *      void __invariant() const [pure nothrow @trusted]
- *      {
- *          invs[0](), invs[1](), ...;
- *      }
+ * ---
+ * void __invariant() const [pure nothrow @trusted]
+ * {
+ *     invs[0](), invs[1](), ...;
+ * }
+ * ---
  */
 FuncDeclaration buildInv(AggregateDeclaration ad, Scope* sc)
 {

@@ -1,6 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -27,6 +27,13 @@ enum
     DIAGNOSTICoff     // disable diagnostic
 };
 
+typedef unsigned char MessageStyle;
+enum
+{
+    MESSAGESTYLEdigitalmars, // file(line,column): message
+    MESSAGESTYLEgnu          // file:line:column: message
+};
+
 // The state of array bounds checking
 typedef unsigned char CHECKENABLE;
 enum
@@ -46,7 +53,7 @@ enum
     CHECKACTION_context   // call D assert with the error context on failure
 };
 
-enum CPU
+enum class CPU
 {
     x87,
     mmx,
@@ -82,6 +89,14 @@ enum CppStdRevision
     CppStdRevisionCpp17 = 201703
 };
 
+/// Configuration for the C++ header generator
+enum class CxxHeaderMode
+{
+    none,   /// Don't generate headers
+    silent, /// Generate headers
+    verbose /// Generate headers and add comments for hidden declarations
+};
+
 // Put command line switches in here
 struct Param
 {
@@ -97,6 +112,8 @@ struct Param
     bool vcg_ast;       // write-out codegen-ast
     bool showColumns;   // print character (column) numbers in diagnostics
     bool vtls;          // identify thread local variables
+    bool vtemplates;    // collect and list statistics on template instantiations
+    bool vtemplatesListInstances; // collect and list statistics on template instantiations origins
     bool vgc;           // identify gc usage
     bool vfield;        // identify non-mutable field variables
     bool vcomplex;      // identify complex/imaginary type usage
@@ -122,6 +139,7 @@ struct Param
     bool useInline;     // inline expand functions
     bool useDIP25;      // implement http://wiki.dlang.org/DIP25
     bool noDIP25;       // revert to pre-DIP25 behavior
+    bool useDIP1021;    // implement https://github.com/dlang/DIPs/blob/master/DIPs/accepted/DIP1021.md
     bool release;       // build release version
     bool preservePaths; // true means don't strip path from source file
     Diagnostic warnings;
@@ -129,17 +147,17 @@ struct Param
     bool color;         // use ANSI colors in console output
     bool cov;           // generate code coverage data
     unsigned char covPercent;   // 0..100 code coverage percentage required
+    bool ctfe_cov;      // generate coverage data for ctfe
     bool nofloat;       // code should not pull in floating point support
     bool ignoreUnsupportedPragmas;      // rather than error on them
     bool useModuleInfo; // generate runtime module information
     bool useTypeInfo;   // generate runtime type information
     bool useExceptions; // support exception handling
     bool noSharedAccess; // read/write access to shared memory objects
+    bool previewIn;     // `in` means `scope const`, perhaps `ref`, accepts rvalues
     bool betterC;       // be a "better C" compiler; no dependency on D runtime
     bool addMain;       // add a default main() function
     bool allInst;       // generate code for all template instantiations
-    bool check10378;    // check for issues transitioning to 10738
-    bool bug10378;      // use pre-bugzilla 10378 search strategy
     bool fix16997;      // fix integral promotions for unary + - ~ operators
                         // https://issues.dlang.org/show_bug.cgi?id=16997
     bool fixAliasThis;  // if the current scope has an alias this, check it before searching upper scopes
@@ -163,6 +181,7 @@ struct Param
     bool revertUsage;       // print help on -revert switch
     bool previewUsage;      // print help on -preview switch
     bool externStdUsage;    // print help on -extern-std switch
+    bool hcUsage;           // print help on -HC switch
     bool logo;              // print logo;
 
     CPU cpu;                // CPU instruction set to target
@@ -188,14 +207,18 @@ struct Param
     DString libname;   // .lib file output name
 
     bool doDocComments;  // process embedded documentation comments
-    const char *docdir;  // write documentation file to docdir directory
-    const char *docname; // write documentation file to docname
+    DString docdir;      // write documentation file to docdir directory
+    DString docname;     // write documentation file to docname
     Array<const char *> ddocfiles;  // macro include files for Ddoc
 
     bool doHdrGeneration;  // process embedded documentation comments
     DString hdrdir;        // write 'header' file to docdir directory
     DString hdrname;       // write 'header' file to docname
     bool hdrStripPlainFunctions; // strip the bodies of plain (non-template) functions
+
+    CxxHeaderMode doCxxHdrGeneration;  // write 'Cxx header' file
+    DString cxxhdrdir;        // write 'header' file to docdir directory
+    DString cxxhdrname;       // write 'header' file to docname
 
     bool doJsonGeneration;    // write JSON file
     DString jsonfilename;     // write JSON file to jsonfilename
@@ -217,6 +240,7 @@ struct Param
 
     DString moduleDepsFile;     // filename for deps output
     OutBuffer *moduleDeps;      // contents to be written to deps file
+    MessageStyle messageStyle;  // style of file/line annotations on messages
 
     // Hidden debug switches
     bool debugb;
@@ -232,6 +256,7 @@ struct Param
     // Linker stuff
     Array<const char *> objfiles;
     Array<const char *> linkswitches;
+    Array<bool> linkswitchIsForCC;
     Array<const char *> libfiles;
     Array<const char *> dllfiles;
     DString deffile;
@@ -255,6 +280,7 @@ struct Global
     const DString doc_ext;      // for Ddoc generated files
     const DString ddoc_ext;     // for Ddoc macro include files
     const DString hdr_ext;      // for D 'header' import files
+    const DString cxxhdr_ext;   // for C/C++ 'header' files
     const DString json_ext;     // for JSON files
     const DString map_ext;      // for .map files
     bool run_noext;             // allow -run sources without extensions.
@@ -265,7 +291,6 @@ struct Global
     Array<const char *> *path;        // Array of char*'s which form the import lookup path
     Array<const char *> *filePath;    // Array of char*'s which form the file import lookup path
 
-    DString version;         // Compiler version string
     DString vendor;          // Compiler backend name
 
     Param params;
@@ -301,6 +326,11 @@ struct Global
     Returns: the version as the number that would be returned for __VERSION__
     */
     unsigned versionNumber();
+
+    /**
+    Returns: the compiler version string.
+    */
+    const char * versionChars();
 };
 
 extern Global global;
@@ -359,7 +389,9 @@ struct Loc
         this->filename = filename;
     }
 
-    const char *toChars(bool showColumns = global.params.showColumns) const;
+    const char *toChars(
+        bool showColumns = global.params.showColumns,
+        MessageStyle messageStyle = global.params.messageStyle) const;
     bool equals(const Loc& loc) const;
 };
 

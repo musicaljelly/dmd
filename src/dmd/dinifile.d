@@ -1,9 +1,8 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Parses compiler settings from a .ini file.
  *
  * Copyright:   Copyright (C) 1994-1998 by Symantec
- *              Copyright (C) 2000-2019 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/dinifile.d, _dinifile.d)
@@ -26,8 +25,8 @@ import dmd.root.rmem;
 import dmd.root.filename;
 import dmd.root.outbuffer;
 import dmd.root.port;
+import dmd.root.string;
 import dmd.root.stringtable;
-import dmd.utils;
 
 private enum LOG = false;
 
@@ -113,25 +112,25 @@ const(char)[] findConfFile(const(char)[] argv0, const(char)[] inifile)
  * Returns:
  *      environment value corresponding to name
  */
-const(char)* readFromEnv(const ref StringTable environment, const(char)* name)
+const(char)* readFromEnv(const ref StringTable!(char*) environment, const(char)* name)
 {
     const len = strlen(name);
     const sv = environment.lookup(name, len);
-    if (sv && sv.ptrvalue)
-        return cast(char*)sv.ptrvalue; // get cached value
+    if (sv && sv.value)
+        return sv.value; // get cached value
     return getenv(name);
 }
 
 /*********************************
  * Write to our copy of the environment, not the real environment
  */
-private bool writeToEnv(ref StringTable environment, char* nameEqValue)
+private bool writeToEnv(ref StringTable!(char*) environment, char* nameEqValue)
 {
     auto p = strchr(nameEqValue, '=');
     if (!p)
         return false;
     auto sv = environment.update(nameEqValue, p - nameEqValue);
-    sv.ptrvalue = cast(void*)(p + 1);
+    sv.value = p + 1;
     return true;
 }
 
@@ -140,20 +139,17 @@ private bool writeToEnv(ref StringTable environment, char* nameEqValue)
  * Params:
  *      environment = our copy of the environment
  */
-void updateRealEnvironment(ref StringTable environment)
+void updateRealEnvironment(ref StringTable!(char*) environment)
 {
-    static int envput(const(StringValue)* sv) nothrow
+    foreach (sv; environment)
     {
         const name = sv.toDchars();
-        const value = cast(const(char)*)sv.ptrvalue;
+        const value = sv.value;
         if (!value) // deleted?
-            return 0;
+            continue;
         if (putenvRestorable(name.toDString, value.toDString))
             assert(0);
-        return 0; // do all of them
     }
-
-    environment.apply(&envput);
 }
 
 /*****************************
@@ -168,7 +164,7 @@ void updateRealEnvironment(ref StringTable environment)
  *      buffer = contents of configuration file
  *      sections = section names
  */
-void parseConfFile(ref StringTable environment, const(char)[] filename, const(char)[] path, const(ubyte)[] buffer, const(Strings)* sections)
+void parseConfFile(ref StringTable!(char*) environment, const(char)[] filename, const(char)[] path, const(ubyte)[] buffer, const(Strings)* sections)
 {
     /********************
      * Skip spaces.
@@ -213,7 +209,7 @@ void parseConfFile(ref StringTable environment, const(char)[] filename, const(ch
             break;
         }
         ++lineNum;
-        buf.reset();
+        buf.setsize(0);
         // First, expand the macros.
         // Macros are bracketed by % characters.
     Kloop:
@@ -256,7 +252,7 @@ void parseConfFile(ref StringTable environment, const(char)[] filename, const(ch
         }
 
         // Remove trailing spaces
-        const slice = buf.peekSlice();
+        const slice = buf[];
         auto slicelen = slice.length;
         while (slicelen && isspace(slice[slicelen - 1]))
             --slicelen;
@@ -347,7 +343,8 @@ void parseConfFile(ref StringTable environment, const(char)[] filename, const(ch
                     auto pns = cast(char*)Mem.check(strdup(pn));
                     if (!writeToEnv(environment, pns))
                     {
-                        error(Loc(filename.xarraydup.ptr, lineNum, 0), "Use `NAME=value` syntax, not `%s`", pn);
+                        const loc = Loc(filename.xarraydup.ptr, lineNum, 0); // TODO: use r-value when `error` supports it
+                        error(loc, "Use `NAME=value` syntax, not `%s`", pn);
                         fatal();
                     }
                     static if (LOG)

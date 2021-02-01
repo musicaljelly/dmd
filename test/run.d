@@ -14,23 +14,51 @@ See the README.md for all available test targets
 import std.algorithm, std.conv, std.datetime, std.exception, std.file, std.format,
        std.getopt, std.parallelism, std.path, std.process, std.range, std.stdio,
        std.string, std.traits, core.atomic;
-import core.stdc.stdlib : exit;
 
 import tools.paths;
 
 const scriptDir = __FILE_FULL_PATH__.dirName.buildNormalizedPath;
-immutable testDirs = ["runnable", "compilable", "fail_compilation", "dshell"];
+immutable testDirs = ["runnable", "runnable_cxx", "compilable", "fail_compilation", "dshell"];
 shared bool verbose; // output verbose logging
 shared bool force; // always run all tests (ignores timestamp checking)
 shared string hostDMD; // path to host DMD binary (used for building the tools)
 shared string unitTestRunnerCommand;
+
+// These long-running runnable tests will be put in front, in this order, to
+// make parallelization more effective.
+immutable slowRunnableTests = [
+    "test17338.d",
+    "testthread2.d",
+    "sctor.d",
+    "sctor2.d",
+    "sdtor.d",
+    "test9259.d",
+    "test11447c.d",
+    "template4.d",
+    "template9.d",
+    "ifti.d",
+    "test12.d",
+    "test22.d",
+    "test23.d",
+    "test28.d",
+    "test34.d",
+    "test42.d",
+    "test17072.d",
+    "testgc3.d",
+    "link2644.d",
+    "link13415.d",
+    "link14558.d",
+    "hospital.d",
+    "interpret.d",
+    "xtest46.d",
+];
 
 enum toolsDir = testPath("tools");
 
 enum TestTools
 {
     unitTestRunner = TestTool("unit_test_runner", [toolsDir.buildPath("paths")]),
-    testRunner = TestTool("d_do_test"),
+    testRunner = TestTool("d_do_test", ["-I" ~ toolsDir, "-i", "-version=NoMain"]),
     jsonSanitizer = TestTool("sanitize_json"),
     dshellPrebuilt = TestTool("dshell_prebuilt", null, Yes.linksWithTests),
 }
@@ -51,14 +79,23 @@ immutable struct TestTool
 
 int main(string[] args)
 {
-    bool runUnitTests;
+    try
+        return tryMain(args);
+    catch (SilentQuit sq)
+        return sq.exitCode;
+}
+
+int tryMain(string[] args)
+{
+    bool runUnitTests, dumpEnvironment;
     int jobs = totalCPUs;
     auto res = getopt(args,
         std.getopt.config.passThrough,
         "j|jobs", "Specifies the number of jobs (commands) to run simultaneously (default: %d)".format(totalCPUs), &jobs,
         "v", "Verbose command output", (cast(bool*) &verbose),
         "f", "Force run (ignore timestamps and always run all tests)", (cast(bool*) &force),
-        "u|unit-tests", "Runs the unit tests", &runUnitTests
+        "u|unit-tests", "Runs the unit tests", &runUnitTests,
+        "e|environment", "Print current environment variables", &dumpEnvironment,
     );
     if (res.helpWanted)
     {
@@ -79,15 +116,22 @@ Options:
         return 0;
     }
 
-    defaultPoolThreads = jobs;
+    defaultPoolThreads = jobs - 1; // main thread executes tasks as well
 
     // parse arguments
     args.popFront;
     args2Environment(args);
 
+    // Run the test suite without default permutations
+    if (args == ["quick"])
+    {
+        args = null;
+        environment["ARGS"] = "";
+    }
+
     // allow overwrites from the environment
     hostDMD = environment.get("HOST_DMD", "dmd");
-    unitTestRunnerCommand = resultsDir.buildPath("unit_test_runner");
+    unitTestRunnerCommand = resultsDir.buildPath("unit_test_runner").exeName;
 
     // bootstrap all needed environment variables
     auto env = getEnvironment;
@@ -103,32 +147,64 @@ Options:
     if (!args.length)
         args = ["all"];
 
+    // move any long-running tests to the front
+    static size_t sortKey(in ref Target target)
+    {
+        const name = target.normalizedTestName;
+        if (name.startsWith("runnable"))
+        {
+            const i = slowRunnableTests.countUntil(name[9 .. $]);
+            if (i != -1)
+                return i;
+        }
+        return size_t.max;
+    }
+
     auto targets = args
         .predefinedTargets // preprocess
         .array
         .filterTargets(env);
 
+    // Do a manual schwartzSort until all host compilers have a fix
+    // for the invalid "lhs internal pointer" error (probably >= v2.093)
+    // See https://github.com/dlang/phobos/pull/7524
+    foreach (ref target; targets)
+        target.sortKey = sortKey(target);
+
+    targets.sort!("a.sortKey < b.sortKey", SwapStrategy.stable);
+
     if (targets.length > 0)
     {
         verifyCompilerExists(env);
 
-        if (verbose)
+        if (verbose || dumpEnvironment)
         {
-            log("================================================================================");
+            writefln("================================================================================");
             foreach (key, value; env)
-                log("%s=%s", key, value);
-            log("================================================================================");
+                writefln("%s=%s", key, value);
+            writefln("================================================================================");
         }
 
-        int ret;
+        string[] failedTargets;
         ensureToolsExists(env, EnumMembers!TestTools);
         foreach (target; parallel(targets, 1))
         {
             log("run: %-(%s %)", target.args);
-            ret |= spawnProcess(target.args, env, Config.none, scriptDir).wait;
+            int status = spawnProcess(target.args, env, Config.none, scriptDir).wait;
+            if (status != 0)
+            {
+                const name = target.normalizedTestName;
+                writeln(">>> TARGET FAILED: ", name);
+                failedTargets ~= name;
+            }
         }
-        if (ret)
+        if (failedTargets.length > 0)
+        {
+            // print overview of failed targets (for CIs)
+            writeln("FAILED targets:");
+            failedTargets.each!(l => writeln("- ",  l));
             return 1;
+        }
     }
 
     return 0;
@@ -140,7 +216,7 @@ void verifyCompilerExists(string[string] env)
     if (!env["DMD"].exists)
     {
         stderr.writefln("%s doesn't exist, try building dmd with:\nmake -fposix.mak -j8 -C%s", env["DMD"], scriptDir.dirName.relativePath);
-        exit(1);
+        quitSilently(1);
     }
 }
 
@@ -191,12 +267,14 @@ void ensureToolsExists(string[string] env, const TestTool[] tools ...)
             {
                 command = [
                     hostDMD,
+                    "-m"~env["MODEL"],
                     "-of"~targetBin,
                     sourceFile
                 ] ~ tool.extraArgs;
             }
 
             writefln("Executing: %-(%s %)", command);
+            stdout.flush();
             if (spawnProcess(command, commandEnv).wait)
             {
                 stderr.writefln("failed to build '%s'", targetBin);
@@ -205,7 +283,7 @@ void ensureToolsExists(string[string] env, const TestTool[] tools ...)
         }
     }
     if (failCount > 0)
-        exit(1); // error already printed
+        quitSilently(1); // error already printed
 
     // ensure output directories exist
     foreach (dir; testDirs)
@@ -213,7 +291,7 @@ void ensureToolsExists(string[string] env, const TestTool[] tools ...)
 }
 
 /// A single target to execute.
-immutable struct Target
+struct Target
 {
     /**
     The filename of the target.
@@ -235,13 +313,13 @@ immutable struct Target
             .buildPath(filename.baseName);
     }
 
-    string normalizedTestName()
+    string normalizedTestName() const
     {
         return Target.normalizedTestName(filename);
     }
 
     /// Returns: `true` if the test exists
-    bool exists()
+    bool exists() const
     {
         // This is assumed to be the `unit_tests` target which always exists
         if (filename.empty)
@@ -249,6 +327,8 @@ immutable struct Target
 
         return testPath(normalizedTestName).exists;
     }
+
+    size_t sortKey;
 }
 
 /**
@@ -274,7 +354,7 @@ auto predefinedTargets(string[] targets)
         Target target = {
             filename: filename,
             args: [
-                resultsDir.buildPath(TestTools.testRunner.name),
+                resultsDir.buildPath(TestTools.testRunner.name.exeName),
                 Target.normalizedTestName(filename)
             ]
         };
@@ -291,11 +371,15 @@ auto predefinedTargets(string[] targets)
             case "clean":
                 if (resultsDir.exists)
                     resultsDir.rmdirRecurse;
-                exit(0);
+                quitSilently(0);
                 break;
 
             case "run_runnable_tests", "runnable":
                 newTargets.put(findFiles("runnable").map!createTestTarget);
+                break;
+
+            case "run_runnable_cxx_tests", "runnable_cxx":
+                newTargets.put(findFiles("runnable_cxx").map!createTestTarget);
                 break;
 
             case "run_fail_compilation_tests", "fail_compilation", "fail":
@@ -304,6 +388,10 @@ auto predefinedTargets(string[] targets)
 
             case "run_compilable_tests", "compilable", "compile":
                 newTargets.put(findFiles("compilable").map!createTestTarget);
+                break;
+
+            case "run_dshell_tests", "dshell":
+                newTargets.put(findFiles("dshell").map!createTestTarget);
                 break;
 
             case "all":
@@ -334,7 +422,7 @@ auto filterTargets(Target[] targets, string[string] env)
         }
     }
     if (error)
-        exit(1);
+        quitSilently(1);
 
     Target[] targetsThatNeedUpdating;
     foreach (t; targets)
@@ -356,11 +444,11 @@ void args2Environment(ref string[] args)
 {
     bool tryToAdd(string arg)
     {
-        if (!arg.canFind("="))
+        const sep = arg.indexOf('=');
+        if (sep == -1)
             return false;
 
-        auto sp = arg.splitter("=");
-        environment[sp.front] = sp.dropOne.front;
+        environment[arg[0 .. sep]] = arg[sep+1 .. $];
         return true;
     }
     args = args.filter!(a => !tryToAdd(a)).array;
@@ -376,7 +464,7 @@ Params:
     key = key to check for existence and write into the new env
     default_ = fallback value if the key doesn't exist in the global environment
 */
-auto getDefault(string[string] env, string key, string default_)
+auto setDefault(string[string] env, string key, string default_)
 {
     if (key in environment)
         env[key] = environment[key];
@@ -398,24 +486,24 @@ string[string] getEnvironment()
     env["BUILD"] = build;
     env["EXE"] = exeExtension;
     env["DMD"] = dmdPath;
-    env.getDefault("DMD_TEST_COVERAGE", "0");
+    env.setDefault("DMD_TEST_COVERAGE", "0");
 
-    const generatedSuffix = "generated/%s/%s/%s".format(os, build, dmdModel);
+    const generatedSuffix = "generated/%s/%s/%s".format(os, build, model);
 
     version(Windows)
     {
-        env.getDefault("ARGS", "-inline -release -g -O");
+        env.setDefault("ARGS", "-inline -release -g -O");
         env["OBJ"] = ".obj";
         env["DSEP"] = `\\`;
         env["SEP"] = `\`;
         auto druntimePath = environment.get("DRUNTIME_PATH", testPath(`..\..\druntime`));
         auto phobosPath = environment.get("PHOBOS_PATH", testPath(`..\..\phobos`));
-        env["DFLAGS"] = `-I%s\import -I%s`.format(druntimePath, phobosPath);
-        env["LIB"] = phobosPath;
+        env["DFLAGS"] = `-I"%s\import" -I"%s"`.format(druntimePath, phobosPath);
+        env["LIB"] = phobosPath ~ ";" ~ environment.get("LIB");
     }
     else
     {
-        env.getDefault("ARGS", "-inline -release -g -O -fPIC");
+        env.setDefault("ARGS", "-inline -release -g -O -fPIC");
         env["OBJ"] = ".o";
         env["DSEP"] = "/";
         env["SEP"] = "/";
@@ -435,11 +523,12 @@ string[string] getEnvironment()
         env["PIC_FLAG"]  = pic ? "-fPIC" : "";
         env["DFLAGS"] = "-I%s/import -I%s".format(druntimePath, phobosPath)
             ~ " -L-L%s/%s".format(phobosPath, generatedSuffix);
-        bool isShared = os.among("linux", "freebsd") > 0;
+        bool isShared = environment.get("SHARED") != "0" && os.among("linux", "freebsd") > 0;
         if (isShared)
             env["DFLAGS"] = env["DFLAGS"] ~ " -defaultlib=libphobos2.so -L-rpath=%s/%s".format(phobosPath, generatedSuffix);
 
-        env["REQUIRED_ARGS"] = environment.get("REQUIRED_ARGS") ~ " " ~ env["PIC_FLAG"];
+        if (pic)
+            env["REQUIRED_ARGS"] = environment.get("REQUIRED_ARGS") ~ " " ~ env["PIC_FLAG"];
 
         version(OSX)
             version(X86_64)
@@ -482,4 +571,36 @@ string[] getPicFlags(string[string] env)
             return picFlags.split();
     }
     return cast(string[])[];
+}
+
+/++
+Signals a silent termination while still retaining a controlled shutdown
+(including destructors, scope guards, etc).
+
+quitSilently(...) should be used instead of exit(...)
+++/
+class SilentQuit : Exception
+{
+    /// The exit code
+    const int exitCode;
+
+    ///
+    this(const int exitCode)
+    {
+        super(null, null, null);
+        this.exitCode = exitCode;
+    }
+}
+
+/++
+Aborts the current execution by throwing an exception
+
+Params:
+    exitCode = the exit code
+
+Throws: a SilentQuit instance wrapping exitCode
+++/
+void quitSilently(const int exitCode)
+{
+    throw new SilentQuit(exitCode);
 }

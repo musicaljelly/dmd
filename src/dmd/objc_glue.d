@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Glue code for Objective-C interop.
  *
- * Copyright:   Copyright (C) 2015-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 2015-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/objc_glue.d, _objc_glue.d)
@@ -25,12 +24,13 @@ import dmd.dsymbol;
 import dmd.expression;
 import dmd.func;
 import dmd.glue;
-import dmd.globals;
 import dmd.identifier;
 import dmd.mtype;
 import dmd.objc;
+import dmd.target;
 
 import dmd.root.stringtable;
+import dmd.root.array;
 
 import dmd.backend.dt;
 import dmd.backend.cc;
@@ -62,11 +62,14 @@ extern(C++) abstract class ObjcGlue
 
     static void initialize()
     {
-        if (global.params.isOSX && global.params.is64bit)
+        if (target.objc.supported)
             _objc = new Supported;
         else
             _objc = new Unsupported;
     }
+
+    /// Resets the Objective-C glue layer.
+    abstract void reset();
 
     abstract void setupMethodSelector(FuncDeclaration fd, elem** esel);
 
@@ -128,6 +131,11 @@ private:
 
 extern(C++) final class Unsupported : ObjcGlue
 {
+    override void reset()
+    {
+        // noop
+    }
+
     override void setupMethodSelector(FuncDeclaration fd, elem** esel)
     {
         // noop
@@ -179,11 +187,17 @@ extern(C++) final class Supported : ObjcGlue
         Symbols.initialize();
     }
 
+    override void reset()
+    {
+        Segments.reset();
+        Symbols.reset();
+    }
+
     override void setupMethodSelector(FuncDeclaration fd, elem** esel)
     {
-        if (fd && fd.selector && !*esel)
+        if (fd && fd.objc.selector && !*esel)
         {
-            *esel = el_var(Symbols.getMethVarRef(fd.selector.toString()));
+            *esel = el_var(Symbols.getMethVarRef(fd.objc.selector.toString()));
         }
     }
 
@@ -262,7 +276,7 @@ extern(C++) final class Supported : ObjcGlue
         assert(classDeclaration !is null);
         assert(classDeclaration.classKind == ClassKind.objc);
     }
-    body
+    do
     {
         if (!classDeclaration.objc.isMeta)
             ObjcClassDeclaration(classDeclaration, false).toObjFile();
@@ -274,13 +288,13 @@ extern(C++) final class Supported : ObjcGlue
     {
         assert(fd);
     }
-    body
+    do
     {
-        if (!fd.selector)
+        if (!fd.objc.selector)
             return count;
 
-        assert(fd.selectorParameter);
-        auto selectorSymbol = fd.selectorParameter.toSymbol();
+        assert(fd.objc.selectorParameter);
+        auto selectorSymbol = fd.objc.selectorParameter.toSymbol();
         memmove(params + 1, params, count * params[0].sizeof);
         params[0] = selectorSymbol;
 
@@ -346,6 +360,18 @@ struct Segments
         }
     }
 
+    /// Resets the segments.
+    static void reset()
+    {
+        clearCache();
+    }
+
+    // Clears any caches.
+    private static void clearCache()
+    {
+        segments.clear;
+    }
+
     static int opIndex(Id id)
     {
         if (auto segment = id in segments)
@@ -379,6 +405,8 @@ static:
 
     private __gshared
     {
+        alias SymbolCache = StringTable!(Symbol*)*;
+
         bool hasSymbols_ = false;
 
         Symbol* objc_msgSend = null;
@@ -396,17 +424,17 @@ static:
         Symbol* emptyVTable = null;
 
         // Cache for `_OBJC_METACLASS_$_`/`_OBJC_CLASS_$_` symbols.
-        StringTable* classNameTable = null;
+        SymbolCache classNameTable = null;
 
         // Cache for `L_OBJC_CLASSLIST_REFERENCES_` symbols.
-        StringTable* classReferenceTable = null;
+        SymbolCache classReferenceTable = null;
 
-        StringTable* methVarNameTable = null;
-        StringTable* methVarRefTable = null;
-        StringTable* methVarTypeTable = null;
+        SymbolCache methVarNameTable = null;
+        SymbolCache methVarRefTable = null;
+        SymbolCache methVarTypeTable = null;
 
         // Cache for instance variable offsets
-        StringTable* ivarOffsetTable = null;
+        SymbolCache ivarOffsetTable = null;
     }
 
     void initialize()
@@ -420,11 +448,42 @@ static:
 
         foreach (m ; __traits(allMembers, This))
         {
-            static if (is(typeof(__traits(getMember, This, m)) == StringTable*))
+            static if (is(typeof(__traits(getMember, This, m)) == SymbolCache))
             {
-                __traits(getMember, This, m) = new StringTable();
+                __traits(getMember, This, m) = new StringTable!(Symbol*)();
                 __traits(getMember, This, m)._init();
             }
+        }
+    }
+
+    /// Resets the symbols.
+    void reset()
+    {
+        clearCache();
+        resetSymbolCache();
+    }
+
+    // Clears any caches.
+    private void clearCache()
+    {
+        alias This = typeof(this);
+
+        foreach (m ; __traits(allMembers, This))
+        {
+            static if (is(typeof(__traits(getMember, This, m)) == Symbol*))
+                __traits(getMember, This, m) = null;
+        }
+    }
+
+    // Resets the symbol caches.
+    private void resetSymbolCache()
+    {
+        alias This = typeof(this);
+
+        foreach (m ; __traits(allMembers, This))
+        {
+            static if (is(typeof(__traits(getMember, This, m)) == SymbolCache))
+                __traits(getMember, This, m).reset();
         }
     }
 
@@ -505,21 +564,13 @@ static:
 
     Symbol* getMethVarName(const(char)[] name)
     {
-        hasSymbols_ = true;
-
-        auto stringValue = methVarNameTable.update(name);
-        auto symbol = cast(Symbol*) stringValue.ptrvalue;
-
-        if (!symbol)
-        {
+        return cache(name, methVarNameTable, {
             __gshared size_t classNameCount = 0;
             char[42] buffer;
             const symbolName = format(buffer, "L_OBJC_METH_VAR_NAME_%lu", classNameCount++);
-            symbol = getCString(name, symbolName, Segments.Id.methname);
-            stringValue.ptrvalue = symbol;
-        }
 
-        return symbol;
+            return getCString(name, symbolName, Segments.Id.methname);
+        });
     }
 
     Symbol* getMethVarName(Identifier ident)
@@ -582,7 +633,7 @@ static:
 
         Symbol* symbol = symbol_name("L_OBJC_LABEL_CLASS_$", SCstatic, type_allocn(TYarray, tstypes[TYchar]));
         symbol.Sdt = dtb.finish();
-        symbol.Sseg = Segments[Segments.Id.const_];
+        symbol.Sseg = Segments[Segments.Id.classlist];
         outdata(symbol);
 
         getImageInfo(); // make sure we also generate image info
@@ -601,16 +652,7 @@ static:
         const prefix = objcClass.isMeta ? "_OBJC_METACLASS_$_" : "_OBJC_CLASS_$_";
         auto name = prefix ~ objcClass.classDeclaration.objc.identifier.toString();
 
-        auto stringValue = classNameTable.update(name);
-        auto symbol = cast(Symbol*) stringValue.ptrvalue;
-
-        if (symbol)
-            return symbol;
-
-        symbol = getGlobal(name);
-        stringValue.ptrvalue = symbol;
-
-        return symbol;
+        return cache(name, classNameTable, () => getGlobal(name));
     }
 
     /// ditto
@@ -619,7 +661,7 @@ static:
     {
         assert(classDeclaration !is null);
     }
-    body
+    do
     {
         return getClassName(ObjcClassDeclaration(classDeclaration, isMeta));
     }
@@ -634,40 +676,29 @@ static:
 
         auto name = classDeclaration.objc.identifier.toString();
 
-        auto stringValue = classReferenceTable.update(name);
-        auto symbol = cast(Symbol*) stringValue.ptrvalue;
+        return cache(name, classReferenceTable, {
+            auto dtb = DtBuilder(0);
+            auto className = getClassName(classDeclaration);
+            dtb.xoff(className, 0, TYnptr);
 
-        if (symbol)
+            auto segment = Segments[Segments.Id.classrefs];
+
+            __gshared size_t classReferenceCount = 0;
+
+            char[42] nameString;
+            auto result = format(nameString, "L_OBJC_CLASSLIST_REFERENCES_$_%lu", classReferenceCount++);
+            auto symbol = getStatic(result);
+            symbol.Sdt = dtb.finish();
+            symbol.Sseg = segment;
+            outdata(symbol);
+
             return symbol;
-
-        auto dtb = DtBuilder(0);
-        auto className = getClassName(classDeclaration);
-        dtb.xoff(className, 0, TYnptr);
-
-        auto segment = Segments[Segments.Id.classrefs];
-
-        __gshared size_t classReferenceCount = 0;
-
-        char[42] nameString;
-        auto result = format(nameString, "L_OBJC_CLASSLIST_REFERENCES_$_%lu", classReferenceCount++);
-        symbol = getStatic(result);
-        symbol.Sdt = dtb.finish();
-        symbol.Sseg = segment;
-        outdata(symbol);
-
-        stringValue.ptrvalue = symbol;
-
-        return symbol;
+        });
     }
 
     Symbol* getMethVarRef(const(char)[] name)
     {
-        hasSymbols_ = true;
-
-        auto stringValue = methVarRefTable.update(name);
-        auto refSymbol = cast(Symbol*) stringValue.ptrvalue;
-        if (refSymbol is null)
-        {
+        return cache(name, methVarRefTable, {
             // create data
             auto dtb = DtBuilder(0);
             auto selector = getMethVarName(name);
@@ -679,17 +710,17 @@ static:
             // create symbol
             __gshared size_t selectorCount = 0;
             char[42] nameString;
-            sprintf(nameString.ptr, "L_OBJC_SELECTOR_REFERENCES_%lu", selectorCount);
-            refSymbol = symbol_name(nameString.ptr, SCstatic, type_fake(TYnptr));
+            sprintf(nameString.ptr, "L_OBJC_SELECTOR_REFERENCES_%llu", cast(ulong) selectorCount);
+            auto symbol = symbol_name(nameString.ptr, SCstatic, type_fake(TYnptr));
 
-            refSymbol.Sdt = dtb.finish();
-            refSymbol.Sseg = seg;
-            outdata(refSymbol);
-            stringValue.ptrvalue = refSymbol;
+            symbol.Sdt = dtb.finish();
+            symbol.Sseg = seg;
+            outdata(symbol);
 
             ++selectorCount;
-        }
-        return refSymbol;
+
+            return symbol;
+        });
     }
 
     Symbol* getMethVarRef(const Identifier ident)
@@ -715,7 +746,7 @@ static:
     {
         assert(type !is null);
     }
-    body
+    do
     {
         enum assertMessage = "imaginary types are not supported by Objective-C";
 
@@ -755,23 +786,16 @@ static:
      */
     Symbol* getMethVarType(const(char)[] typeEncoding)
     {
-        hasSymbols_ = true;
+        return cache(typeEncoding, methVarTypeTable, {
+            __gshared size_t count = 0;
+            char[42] nameString;
+            const symbolName = format(nameString, "L_OBJC_METH_VAR_TYPE_%lu", count++);
+            auto symbol = getCString(typeEncoding, symbolName, Segments.Id.methtype);
 
-        auto stringValue = methVarTypeTable.update(typeEncoding);
-        auto symbol = cast(Symbol*) stringValue.ptrvalue;
+            outdata(symbol);
 
-        if (symbol)
             return symbol;
-
-        __gshared size_t count = 0;
-        char[42] nameString;
-        const symbolName = format(nameString, "L_OBJC_METH_VAR_TYPE_%lu", count++);
-        symbol = getCString(typeEncoding, symbolName, Segments.Id.methtype);
-
-        stringValue.ptrvalue = symbol;
-        outdata(symbol);
-
-        return symbol;
+        });
     }
 
     /// ditto
@@ -817,18 +841,13 @@ static:
     /// Returns: the `L_OBJC_CLASS_NAME_` symbol for a class with the given name
     Symbol* getClassNameRo(const(char)[] name)
     {
-        hasSymbols_ = true;
+        return cache(name, classNameTable, {
+            __gshared size_t count = 0;
+            char[42] nameString;
+            const symbolName = format(nameString, "L_OBJC_CLASS_NAME_%lu", count++);
 
-        auto stringValue = classNameTable.update(name);
-        auto symbol = cast(Symbol*) stringValue.ptrvalue;
-
-        __gshared size_t count = 0;
-        char[42] nameString;
-        const symbolName = format(nameString, "L_OBJC_CLASS_NAME_%lu", count++);
-        symbol = getCString(name, symbolName, Segments.Id.classname);
-        stringValue.ptrvalue = symbol;
-
-        return symbol;
+            return getCString(name, symbolName, Segments.Id.classname);
+        });
     }
 
     /// ditto
@@ -846,13 +865,13 @@ static:
         const name = "_OBJC_IVAR_$_" ~ className ~ '.' ~ varName;
 
         auto stringValue = ivarOffsetTable.update(name);
-        auto symbol = cast(Symbol*) stringValue.ptrvalue;
+        auto symbol = stringValue.value;
 
         if (!symbol)
         {
             symbol = getGlobal(name);
             symbol.Sfl |= FLextern;
-            stringValue.ptrvalue = symbol;
+            stringValue.value = symbol;
         }
 
         if (!outputSymbol)
@@ -879,6 +898,33 @@ static:
             __traits(getMember, This, fieldName) = getGlobal(name, type_fake(ty));
 
         return __traits(getMember, This, fieldName);
+    }
+
+    /**
+     * Caches the symbol returned by `block` using the given name.
+     *
+     * If the symbol is already in the cache, the symbol will be returned
+     * immediately and `block` will not be called.
+     *
+     * Params:
+     *  name = the name to cache the symbol under
+     *  symbolCache = the cache storage to use for this symbol
+     *  block = invoked when the symbol is not in the cache. The return value
+     *      will be put into the cache
+     *
+     * Returns: the cached symbol
+     */
+    private Symbol* cache(const(char)[] name, SymbolCache symbolCache,
+        scope Symbol* delegate() block)
+    {
+        hasSymbols_ = true;
+
+        auto stringValue = symbolCache.update(name);
+
+        if (stringValue.value)
+            return stringValue.value;
+
+        return stringValue.value = block();
     }
 }
 
@@ -914,7 +960,7 @@ struct ObjcClassDeclaration
     {
         assert(classDeclaration !is null);
     }
-    body
+    do
     {
         this.classDeclaration = classDeclaration;
         this.isMeta = isMeta;
@@ -1048,14 +1094,12 @@ private:
          * Params:
          *  members = the members of the class declaration
          */
-        static int methodCount(Dsymbols* members)
+        static int methodCount(FuncDeclarations* methods)
         {
             int count;
 
-            members.foreachDsymbol((member) {
-                const func = member.isFuncDeclaration;
-
-                if (func && func.fbody)
+            methods.each!((method) {
+                if (method.fbody)
                     count++;
             });
 
@@ -1075,13 +1119,11 @@ private:
         dtb.dword(24); // _objc_method.sizeof
         dtb.dword(count); // method count
 
-        methods.foreachDsymbol((method) {
-            auto func = method.isFuncDeclaration;
-
-            if (func && func.fbody)
+        methods.each!((func) {
+            if (func.fbody)
             {
-                assert(func.selector);
-                dtb.xoff(func.selector.toNameSymbol(), 0); // method name
+                assert(func.objc.selector);
+                dtb.xoff(func.objc.selector.toNameSymbol(), 0); // method name
                 dtb.xoff(Symbols.getMethVarType(func), 0); // method type string
                 dtb.xoff(func.toSymbol(), 0); // function implementation
             }
@@ -1280,7 +1322,7 @@ out(result)
 {
     assert(str.length == result.strlen);
 }
-body
+do
 {
     if (str.length == 0)
         return "".ptr;

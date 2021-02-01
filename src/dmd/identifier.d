@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Defines an identifier, which is the name of a `Dsymbol`.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/identifier.d, _identifier.d)
@@ -19,70 +18,71 @@ import dmd.globals;
 import dmd.id;
 import dmd.root.outbuffer;
 import dmd.root.rootobject;
+import dmd.root.string;
 import dmd.root.stringtable;
 import dmd.tokens;
 import dmd.utf;
-import dmd.utils;
 
 
 /***********************************************************
  */
 extern (C++) final class Identifier : RootObject
 {
-private:
-    const int value;
-    const char[] name;
+    private const int value;
 
-public:
+    // Indicates if this is an identifier used for an anonymous symbol.
+    private const bool isAnonymous_ = false;
+
+    private const char[] name;
+
+nothrow:
+
+    /// Construct an identifier from the given name.
+    extern (D) this(const(char)* name)
+    {
+        //printf("Identifier('%s', %d)\n", name, value);
+        this(name.toDString(), TOK.identifier);
+    }
+
     /**
-       Construct an identifier from a D slice
-
-       Note: Since `name` needs to be `\0` terminated for `toChars`,
-       no slice overload is provided yet.
+       Construct an identifier from the given name.
 
        Params:
-         name = the identifier name
-                There must be `'\0'` at `name[length]`.
+         name = the identifier name. There must be `'\0'` at `name[length]`.
          length = the length of `name`, excluding the terminating `'\0'`
          value = Identifier value (e.g. `Id.unitTest`) or `TOK.identifier`
      */
-    extern (D) this(const(char)* name, size_t length, int value) nothrow
+    extern (D) this(const(char)* name, size_t length, int value)
+    in
+    {
+        assert(name[length] == '\0');
+    }
+    do
     {
         //printf("Identifier('%s', %d)\n", name, value);
-        this.name = name[0 .. length];
-        this.value = value;
+        this(name[0 .. length], value);
     }
 
-    extern (D) this(const(char)[] name, int value) nothrow
+    /// ditto
+    extern (D) this(const(char)[] name, int value)
     {
         //printf("Identifier('%.*s', %d)\n", cast(int)name.length, name.ptr, value);
+        this(name, value, false);
+    }
+
+    extern (D) private this(const(char)[] name, int value, bool isAnonymous)
+    {
+        //printf("Identifier('%.*s', %d, %d)\n", cast(int)name.length, name.ptr, value, isAnonymous);
         this.name = name;
         this.value = value;
+        isAnonymous_ = isAnonymous;
     }
 
-    extern (D) this(const(char)* name) nothrow
-    {
-        //printf("Identifier('%s', %d)\n", name, value);
-        this(name[0 .. strlen(name)], TOK.identifier);
-    }
-
-    /// Sentinel for an anonymous identifier.
-    static Identifier anonymous() nothrow
-    {
-        __gshared Identifier anonymous;
-
-        if (anonymous)
-            return anonymous;
-
-        return anonymous = new Identifier("__anonymous", TOK.identifier);
-    }
-
-    static Identifier create(const(char)* name) nothrow
+    static Identifier create(const(char)* name)
     {
         return new Identifier(name);
     }
 
-nothrow:
     override const(char)* toChars() const pure
     {
         return name.ptr;
@@ -96,6 +96,11 @@ nothrow:
     int getValue() const pure
     {
         return value;
+    }
+
+    bool isAnonymous() const pure @nogc @safe
+    {
+        return isAnonymous_;
     }
 
     const(char)* toHChars2() const
@@ -136,20 +141,65 @@ nothrow:
         return DYNCAST.identifier;
     }
 
-    private extern (D) __gshared StringTable stringtable;
+    private extern (D) __gshared StringTable!Identifier stringtable;
 
-    static Identifier generateId(const(char)* prefix)
+    /**
+     * Generates a new identifier.
+     *
+     * Params:
+     *  prefix = this will be the prefix of the name of the identifier. For debugging
+     *      purpose.
+     */
+    extern(D) static Identifier generateId(const(char)[] prefix)
     {
-        __gshared size_t i;
-        return generateId(prefix, ++i);
+        return generateId(prefix, newSuffix, false);
     }
 
-    static Identifier generateId(const(char)* prefix, size_t i)
+    /**
+     * Generates a new anonymous identifier.
+     *
+     * Params:
+     *  name = this will be part of the name of the identifier. For debugging
+     *      purpose.
+     */
+    extern(D) static Identifier generateAnonymousId(const(char)[] name)
+    {
+        return generateId("__anon" ~ name, newSuffix, true);
+    }
+
+    /**
+     * Generates a new identifier.
+     *
+     * Params:
+     *  prefix = this will be the prefix of the name of the identifier. For debugging
+     *      purpose.
+     *  suffix = this will be the suffix of the name of the identifier. This is
+     *      what makes the identifier unique
+     */
+    extern(D) static Identifier generateId(const(char)[] prefix, size_t suffix)
+    {
+        return generateId(prefix, suffix, false);
+    }
+
+    /// ditto
+    static Identifier generateId(const(char)* prefix, size_t length, size_t suffix)
+    {
+        return generateId(prefix[0 .. length], suffix);
+    }
+
+    // Generates a new, unique, suffix for an identifier.
+    extern (D) private static size_t newSuffix()
+    {
+        __gshared size_t i;
+        return ++i;
+    }
+
+    extern(D) private static Identifier generateId(const(char)[] prefix, size_t suffix, bool isAnonymous)
     {
         OutBuffer buf;
-        buf.writestring(prefix);
-        buf.print(i);
-        return idPool(buf.peekSlice());
+        buf.write(prefix);
+        buf.print(suffix);
+        return idPool(buf[], isAnonymous);
     }
 
     /***************************************
@@ -213,7 +263,7 @@ nothrow:
                 counters[key] = 1;
         }
 
-        return idPool(idBuf.peekSlice());
+        return idPool(idBuf[]);
     }
 
     /********************************************
@@ -226,12 +276,17 @@ nothrow:
 
     extern (D) static Identifier idPool(const(char)[] s)
     {
-        StringValue* sv = stringtable.update(s);
-        Identifier id = cast(Identifier)sv.ptrvalue;
+        return idPool(s, false);
+    }
+
+    extern (D) private static Identifier idPool(const(char)[] s, bool isAnonymous)
+    {
+        auto sv = stringtable.update(s);
+        auto id = sv.value;
         if (!id)
         {
-            id = new Identifier(sv.toString(), TOK.identifier);
-            sv.ptrvalue = cast(char*)id;
+            id = new Identifier(sv.toString(), TOK.identifier, isAnonymous);
+            sv.value = id;
         }
         return id;
     }
@@ -246,7 +301,7 @@ nothrow:
         auto sv = stringtable.insert(s, null);
         assert(sv);
         auto id = new Identifier(sv.toString(), value);
-        sv.ptrvalue = cast(char*)id;
+        sv.value = id;
         return id;
     }
 
@@ -277,8 +332,8 @@ nothrow:
         while (idx < str.length)
         {
             dchar dc;
-            const q = utf_decodeChar(str.ptr, str.length, idx, dc);
-            if (q ||
+            const s = utf_decodeChar(str, idx, dc);
+            if (s ||
                 !((dc >= 0x80 && isUniAlpha(dc)) || isalnum(dc) || dc == '_'))
             {
                 return false;
@@ -297,7 +352,7 @@ nothrow:
         auto sv = stringtable.lookup(s);
         if (!sv)
             return null;
-        return cast(Identifier)sv.ptrvalue;
+        return sv.value;
     }
 
     extern (D) static void initTable()

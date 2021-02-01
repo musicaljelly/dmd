@@ -1,13 +1,11 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Defines the help texts for the CLI options offered by DMD.
  *
- * This modules defines the help texts for the CLI options offered by DMD.
  * This file is not shared with other compilers which use the DMD front-end.
  * However, this file will be used to generate the
  * $(LINK2 https://dlang.org/dmd-linux.html, online documentation) and MAN pages.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/cli.d, _cli.d)
@@ -192,8 +190,8 @@ struct Usage
         Option("c",
             "compile only, do not link"
         ),
-        Option("check=[assert|bounds|in|invariant|out|switch|h|help|?][=[on|off]]",
-            "Enable or disable specific checks",
+        Option("check=[assert|bounds|in|invariant|out|switch][=[on|off]]",
+            "enable or disable specific checks",
             `Overrides default, -boundscheck, -release and -unittest options to enable or disable specific checks.
                 $(UL
                     $(LI $(B assert): assertion checking)
@@ -208,7 +206,10 @@ struct Usage
                     $(LI $(B off): specified check is disabled.)
                 )`
         ),
-        Option("checkaction=[D|C|halt|context|h|help|?]",
+        Option("check=[h|help|?]",
+            "list information on all available checks"
+        ),
+        Option("checkaction=[D|C|halt|context]",
             "behavior on assert/boundscheck/finalswitch failure",
             `Sets behavior when an assert fails, and array boundscheck fails,
              or a final switch errors.
@@ -218,6 +219,9 @@ struct Usage
                     $(LI $(B halt): Executes a halt instruction, terminating the program.)
                     $(LI $(B context): Prints the error context as part of the unrecoverable $(D AssertError).)
                 )`
+        ),
+        Option("checkaction=[h|help|?]",
+            "list information on all available check actions"
         ),
         Option("color",
             "turn colored console output on"
@@ -237,6 +241,7 @@ struct Usage
         Option("cov",
             "do code coverage analysis"
         ),
+        Option("cov=ctfe", "Include code executed during CTFE in coverage report"),
         Option("cov=<nnn>",
             "require at least nnn% code coverage",
             `Perform $(LINK2 $(ROOT_DIR)code_coverage.html, code coverage analysis) and generate
@@ -266,11 +271,11 @@ dmd -cov -unittest myprog.d
             `Silently allow $(DDLINK deprecate,deprecate,deprecated features) and use of symbols with
             $(DDSUBLINK $(ROOT_DIR)spec/attribute, deprecated, deprecated attributes).`,
         ),
-        Option("dw",
-            "issue a message when deprecated features or symbols are used (default)"
-        ),
         Option("de",
             "issue an error when deprecated features or symbols are used (halt compilation)"
+        ),
+        Option("dw",
+            "issue a message when deprecated features or symbols are used (default)"
         ),
         Option("debug",
             "compile in debug code",
@@ -306,7 +311,7 @@ dmd -cov -unittest myprog.d
             With $(I filename), write module dependencies as text to $(I filename)
             (only imports).`,
         ),
-        Option("extern-std=[<standard>|h|help|?]",
+        Option("extern-std=<standard>",
             "set C++ name mangling compatibility with <standard>",
             "Standards supported are:
             $(UL
@@ -320,6 +325,9 @@ dmd -cov -unittest myprog.d
                     Sets `__traits(getTargetInfo, \"cppStd\")` to `201703`)
             )",
         ),
+        Option("extern-std=[h|help|?]",
+            "list all supported standards"
+        ),
         Option("fPIC",
             "generate position independent code",
             TargetOS.all & ~(TargetOS.windows | TargetOS.macOS)
@@ -327,10 +335,8 @@ dmd -cov -unittest myprog.d
         Option("g",
             "add symbolic debug info",
             `$(WINDOWS
-                Add CodeView symbolic debug info with
-                $(LINK2 $(ROOT_DIR)spec/abi.html#codeview, D extensions)
-                for debuggers such as
-                $(LINK2 http://ddbg.mainia.de/releases.html, Ddbg)
+                Add CodeView symbolic debug info. See
+                $(LINK2 http://dlang.org/windbg.html, Debugging on Windows).
             )
             $(UNIX
                 Add symbolic debug info in Dwarf format
@@ -339,7 +345,9 @@ dmd -cov -unittest myprog.d
             )`,
         ),
         Option("gf",
-            "emit debug info for all referenced types"
+            "emit debug info for all referenced types",
+            `Symbolic debug info is emitted for all types referenced by the compiled code,
+             even if the definition is in an imported file not currently being compiled.`,
         ),
         Option("gs",
             "always emit stack frame"
@@ -360,6 +368,23 @@ dmd -cov -unittest myprog.d
         ),
         Option("Hf=<filename>",
             "write 'header' file to filename"
+        ),
+        Option("HC[=[silent|verbose]]",
+            "generate C++ 'header' file",
+            `Generate C++ 'header' files using the given configuration:",
+            $(DL
+            $(DT silent)$(DD only list extern(C[++]) declarations (default))
+            $(DT verbose)$(DD also add comments for ignored declarations (e.g. extern(D)))
+            )`,
+        ),
+        Option("HC=[?|h|help]",
+            "list available modes for C++ 'header' file generation"
+        ),
+        Option("HCd=<directory>",
+            "write C++ 'header' file to directory"
+        ),
+        Option("HCf=<filename>",
+            "write C++ 'header' file to filename"
         ),
         Option("-help",
             "print help and exit"
@@ -416,7 +441,7 @@ dmd -cov -unittest myprog.d
             "pass linkerflag to link",
             `Pass $(I linkerflag) to the
             $(WINDOWS linker $(OPTLINK))
-            $(UNIX linker), for example,`,
+            $(UNIX linker), for example, ld`,
         ),
         Option("lib",
             "generate library rather than object files",
@@ -517,7 +542,7 @@ dmd -cov -unittest myprog.d
             If no Visual C installation is detected, a wrapper for the redistributable
             VC2010 dynamic runtime library and mingw based platform import libraries will
             be linked instead using the LLD linker provided by the LLVM project.
-            The detection can be skipped explicitly if $(TT msvcrt100) is specified as
+            The detection can be skipped explicitly if $(TT msvcrt120) is specified as
             $(I libname).
             If $(I libname) is empty, no C runtime library is automatically linked in.",
             TargetOS.windows,
@@ -566,11 +591,11 @@ dmd -cov -unittest myprog.d
             off when generating an object, interface, or Ddoc file
             name. $(SWLINK -op) will leave it on.`,
         ),
-        Option("preview=<id>",
-            "enable an upcoming language change identified by 'id'",
+        Option("preview=<name>",
+            "enable an upcoming language change identified by 'name'",
             `Preview an upcoming language change identified by $(I id)`,
         ),
-        Option("preview=?",
+        Option("preview=[h|help|?]",
             "list all upcoming language changes"
         ),
         Option("profile",
@@ -592,11 +617,11 @@ dmd -cov -unittest myprog.d
             done for system and trusted functions, and assertion failures
             are undefined behaviour.`
         ),
-        Option("revert=<id>",
-            "revert language change identified by 'id'",
+        Option("revert=<name>",
+            "revert language change identified by 'name'",
             `Revert language change identified by $(I id)`,
         ),
-        Option("revert=?",
+        Option("revert=[h|help|?]",
             "list all revertable language changes"
         ),
         Option("run <srcfile>",
@@ -611,8 +636,8 @@ dmd -cov -unittest myprog.d
             `$(UNIX Generate shared library)
              $(WINDOWS Generate DLL library)`,
         ),
-        Option("transition=<id>",
-            "help with language change identified by 'id'",
+        Option("transition=<name>",
+            "help with language change identified by 'name'",
             `Show additional info about language change identified by $(I id)`,
         ),
         Option("transition=[h|help|?]",
@@ -630,14 +655,23 @@ dmd -cov -unittest myprog.d
         Option("vcolumns",
             "print character (column) numbers in diagnostics"
         ),
+        Option("verror-style=[digitalmars|gnu]",
+            "set the style for file/line number annotations on compiler messages",
+            `Set the style for file/line number annotations on compiler messages,
+            where:
+            $(DL
+            $(DT digitalmars)$(DD 'file(line[,column]): message'. This is the default.)
+            $(DT gnu)$(DD 'file:line[:column]: message', conforming to the GNU standard used by gcc and clang.)
+            )`,
+        ),
         Option("verrors=<num>",
             "limit the number of error messages (0 means unlimited)"
         ),
-        Option("verrors=spec",
-            "show errors from speculative compiles such as __traits(compiles,...)"
-        ),
         Option("verrors=context",
             "show error messages with the context of the erroring source line"
+        ),
+        Option("verrors=spec",
+            "show errors from speculative compiles such as __traits(compiles,...)"
         ),
         Option("-version",
             "print compiler version and exit"
@@ -656,6 +690,14 @@ dmd -cov -unittest myprog.d
         Option("vtls",
             "list all variables going into thread local storage"
         ),
+        Option("vtemplates=[list-instances]",
+            "list statistics on template instantiations",
+            `An optional argument determines extra diagnostics,
+            where:
+            $(DL
+            $(DT list-instances)$(DD Also shows all instantiation contexts for each template.)
+            )`,
+        ),
         Option("w",
             "warnings as errors (compilation will halt)",
             `Enable $(LINK2 $(ROOT_DIR)articles/warnings.html, warnings)`
@@ -670,6 +712,11 @@ dmd -cov -unittest myprog.d
         ),
         Option("Xf=<filename>",
             "write JSON file to filename"
+        ),
+        Option("Xcc=<driverflag>",
+            "pass driverflag to linker driver (cc)",
+            "Pass $(I driverflag) to the linker driver (`$CC` or `cc`)",
+            TargetOS.all & ~TargetOS.windows
         ),
     ];
 
@@ -687,8 +734,6 @@ dmd -cov -unittest myprog.d
     static immutable transitions = [
         Feature("field", "vfield",
             "list all non-mutable fields which occupy an object instance"),
-        Feature("checkimports", "check10378",
-            "give deprecation messages about 10378 anomalies", true, true),
         Feature("complex", "vcomplex",
             "give deprecation messages about all usages of complex or imaginary types"),
         Feature("tls", "vtls",
@@ -700,7 +745,7 @@ dmd -cov -unittest myprog.d
     /// Returns all available reverts
     static immutable reverts = [
         Feature("dip25", "noDIP25", "revert DIP25 changes https://github.com/dlang/DIPs/blob/master/DIPs/archive/DIP25.md"),
-        Feature("import", "bug10378", "revert to single phase name lookup", true, true),
+        Feature("markdown", "markdown", "disable Markdown replacements in Ddoc"),
     ];
 
     /// Returns all available previews
@@ -710,9 +755,10 @@ dmd -cov -unittest myprog.d
         Feature("dip1000", "vsafe",
             "implement https://github.com/dlang/DIPs/blob/master/DIPs/other/DIP1000.md (Scoped Pointers)"),
         Feature("dip1008", "ehnogc",
-            "implement https://github.com/dlang/DIPs/blob/master/DIPs/DIP1008.md (@nogc Throwable)"),
+            "implement https://github.com/dlang/DIPs/blob/master/DIPs/other/DIP1008.md (@nogc Throwable)"),
+        Feature("dip1021", "useDIP1021",
+            "implement https://github.com/dlang/DIPs/blob/master/DIPs/accepted/DIP1021.md (Mutable function arguments)"),
         Feature("fieldwise", "fieldwise", "use fieldwise comparisons for struct equality"),
-        Feature("markdown", "markdown", "enable Markdown replacements in Ddoc"),
         Feature("fixAliasThis", "fixAliasThis",
             "when a symbol is resolved, check alias this scope before going to upper scopes"),
         Feature("intpromote", "fix16997",
@@ -723,6 +769,11 @@ dmd -cov -unittest myprog.d
             "enable rvalue arguments to ref parameters"),
         Feature("nosharedaccess", "noSharedAccess",
             "disable access to shared memory objects"),
+        Feature("in", "previewIn",
+            "`in` on parameters means `scope const [ref]` and accepts rvalues"),
+        // DEPRECATED previews
+        // trigger deprecation message once D repositories don't use this flag anymore
+        Feature("markdown", "markdown", "enable Markdown replacements in Ddoc", false, false),
     ];
 }
 
@@ -784,7 +835,7 @@ struct CLIUsage
         auto buf = description.capitalize ~ " listed by -"~flagName~"=name:
 ";
         auto allTransitions = [Usage.Feature("all", null,
-            "list information on all " ~ description)] ~ features;
+            "Enables all available " ~ description)] ~ features;
         foreach (t; allTransitions)
         {
             if (t.deprecated_)
@@ -841,5 +892,12 @@ struct CLIUsage
   =c++11                Sets `__traits(getTargetInfo, \"cppStd\")` to `201103`
   =c++14                Sets `__traits(getTargetInfo, \"cppStd\")` to `201402`
   =c++17                Sets `__traits(getTargetInfo, \"cppStd\")` to `201703`
+";
+
+    /// Options supported by -HC
+    enum hcUsage = "Available header generation modes:
+  =[h|help|?]           List information on all available choices
+  =silent               Silently ignore non-exern(C[++]) declarations
+  =verbose              Add a comment for ignored non-exern(C[++]) declarations
 ";
 }

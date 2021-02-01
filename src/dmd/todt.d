@@ -1,8 +1,8 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Put initializers and objects created from CTFE into a `dt_t` data structure
+ * so the backend puts them into the data segment.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/todt.d, _todt.d)
@@ -165,7 +165,7 @@ extern (C++) void Initializer_toDt(Initializer init, ref DtBuilder dtb)
                 }
                 else if (ai.dim > tadim)
                 {
-                    error(ai.loc, "too many initializers, %d, for array[%d]", ai.dim, tadim);
+                    error(ai.loc, "too many initializers, %u, for array[%llu]", ai.dim, cast(ulong) tadim);
                 }
                 dtb.cat(dtbarray);
                 break;
@@ -364,11 +364,15 @@ extern (C++) void Expression_toDt(Expression e, ref DtBuilder dtb)
 
         // BUG: should implement some form of static string pooling
         const n = cast(int)e.numberOfCodeUnits();
-        char* p = e.toPtr();
-        if (!p)
+        const(char)* p;
+        char* q;
+        if (e.sz == 1)
+            p = e.peekString().ptr;
+        else
         {
-            p = cast(char*)mem.xmalloc(n * e.sz);
-            e.writeTo(p, false);
+            q = cast(char*)mem.xmalloc(n * e.sz);
+            e.writeTo(q, false);
+            p = q;
         }
 
         switch (t.ty)
@@ -386,7 +390,10 @@ extern (C++) void Expression_toDt(Expression e, ref DtBuilder dtb)
                     dtb.xoff(s, 0);
                 }
                 else
-                    dtb.abytes(0, n * e.sz, p, cast(uint)e.sz);
+                {
+                    ubyte pow2 = e.sz == 4 ? 2 : 1;
+                    dtb.abytes(0, n * e.sz, p, cast(uint)e.sz, pow2);
+                }
                 break;
 
             case Tsarray:
@@ -410,8 +417,7 @@ extern (C++) void Expression_toDt(Expression e, ref DtBuilder dtb)
                 printf("StringExp.toDt(type = %s)\n", e.type.toChars());
                 assert(0);
         }
-        if (p != e.toPtr())
-            mem.xfree(p);
+        mem.xfree(q);
     }
 
     void visitArrayLiteral(ArrayLiteralExp e)
@@ -530,7 +536,7 @@ extern (C++) void Expression_toDt(Expression e, ref DtBuilder dtb)
 
     void visitClassReference(ClassReferenceExp e)
     {
-        InterfaceDeclaration to = (cast(TypeClass)e.type).sym.isInterfaceDeclaration();
+        auto to = e.type.toBasetype().isTypeClass().sym.isInterfaceDeclaration();
 
         if (to) //Static typeof this literal is an interface. We must add offset to symbol
         {
@@ -711,7 +717,7 @@ private void membersToDt(AggregateDeclaration ad, ref DtBuilder dtb,
         BaseClass** pb;
         if (!ppb)
         {
-            pb = cd.vtblInterfaces.data;
+            pb = (*cd.vtblInterfaces)[].ptr;
             ppb = &pb;
         }
 
@@ -1325,19 +1331,16 @@ private extern (C++) class TypeInfoDtVisitor : Visitor
 
         if (global.params.is64bit)
         {
-            Type t = sd.arg1type;
             foreach (i; 0 .. 2)
             {
                 // m_argi
-                if (t)
+                if (auto t = sd.argType(i))
                 {
                     genTypeInfo(d.loc, t, null);
                     dtb.xoff(toSymbol(t.vtinfo), 0);
                 }
                 else
                     dtb.size(0);
-
-                t = sd.arg2type;
             }
         }
 

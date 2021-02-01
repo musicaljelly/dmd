@@ -1,8 +1,9 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Struct and union declarations.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Specification: $(LINK2 https://dlang.org/spec/struct.html, Structs, Unions)
+ *
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/dstruct.d, _dstruct.d)
@@ -71,8 +72,6 @@ extern (C++) void semanticTypeInfo(Scope* sc, Type t)
 {
     if (sc)
     {
-        if (!sc.func)
-            return;
         if (sc.intypeof)
             return;
         if (sc.flags & (SCOPE.ctfe | SCOPE.compile))
@@ -202,12 +201,17 @@ extern (C++) class StructDeclaration : AggregateDeclaration
 {
     bool zeroInit;              // !=0 if initialize with 0 fill
     bool hasIdentityAssign;     // true if has identity opAssign
+    bool hasBlitAssign;         // true if opAssign is a blit
     bool hasIdentityEquals;     // true if has identity opEquals
     bool hasNoFields;           // has no fields
+    bool hasCopyCtor;           // copy constructor
+    // Even if struct is defined as non-root symbol, some built-in operations
+    // (e.g. TypeidExp, NewExp, ArrayLiteralExp, etc) request its TypeInfo.
+    // For those, today TypeInfo_Struct is generated in COMDAT.
+    bool requestTypeInfo;
+
     FuncDeclarations postblits; // Array of postblit functions
     FuncDeclaration postblit;   // aggregate postblit
-
-    bool hasCopyCtor;       // copy constructor
 
     FuncDeclaration xeq;        // TypeInfo_Struct.xopEquals
     FuncDeclaration xcmp;       // TypeInfo_Struct.xopCmp
@@ -218,14 +222,8 @@ extern (C++) class StructDeclaration : AggregateDeclaration
     structalign_t alignment;    // alignment applied outside of the struct
     StructPOD ispod;            // if struct is POD
 
-    // For 64 bit Efl function call/return ABI
-    Type arg1type;
-    Type arg2type;
-
-    // Even if struct is defined as non-root symbol, some built-in operations
-    // (e.g. TypeidExp, NewExp, ArrayLiteralExp, etc) request its TypeInfo.
-    // For those, today TypeInfo_Struct is generated in COMDAT.
-    bool requestTypeInfo;
+    // ABI-specific type(s) if the struct can be passed in registers
+    TypeTuple argTypes;
 
     extern (D) this(const ref Loc loc, Identifier id, bool inObject)
     {
@@ -315,7 +313,9 @@ extern (C++) class StructDeclaration : AggregateDeclaration
 
         if (!members || !symtab) // opaque or semantic() is not yet called
         {
-            error("is forward referenced when looking for `%s`", ident.toChars());
+            // .stringof is always defined (but may be hidden by some other symbol)
+            if(ident != Id.stringof)
+                error("is forward referenced when looking for `%s`", ident.toChars());
             return null;
         }
 
@@ -417,15 +417,7 @@ extern (C++) class StructDeclaration : AggregateDeclaration
             }
         }
 
-        auto tt = target.toArgTypes(type);
-        size_t dim = tt ? tt.arguments.dim : 0;
-        if (dim >= 1)
-        {
-            assert(dim <= 2);
-            arg1type = (*tt.arguments)[0].type;
-            if (dim == 2)
-                arg2type = (*tt.arguments)[1].type;
-        }
+        argTypes = target.toArgTypes(type);
     }
 
     /***************************************
@@ -461,7 +453,7 @@ extern (C++) class StructDeclaration : AggregateDeclaration
                     // CTFE sometimes creates null as hidden pointer; we'll allow this.
                     continue;
                 }
-                .error(loc, "more initializers than fields (%d) of `%s`", nfields, toChars());
+                .error(loc, "more initializers than fields (%zu) of `%s`", nfields, toChars());
                 return false;
             }
             VarDeclaration v = fields[i];
@@ -510,8 +502,7 @@ extern (C++) class StructDeclaration : AggregateDeclaration
                 Type typeb = se.type.toBasetype();
                 TY tynto = tb.nextOf().ty;
                 if (!se.committed &&
-                    (typeb.ty == Tarray || typeb.ty == Tsarray) &&
-                    (tynto == Tchar || tynto == Twchar || tynto == Tdchar) &&
+                    (typeb.ty == Tarray || typeb.ty == Tsarray) && tynto.isSomeChar &&
                     se.numberOfCodeUnits(tynto) < (cast(TypeSArray)tb).dim.toInteger())
                 {
                     e = se.castTo(sc, t);
@@ -563,7 +554,10 @@ extern (C++) class StructDeclaration : AggregateDeclaration
         ispod = StructPOD.yes;
 
         if (enclosing || postblit || dtor || hasCopyCtor)
+        {
             ispod = StructPOD.no;
+            return false;
+        }
 
         // Recursively check all fields are POD.
         for (size_t i = 0; i < fields.dim; i++)
@@ -572,7 +566,7 @@ extern (C++) class StructDeclaration : AggregateDeclaration
             if (v.storage_class & STC.ref_)
             {
                 ispod = StructPOD.no;
-                break;
+                return false;
             }
 
             Type tv = v.type.baseElemOf();
@@ -583,7 +577,7 @@ extern (C++) class StructDeclaration : AggregateDeclaration
                 if (!sd.isPOD())
                 {
                     ispod = StructPOD.no;
-                    break;
+                    return false;
                 }
             }
         }
@@ -599,6 +593,51 @@ extern (C++) class StructDeclaration : AggregateDeclaration
     override void accept(Visitor v)
     {
         v.visit(this);
+    }
+
+    final uint numArgTypes() const
+    {
+        return argTypes && argTypes.arguments ? cast(uint) argTypes.arguments.dim : 0;
+    }
+
+    final Type argType(uint index)
+    {
+        return index < numArgTypes() ? (*argTypes.arguments)[index].type : null;
+    }
+
+    final bool hasNonDisabledCtor()
+    {
+        static extern (C++) class HasNonDisabledCtorVisitor : Visitor
+        {
+            bool result;
+
+            this() {}
+
+            alias visit = Visitor.visit;
+
+            override void visit(CtorDeclaration cd)
+            {
+                if (!(cd.storage_class & STC.disable))
+                    result = true;
+            }
+
+            override void visit(TemplateDeclaration td)
+            {
+                result = true;
+            }
+
+            override void visit(OverloadSet os)
+            {
+                for (size_t i = 0; i < os.a.dim; i++)
+                    os.a[i].accept(this);
+            }
+        }
+
+        if (!ctor)
+            return false;
+        scope v = new HasNonDisabledCtorVisitor();
+        ctor.accept(v);
+        return v.result;
     }
 }
 

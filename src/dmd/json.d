@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Code for generating .json descriptions of the module when passing the `-X` flag to dmd.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/json.d, _json.d)
@@ -35,7 +34,7 @@ import dmd.identifier;
 import dmd.mtype;
 import dmd.root.outbuffer;
 import dmd.root.rootobject;
-import dmd.utils;
+import dmd.root.string;
 import dmd.visitor;
 
 version(Windows) {
@@ -60,15 +59,15 @@ public:
 
     void indent()
     {
-        if (buf.offset >= 1 && buf.data[buf.offset - 1] == '\n')
+        if (buf.length >= 1 && (*buf)[buf.length - 1] == '\n')
             for (int i = 0; i < indentLevel; i++)
                 buf.writeByte(' ');
     }
 
     void removeComma()
     {
-        if (buf.offset >= 2 && buf.data[buf.offset - 2] == ',' && (buf.data[buf.offset - 1] == '\n' || buf.data[buf.offset - 1] == ' '))
-            buf.offset -= 2;
+        if (buf.length >= 2 && (*buf)[buf.length - 2] == ',' && ((*buf)[buf.length - 1] == '\n' || (*buf)[buf.length - 1] == ' '))
+            buf.setsize(buf.length - 2);
     }
 
     void comma()
@@ -189,9 +188,9 @@ public:
     {
         indentLevel--;
         removeComma();
-        if (buf.offset >= 2 && buf.data[buf.offset - 2] == '[' && buf.data[buf.offset - 1] == '\n')
-            buf.offset -= 1;
-        else if (!(buf.offset >= 1 && buf.data[buf.offset - 1] == '['))
+        if (buf.length >= 2 && (*buf)[buf.length - 2] == '[' && (*buf)[buf.length - 1] == '\n')
+            buf.setsize(buf.length - 1);
+        else if (!(buf.length >= 1 && (*buf)[buf.length - 1] == '['))
         {
             buf.writestring("\n");
             indent();
@@ -212,8 +211,8 @@ public:
     {
         indentLevel--;
         removeComma();
-        if (buf.offset >= 2 && buf.data[buf.offset - 2] == '{' && buf.data[buf.offset - 1] == '\n')
-            buf.offset -= 1;
+        if (buf.length >= 2 && (*buf)[buf.length - 2] == '{' && (*buf)[buf.length - 1] == '\n')
+            buf.setsize(buf.length - 1);
         else
         {
             buf.writestring("\n");
@@ -577,6 +576,7 @@ public:
         if (d.condition.inc != Include.notComputed)
         {
             visit(cast(AttribDeclaration)d);
+            return; // Don't visit the if/else bodies again below
         }
         Dsymbols* ds = d.decl ? d.decl : d.elsedecl;
         for (size_t i = 0; i < ds.dim; i++)
@@ -827,9 +827,10 @@ public:
     */
     private void generateCompilerInfo()
     {
+        import dmd.target : target;
         objectStart();
         requiredProperty("vendor", global.vendor);
-        requiredProperty("version", global._version);
+        requiredProperty("version", global.versionString());
         property("__VERSION__", global.versionNumber());
         requiredProperty("interface", determineCompilerInterface());
         property("size_t", size_t.sizeof);
@@ -866,10 +867,7 @@ public:
 
         propertyStart("architectures");
         arrayStart();
-        if (global.params.is64bit)
-            item("x86_64");
-        else
-            version(X86) item("x86");
+        item(target.architectureName);
         arrayEnd();
 
         propertyStart("predefinedVersions");
@@ -1050,7 +1048,7 @@ Returns: JsonFieldFlags.none on error, otherwise the JsonFieldFlags value
 */
 extern (C++) JsonFieldFlags tryParseJsonField(const(char)* fieldName)
 {
-    auto fieldNameString = fieldName[0 .. strlen(fieldName)];
+    auto fieldNameString = fieldName.toDString();
     foreach (idx, enumName; __traits(allMembers, JsonFieldFlags))
     {
         static if (idx > 0)

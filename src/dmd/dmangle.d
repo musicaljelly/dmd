@@ -1,7 +1,9 @@
 /**
- * Compiler implementation of the $(LINK2 http://www.dlang.org, D programming language)
+ * Does name mangling for `extern(D)` symbols.
  *
- * Copyright: Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Specification: $(LINK2 https://dlang.org/spec/abi.html#name_mangling, Name Mangling)
+ *
+ * Copyright: Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors: Walter Bright, http://www.digitalmars.com
  * License:   $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:    $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/dmangle.d, _dmangle.d)
@@ -32,6 +34,7 @@ import dmd.mtype;
 import dmd.root.ctfloat;
 import dmd.root.outbuffer;
 import dmd.root.aav;
+import dmd.root.string;
 import dmd.target;
 import dmd.tokens;
 import dmd.utf;
@@ -76,7 +79,7 @@ private immutable char[TMAX] mangleChar =
     Tfunction    : 'F', // D function
     Tsarray      : 'G',
     Taarray      : 'H',
-    Tident       : 'I',
+    //              I   // in
     //              J   // out
     //              K   // ref
     //              L   // lazy
@@ -96,6 +99,7 @@ private immutable char[TMAX] mangleChar =
     //              Z   // not variadic, end of parameters
 
     // '@' shouldn't appear anywhere in the deco'd names
+    Tident       : '@',
     Tinstance    : '@',
     Terror       : '@',
     Ttypeof      : '@',
@@ -173,8 +177,8 @@ private extern (C++) final class Mangler : Visitor
     alias visit = Visitor.visit;
 public:
     static assert(Key.sizeof == size_t.sizeof);
-    AssocArray!(Type, size_t) types;
-    AssocArray!(Identifier, size_t) idents;
+    AssocArray!(Type, size_t) types;        // Type => (offset+1) in buf
+    AssocArray!(Identifier, size_t) idents; // Identifier => (offset+1) in buf
     OutBuffer* buf;
 
     extern (D) this(OutBuffer* buf)
@@ -226,15 +230,7 @@ public:
     bool backrefType(Type t)
     {
         if (!t.isTypeBasic())
-        {
-            auto p = types.getLvalue(t);
-            if (*p)
-            {
-                writeBackRef(buf.offset - *p);
-                return true;
-            }
-            *p = buf.offset;
-        }
+            return backrefImpl(types, t);
         return false;
     }
 
@@ -253,13 +249,19 @@ public:
     */
     bool backrefIdentifier(Identifier id)
     {
-        auto p = idents.getLvalue(id);
+        return backrefImpl(idents, id);
+    }
+
+    private extern(D) bool backrefImpl(T)(ref AssocArray!(T, size_t) aa, T key)
+    {
+        auto p = aa.getLvalue(key);
         if (*p)
         {
-            writeBackRef(buf.offset - *p);
+            const offset = *p - 1;
+            writeBackRef(buf.length - offset);
             return true;
         }
-        *p = buf.offset;
+        *p = buf.length + 1;
         return false;
     }
 
@@ -392,8 +394,11 @@ public:
 
         if (ta.isreturn && !ta.isreturninferred)
             buf.writestring("Nj");
-        else if (ta.isscope && !ta.isscopeinferred)
+        else if (ta.isScopeQual && !ta.isscopeinferred)
             buf.writestring("Nl");
+
+        if (ta.islive)
+            buf.writestring("Nm");
 
         switch (ta.trust)
         {
@@ -408,8 +413,9 @@ public:
         }
 
         // Write argument types
-        paramsToDecoBuffer(t.parameterList.parameters);
-        //if (buf.data[buf.offset - 1] == '@') assert(0);
+        foreach (idx, param; t.parameterList)
+            param.accept(this);
+        //if (buf.data[buf.length - 1] == '@') assert(0);
         buf.writeByte('Z' - t.parameterList.varargs); // mark end of arg list
         if (tret !is null)
             visitWithMask(tret, 0);
@@ -448,7 +454,10 @@ public:
     {
         //printf("TypeTuple.toDecoBuffer() t = %p, %s\n", t, t.toChars());
         visit(cast(Type)t);
-        paramsToDecoBuffer(t.arguments);
+        Parameter._foreach(t.arguments, (idx, param) {
+                param.accept(this);
+                return 0;
+        });
         buf.writeByte('Z');
     }
 
@@ -535,8 +544,8 @@ public:
     extern (D) void toBuffer(const(char)[] id, Dsymbol s)
     {
         const len = id.length;
-        if (buf.offset + len >= 8 * 1024 * 1024) // 8 megs ought be enough for anyone
-            s.error("excessive length %llu for symbol, possible recursive expansion?", cast(ulong)(buf.offset + len));
+        if (buf.length + len >= 8 * 1024 * 1024) // 8 megs ought be enough for anyone
+            s.error("excessive length %llu for symbol, possible recursive expansion?", cast(ulong)(buf.length + len));
         else
         {
             buf.print(len);
@@ -544,9 +553,26 @@ public:
         }
     }
 
+    /************************************************************
+     * Try to obtain an externally mangled identifier from a declaration.
+     * If the declaration is at global scope or mixed in at global scope,
+     * the user might want to call it externally, so an externally mangled
+     * name is returned. Member functions or nested functions can't be called
+     * externally in C, so in that case null is returned. C++ does support
+     * namespaces, so extern(C++) always gives a C++ mangled name.
+     *
+     * See also: https://issues.dlang.org/show_bug.cgi?id=20012
+     *
+     * Params:
+     *     d = declaration to mangle
+     *
+     * Returns:
+     *     an externally mangled name or null if the declaration cannot be called externally
+     */
     extern (D) static const(char)[] externallyMangledIdentifier(Declaration d)
     {
-        if (!d.parent || d.parent.isModule() || d.linkage == LINK.cpp) // if at global scope
+        const par = d.toParent(); //toParent() skips over mixin templates
+        if (!par || par.isModule() || d.linkage == LINK.cpp)
         {
             final switch (d.linkage)
             {
@@ -560,7 +586,7 @@ public:
                 case LINK.cpp:
                 {
                     const p = target.cpp.toMangle(d);
-                    return p[0 .. strlen(p)];
+                    return p.toDString();
                 }
                 case LINK.default_:
                 case LINK.system:
@@ -584,12 +610,16 @@ public:
         mangleDecl(d);
         debug
         {
-            const slice = buf.peekSlice();
+            const slice = (*buf)[];
             assert(slice.length);
-            foreach (const char c; slice)
+            for (size_t pos; pos < slice.length; )
             {
+                dchar c;
+                auto ppos = pos;
+                const s = utf_decodeChar(slice, pos, c);
+                assert(s is null, s);
                 assert(c.isValidMangling, "The mangled name '" ~ slice ~ "' " ~
-                    "contains an invalid character: " ~ c);
+                    "contains an invalid character: " ~ slice[ppos..pos]);
             }
         }
     }
@@ -972,33 +1002,38 @@ public:
         {
         case 1:
             m = 'a';
-            q = e.string[0 .. e.len];
+            q = e.peekString();
             break;
         case 2:
+        {
             m = 'w';
+            const slice = e.peekWstring();
             for (size_t u = 0; u < e.len;)
             {
                 dchar c;
-                const p = utf_decodeWchar(e.wstring, e.len, u, c);
-                if (p)
-                    e.error("%s", p);
+                if (const s = utf_decodeWchar(slice, u, c))
+                    e.error("%.*s", cast(int)s.length, s.ptr);
                 else
                     tmp.writeUTF8(c);
             }
-            q = tmp.peekSlice();
+            q = tmp[];
             break;
+        }
         case 4:
+        {
             m = 'd';
-            foreach (u; 0 .. e.len)
+            const slice = e.peekDstring();
+            foreach (c; slice)
             {
-                const c = (cast(uint*)e.string)[u];
                 if (!utf_isValidDchar(c))
                     e.error("invalid UCS-32 char \\U%08x", c);
                 else
                     tmp.writeUTF8(c);
             }
-            q = tmp.peekSlice();
+            q = tmp[];
             break;
+        }
+
         default:
             assert(0);
         }
@@ -1006,15 +1041,14 @@ public:
         buf.writeByte(m);
         buf.print(q.length);
         buf.writeByte('_');    // nbytes <= 11
-        size_t qi = 0;
-        for (char* p = cast(char*)buf.data + buf.offset, pend = p + 2 * q.length; p < pend; p += 2, ++qi)
+        auto slice = buf.allocate(2 * q.length);
+        foreach (i, c; q)
         {
-            char hi = (q[qi] >> 4) & 0xF;
-            p[0] = cast(char)(hi < 10 ? hi + '0' : hi - 10 + 'a');
-            char lo = q[qi] & 0xF;
-            p[1] = cast(char)(lo < 10 ? lo + '0' : lo - 10 + 'a');
+            char hi = (c >> 4) & 0xF;
+            slice[i * 2] = cast(char)(hi < 10 ? hi + '0' : hi - 10 + 'a');
+            char lo = c & 0xF;
+            slice[i * 2 + 1] = cast(char)(lo < 10 ? lo + '0' : lo - 10 + 'a');
         }
-        buf.offset += 2 * q.length;
     }
 
     override void visit(ArrayLiteralExp e)
@@ -1056,18 +1090,6 @@ public:
     }
 
     ////////////////////////////////////////////////////////////////////////////
-    void paramsToDecoBuffer(Parameters* parameters)
-    {
-        //printf("Parameter.paramsToDecoBuffer()\n");
-
-        int paramsToDecoBufferDg(size_t n, Parameter p)
-        {
-            p.accept(this);
-            return 0;
-        }
-
-        Parameter._foreach(parameters, &paramsToDecoBufferDg);
-    }
 
     override void visit(Parameter p)
     {
@@ -1078,10 +1100,15 @@ public:
         if ((p.storageClass & (STC.return_ | STC.wild)) == STC.return_ &&
             !(p.storageClass & STC.returninferred))
             buf.writestring("Nk");
-        switch (p.storageClass & (STC.in_ | STC.out_ | STC.ref_ | STC.lazy_))
+        switch (p.storageClass & (STC.IOR | STC.lazy_))
         {
         case 0:
+            break;
         case STC.in_:
+            buf.writeByte('I');
+            break;
+        case STC.in_ | STC.ref_:
+            buf.writestring("IK");
             break;
         case STC.out_:
             buf.writeByte('J');
@@ -1095,11 +1122,11 @@ public:
         default:
             debug
             {
-                printf("storageClass = x%llx\n", p.storageClass & (STC.in_ | STC.out_ | STC.ref_ | STC.lazy_));
+                printf("storageClass = x%llx\n", p.storageClass & (STC.IOR | STC.lazy_));
             }
             assert(0);
         }
-        visitWithMask(p.type, 0);
+        visitWithMask(p.type, (p.storageClass & STC.in_) ? MODFlags.const_ : 0);
     }
 }
 
@@ -1110,7 +1137,8 @@ package bool isValidMangling(dchar c) nothrow
         c >= 'A' && c <= 'Z' ||
         c >= 'a' && c <= 'z' ||
         c >= '0' && c <= '9' ||
-        c != 0 && strchr("$%().:?@[]_", c);
+        c != 0 && strchr("$%().:?@[]_", c) ||
+        isUniAlpha(c);
 }
 
 // valid mangled characters
@@ -1193,6 +1221,7 @@ void mangleToFuncSignature(ref OutBuffer buf, FuncDeclaration fd)
     scope Mangler v = new Mangler(&buf);
 
     MODtoDecoBuffer(&buf, tf.mod);
-    v.paramsToDecoBuffer(tf.parameterList.parameters);
+    foreach (idx, param; tf.parameterList)
+        param.accept(v);
     buf.writeByte('Z' - tf.parameterList.varargs);
 }

@@ -1,6 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -12,6 +12,7 @@
 
 #include "dsymbol.h"
 #include "mtype.h"
+#include "objc.h"
 #include "tokens.h"
 
 class Expression;
@@ -26,68 +27,66 @@ struct Ensure
 };
 class FuncDeclaration;
 class StructDeclaration;
-struct CompiledCtfeFunction;
-struct ObjcSelector;
 struct IntRange;
 
-#define STCundefined    0LL
-#define STCstatic       1LL
-#define STCextern       2LL
-#define STCconst        4LL
-#define STCfinal        8LL
-#define STCabstract     0x10LL
-#define STCparameter    0x20LL
-#define STCfield        0x40LL
-#define STCoverride     0x80LL
-#define STCauto         0x100LL
-#define STCsynchronized 0x200LL
-#define STCdeprecated   0x400LL
-#define STCin           0x800LL         // in parameter
-#define STCout          0x1000LL        // out parameter
-#define STClazy         0x2000LL        // lazy parameter
-#define STCforeach      0x4000LL        // variable for foreach loop
-#define STCvariadic     0x10000LL       // the 'variadic' parameter in: T foo(T a, U b, V variadic...)
-#define STCctorinit     0x20000LL       // can only be set inside constructor
-#define STCtemplateparameter  0x40000LL // template parameter
-#define STCscope        0x80000LL
-#define STCimmutable    0x100000LL
-#define STCref          0x200000LL
-#define STCinit         0x400000LL      // has explicit initializer
-#define STCmanifest     0x800000LL      // manifest constant
-#define STCnodtor       0x1000000LL     // don't run destructor
-#define STCnothrow      0x2000000LL     // never throws exceptions
-#define STCpure         0x4000000LL     // pure function
-#define STCtls          0x8000000LL     // thread local
-#define STCalias        0x10000000LL    // alias parameter
-#define STCshared       0x20000000LL    // accessible from multiple threads
+#define STCundefined    0ULL
+#define STCstatic       1ULL
+#define STCextern       2ULL
+#define STCconst        4ULL
+#define STCfinal        8ULL
+#define STCabstract     0x10ULL
+#define STCparameter    0x20ULL
+#define STCfield        0x40ULL
+#define STCoverride     0x80ULL
+#define STCauto         0x100ULL
+#define STCsynchronized 0x200ULL
+#define STCdeprecated   0x400ULL
+#define STCin           0x800ULL         // in parameter
+#define STCout          0x1000ULL        // out parameter
+#define STClazy         0x2000ULL        // lazy parameter
+#define STCforeach      0x4000ULL        // variable for foreach loop
+#define STCvariadic     0x10000ULL       // the 'variadic' parameter in: T foo(T a, U b, V variadic...)
+#define STCctorinit     0x20000ULL       // can only be set inside constructor
+#define STCtemplateparameter  0x40000ULL // template parameter
+#define STCscope        0x80000ULL
+#define STCimmutable    0x100000ULL
+#define STCref          0x200000ULL
+#define STCinit         0x400000ULL      // has explicit initializer
+#define STCmanifest     0x800000ULL      // manifest constant
+#define STCnodtor       0x1000000ULL     // don't run destructor
+#define STCnothrow      0x2000000ULL     // never throws exceptions
+#define STCpure         0x4000000ULL     // pure function
+#define STCtls          0x8000000ULL     // thread local
+#define STCalias        0x10000000ULL    // alias parameter
+#define STCshared       0x20000000ULL    // accessible from multiple threads
 // accessible from multiple threads
 // but not typed as "shared"
-#define STCgshared      0x40000000LL
-#define STCwild         0x80000000LL    // for "wild" type constructor
+#define STCgshared      0x40000000ULL
+#define STCwild         0x80000000ULL    // for "wild" type constructor
 #define STC_TYPECTOR    (STCconst | STCimmutable | STCshared | STCwild)
 #define STC_FUNCATTR    (STCref | STCnothrow | STCnogc | STCpure | STCproperty | STCsafe | STCtrusted | STCsystem)
 
-#define STCproperty      0x100000000LL
-#define STCsafe          0x200000000LL
-#define STCtrusted       0x400000000LL
-#define STCsystem        0x800000000LL
-#define STCctfe          0x1000000000LL  // can be used in CTFE, even if it is static
-#define STCdisable       0x2000000000LL  // for functions that are not callable
-#define STCresult        0x4000000000LL  // for result variables passed to out contracts
-#define STCnodefaultctor 0x8000000000LL  // must be set inside constructor
-#define STCtemp          0x10000000000LL // temporary variable
-#define STCrvalue        0x20000000000LL // force rvalue for variables
-#define STCnogc          0x40000000000LL // @nogc
-#define STCvolatile      0x80000000000LL // destined for volatile in the back end
-#define STCreturn        0x100000000000LL // 'return ref' or 'return scope' for function parameters
-#define STCautoref       0x200000000000LL // Mark for the already deduced 'auto ref' parameter
-#define STCinference     0x400000000000LL // do attribute inference
-#define STCexptemp       0x800000000000LL // temporary variable that has lifetime restricted to an expression
-#define STCmaybescope    0x1000000000000LL // parameter might be 'scope'
-#define STCscopeinferred 0x2000000000000LL // 'scope' has been inferred and should not be part of mangling
-#define STCfuture        0x4000000000000LL // introducing new base class function
-#define STClocal         0x8000000000000LL // do not forward (see dmd.dsymbol.ForwardingScopeDsymbol).
-#define STCreturninferred 0x10000000000000LL   // 'return' has been inferred and should not be part of mangling
+#define STCproperty      0x100000000ULL
+#define STCsafe          0x200000000ULL
+#define STCtrusted       0x400000000ULL
+#define STCsystem        0x800000000ULL
+#define STCctfe          0x1000000000ULL  // can be used in CTFE, even if it is static
+#define STCdisable       0x2000000000ULL  // for functions that are not callable
+#define STCresult        0x4000000000ULL  // for result variables passed to out contracts
+#define STCnodefaultctor 0x8000000000ULL  // must be set inside constructor
+#define STCtemp          0x10000000000ULL // temporary variable
+#define STCrvalue        0x20000000000ULL // force rvalue for variables
+#define STCnogc          0x40000000000ULL // @nogc
+#define STCvolatile      0x80000000000ULL // destined for volatile in the back end
+#define STCreturn        0x100000000000ULL // 'return ref' or 'return scope' for function parameters
+#define STCautoref       0x200000000000ULL // Mark for the already deduced 'auto ref' parameter
+#define STCinference     0x400000000000ULL // do attribute inference
+#define STCexptemp       0x800000000000ULL // temporary variable that has lifetime restricted to an expression
+#define STCmaybescope    0x1000000000000ULL // parameter might be 'scope'
+#define STCscopeinferred 0x2000000000000ULL // 'scope' has been inferred and should not be part of mangling
+#define STCfuture        0x4000000000000ULL // introducing new base class function
+#define STClocal         0x8000000000000ULL // do not forward (see dmd.dsymbol.ForwardingScopeDsymbol).
+#define STCreturninferred 0x10000000000000ULL   // 'return' has been inferred and should not be part of mangling
 
 void ObjectNotFound(Identifier *id);
 
@@ -193,7 +192,7 @@ public:
     bool hasOverloads;
 
     const char *kind() const;
-    bool equals(RootObject *o);
+    bool equals(const RootObject *o) const;
     bool overloadInsert(Dsymbol *s);
 
     Dsymbol *toAlias();
@@ -217,9 +216,10 @@ public:
     bool isargptr;              // if parameter that _argptr points to
     bool ctorinit;              // it has been initialized in a ctor
     bool iscatchvar;            // this is the exception object variable in catch() clause
+    bool isowner;               // this is an Owner, despite it being `scope`
     bool onstack;               // it is a class that was allocated on the stack
     bool mynew;                 // it is a class new'd with custom operator new
-    int canassign;              // it can be assigned to
+    char canassign;             // it can be assigned to
     bool overlapped;            // if it is a field and has overlapping
     bool overlapUnsafe;         // if it is an overlapping field and the overlaps are unsafe
     bool doNotInferScope;       // do not infer 'scope' for this variable
@@ -230,24 +230,20 @@ public:
     unsigned endlinnum;         // line number of end of scope that this var lives in
 
     // When interpreting, these point to the value (NULL if value not determinable)
-    // The index of this variable on the CTFE stack, -1 if not allocated
-    int ctfeAdrOnStack;
+    // The index of this variable on the CTFE stack, ~0u if not allocated
+    unsigned ctfeAdrOnStack;
     Expression *edtor;          // if !=NULL, does the destruction of the variable
     IntRange *range;            // if !NULL, the variable is known to be within the range
 
     VarDeclarations *maybes;    // STCmaybescope variables that are assigned to this STCmaybescope variable
 
-private:
-    bool _isAnonymous;
-
 public:
-    static VarDeclaration *create(Loc loc, Type *t, Identifier *id, Initializer *init, StorageClass storage_class = STCundefined);
+    static VarDeclaration *create(const Loc &loc, Type *t, Identifier *id, Initializer *init, StorageClass storage_class = STCundefined);
     Dsymbol *syntaxCopy(Dsymbol *);
     void setFieldOffset(AggregateDeclaration *ad, unsigned *poffset, bool isunion);
     const char *kind() const;
     AggregateDeclaration *isThis();
     bool needThis();
-    bool isAnonymous();
     bool isExport() const;
     bool isImportedSymbol() const;
     bool isDataseg();
@@ -286,7 +282,7 @@ public:
 
     static TypeInfoDeclaration *create(Type *tinfo);
     Dsymbol *syntaxCopy(Dsymbol *);
-    const char *toChars();
+    const char *toChars() const;
 
     TypeInfoDeclaration *isTypeInfoDeclaration() { return this; }
     void accept(Visitor *v) { v->visit(this); }
@@ -439,30 +435,53 @@ enum ILS
 
 /**************************************************************/
 
-enum BUILTIN
+enum class BUILTIN : unsigned char
 {
-    BUILTINunknown = -1,        // not known if this is a builtin
-    BUILTINno,                  // this is not a builtin
-    BUILTINyes                  // this is a builtin
+    unknown = 255,   /// not known if this is a builtin
+    unimp = 0,       /// this is not a builtin
+    gcc,             /// this is a GCC builtin
+    llvm,            /// this is an LLVM builtin
+    sin,
+    cos,
+    tan,
+    sqrt,
+    fabs,
+    ldexp,
+    log,
+    log2,
+    log10,
+    exp,
+    expm1,
+    exp2,
+    round,
+    floor,
+    ceil,
+    trunc,
+    copysign,
+    pow,
+    fmin,
+    fmax,
+    fma,
+    isnan,
+    isinfinity,
+    isfinite,
+    bsf,
+    bsr,
+    bswap,
+    popcnt,
+    yl2x,
+    yl2xp1,
+    toPrecFloat,
+    toPrecDouble,
+    toPrecReal
 };
 
 Expression *eval_builtin(Loc loc, FuncDeclaration *fd, Expressions *arguments);
 BUILTIN isBuiltin(FuncDeclaration *fd);
 
-typedef Expression *(*builtin_fp)(Loc loc, FuncDeclaration *fd, Expressions *arguments);
-void add_builtin(const char *mangle, builtin_fp fp);
-void builtin_init();
-
 class FuncDeclaration : public Declaration
 {
 public:
-    struct HiddenParameters
-    {
-        VarDeclaration *this_;
-        bool isThis2;
-        VarDeclaration *selector;
-    };
-
     Statements *frequires;              // in contracts
     Ensures *fensures;                  // out contracts
     Statement *frequire;                // lowered in contract
@@ -487,8 +506,6 @@ public:
     VarDeclaration *vthis;              // 'this' parameter (member and nested)
     bool isThis2;                       // has a dual-context 'this' parameter
     VarDeclaration *v_arguments;        // '_arguments' parameter
-    ObjcSelector *selector;             // Objective-C method selector (member function only)
-    VarDeclaration *selectorParameter;  // Objective-C implicit selector parameter
 
     VarDeclaration *v_argptr;           // '_argptr' variable
     VarDeclarations *parameters;        // Array of VarDeclaration's for parameters
@@ -500,15 +517,14 @@ public:
     bool naked;                         // true if naked
     bool generated;                     // true if function was generated by the compiler rather than
                                         // supplied by the user
+    bool hasAlwaysInlines;              // contains references to functions that must be inlined
     unsigned char isCrtCtorDtor;        // has attribute pragma(crt_constructor(1)/crt_destructor(2))
                                         // not set before the glue layer
     ILS inlineStatusStmt;
     ILS inlineStatusExp;
     PINLINE inlining;
 
-    CompiledCtfeFunction *ctfeCode;     // Compiled code for interpreter
     int inlineNest;                     // !=0 if nested inline
-    bool isArrayOp;                     // true if array operation
     bool eh_none;                       /// true if no exception unwinding is needed
 
     // true if errors in semantic3 this function's frame ptr
@@ -550,6 +566,12 @@ public:
 
     // local variables in this function which are referenced by nested functions
     VarDeclarations closureVars;
+
+    /** Outer variables which are referenced by this nested function
+     * (the inverse of closureVars)
+     */
+    VarDeclarations outerVars;
+
     // Sibling nested functions which called this one
     FuncDeclarations siblingCallers;
 
@@ -557,14 +579,18 @@ public:
 
     unsigned flags;                     // FUNCFLAGxxxxx
 
+    // Data for a function declaration that is needed for the Objective-C
+    // integration.
+    ObjcFuncDeclaration objc;
+
     static FuncDeclaration *create(const Loc &loc, const Loc &endloc, Identifier *id, StorageClass storage_class, Type *type);
     Dsymbol *syntaxCopy(Dsymbol *);
     bool functionSemantic();
     bool functionSemantic3();
-    bool equals(RootObject *o);
+    bool equals(const RootObject *o) const;
 
     int overrides(FuncDeclaration *fd);
-    int findVtblIndex(Dsymbols *vtbl, int dim, bool fix17349 = true);
+    int findVtblIndex(Dsymbols *vtbl, int dim);
     BaseClass *overrideInterface();
     bool overloadInsert(Dsymbol *s);
     bool inUnittest();
@@ -608,6 +634,8 @@ public:
 
     static FuncDeclaration *genCfunc(Parameters *args, Type *treturn, const char *name, StorageClass stc=0);
     static FuncDeclaration *genCfunc(Parameters *args, Type *treturn, Identifier *id, StorageClass stc=0);
+
+    bool checkNrvo();
 
     FuncDeclaration *isFuncDeclaration() { return this; }
 
@@ -658,7 +686,7 @@ public:
     bool isCpCtor;
     Dsymbol *syntaxCopy(Dsymbol *);
     const char *kind() const;
-    const char *toChars();
+    const char *toChars() const;
     bool isVirtual() const;
     bool addPreInvariant();
     bool addPostInvariant();
@@ -685,7 +713,7 @@ class DtorDeclaration : public FuncDeclaration
 public:
     Dsymbol *syntaxCopy(Dsymbol *);
     const char *kind() const;
-    const char *toChars();
+    const char *toChars() const;
     bool isVirtual() const;
     bool addPreInvariant();
     bool addPostInvariant();
@@ -786,22 +814,5 @@ public:
     bool addPostInvariant();
 
     NewDeclaration *isNewDeclaration() { return this; }
-    void accept(Visitor *v) { v->visit(this); }
-};
-
-
-class DeleteDeclaration : public FuncDeclaration
-{
-public:
-    Parameters *parameters;
-
-    Dsymbol *syntaxCopy(Dsymbol *);
-    const char *kind() const;
-    bool isDelete();
-    bool isVirtual() const;
-    bool addPreInvariant();
-    bool addPostInvariant();
-
-    DeleteDeclaration *isDeleteDeclaration() { return this; }
     void accept(Visitor *v) { v->visit(this); }
 };

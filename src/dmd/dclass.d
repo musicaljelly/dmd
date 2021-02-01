@@ -1,8 +1,9 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Defines a `class` declaration.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Specification: $(LINK2 https://dlang.org/spec/class.html, Classes)
+ *
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/dclass.d, _dclass.d)
@@ -16,6 +17,7 @@ import core.stdc.stdio;
 import core.stdc.string;
 
 import dmd.aggregate;
+import dmd.apply;
 import dmd.arraytypes;
 import dmd.gluelayer;
 import dmd.declaration;
@@ -41,7 +43,7 @@ enum Abstract : int
 
 /***********************************************************
  */
-struct BaseClass
+extern (C++) struct BaseClass
 {
     Type type;          // (before semantic processing)
 
@@ -83,40 +85,20 @@ struct BaseClass
         for (size_t j = sym.vtblOffset(); j < sym.vtbl.dim; j++)
         {
             FuncDeclaration ifd = sym.vtbl[j].isFuncDeclaration();
-            FuncDeclaration fd;
-            TypeFunction tf;
 
             //printf("        vtbl[%d] is '%s'\n", j, ifd ? ifd.toChars() : "null");
             assert(ifd);
 
             // Find corresponding function in this class
-            tf = ifd.type.toTypeFunction();
-            fd = cd.findFunc(ifd.ident, tf);
+            auto tf = ifd.type.toTypeFunction();
+            auto fd = cd.findFunc(ifd.ident, tf);
             if (fd && !fd.isAbstract())
             {
-                //printf("            found\n");
-                // Check that calling conventions match
-                if (fd.linkage != ifd.linkage)
-                    fd.error("linkage doesn't match interface function");
-
-                // Check that it is current
-                //printf("newinstance = %d fd.toParent() = %s ifd.toParent() = %s\n",
-                    //newinstance, fd.toParent().toChars(), ifd.toParent().toChars());
-                if (newinstance && fd.toParent() != cd && ifd.toParent() == sym)
-                    cd.error("interface function `%s` is not implemented", ifd.toFullSignature());
-
                 if (fd.toParent() == cd)
                     result = true;
             }
             else
-            {
-                //printf("            not found %p\n", fd);
-                // BUG: should mark this class as abstract?
-                if (!cd.isAbstract())
-                    cd.error("interface function `%s` is not implemented", ifd.toFullSignature());
-
                 fd = null;
-            }
             if (vtbl)
                 (*vtbl)[j] = fd;
         }
@@ -206,10 +188,6 @@ extern (C++) class ClassDeclaration : AggregateDeclaration
     /// to prevent recursive attempts
     private bool inuse;
 
-    /// true if this class has an identifier, but was originally declared anonymous
-    /// used in support of https://issues.dlang.org/show_bug.cgi?id=17371
-    private bool isActuallyAnonymous;
-
     Abstract isabstract;
 
     /// set the progress of base classes resolving
@@ -228,11 +206,9 @@ extern (C++) class ClassDeclaration : AggregateDeclaration
         objc = ObjcClassDeclaration(this);
 
         if (!id)
-        {
-            isActuallyAnonymous = true;
-        }
+            id = Identifier.generateAnonymousId("class");
 
-        super(loc, id ? id : Identifier.generateId("__anonclass"));
+        super(loc, id);
 
         __gshared const(char)* msg = "only object.d can define this reserved class name";
 
@@ -511,7 +487,9 @@ extern (C++) class ClassDeclaration : AggregateDeclaration
 
         if (!members || !symtab) // opaque or addMember is not yet done
         {
-            error("is forward referenced when looking for `%s`", ident.toChars());
+            // .stringof is always defined (but may be hidden by some other symbol)
+            if (ident != Id.stringof)
+                error("is forward referenced when looking for `%s`", ident.toChars());
             //*(char*)0=0;
             return null;
         }
@@ -689,11 +667,6 @@ extern (C++) class ClassDeclaration : AggregateDeclaration
     final bool hasMonitor()
     {
         return classKind == ClassKind.d;
-    }
-
-    override bool isAnonymous()
-    {
-        return isActuallyAnonymous;
     }
 
     final bool isFuncHidden(FuncDeclaration fd)
@@ -874,7 +847,7 @@ extern (C++) class ClassDeclaration : AggregateDeclaration
          * Resolve forward references to all class member functions,
          * and determine whether this class is abstract.
          */
-        extern (C++) static int func(Dsymbol s, void* param)
+        static int func(Dsymbol s)
         {
             auto fd = s.isFuncDeclaration();
             if (!fd)
@@ -890,7 +863,7 @@ extern (C++) class ClassDeclaration : AggregateDeclaration
         for (size_t i = 0; i < members.dim; i++)
         {
             auto s = (*members)[i];
-            if (s.apply(&func, cast(void*)this))
+            if (s.apply(&func))
             {
                 return yes();
             }
@@ -917,7 +890,7 @@ extern (C++) class ClassDeclaration : AggregateDeclaration
              * each of the virtual functions,
              * which will fill in the vtbl[] overrides.
              */
-            extern (C++) static int virtualSemantic(Dsymbol s, void* param)
+            static int virtualSemantic(Dsymbol s)
             {
                 auto fd = s.isFuncDeclaration();
                 if (fd && !(fd.storage_class & STC.static_) && !fd.isUnitTestDeclaration())
@@ -928,7 +901,7 @@ extern (C++) class ClassDeclaration : AggregateDeclaration
             for (size_t i = 0; i < members.dim; i++)
             {
                 auto s = (*members)[i];
-                s.apply(&virtualSemantic, cast(void*)this);
+                s.apply(&virtualSemantic);
             }
         }
 

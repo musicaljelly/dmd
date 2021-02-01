@@ -1,8 +1,9 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Defines a package and module.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Specification: $(LINK2 https://dlang.org/spec/module.html, Modules)
+ *
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/dmodule.d, _dmodule.d)
@@ -38,9 +39,10 @@ import dmd.root.filename;
 import dmd.root.outbuffer;
 import dmd.root.port;
 import dmd.root.rmem;
+import dmd.root.rootobject;
+import dmd.root.string;
 import dmd.semantic2;
 import dmd.semantic3;
-import dmd.utils;
 import dmd.visitor;
 
 version(Windows) {
@@ -140,6 +142,24 @@ void semantic3OnDependencies(Module m)
 }
 
 /**
+ * Remove generated .di files on error and exit
+ */
+void removeHdrFilesAndFail(ref Param params, ref Modules modules)
+{
+    if (params.doHdrGeneration)
+    {
+        foreach (m; modules)
+        {
+            if (m.isHdrFile)
+                continue;
+            File.remove(m.hdrfile.toChars());
+        }
+    }
+
+    fatal();
+}
+
+/**
  * Converts a chain of identifiers to the filename of the module
  *
  * Params:
@@ -170,9 +190,9 @@ private const(char)[] getFilename(Identifiers* packages, Identifier ident)
         {
             const q = strchr(m, '=');
             assert(q);
-            if (dotmods.offset == q - m && memcmp(dotmods.peekChars(), m, q - m) == 0)
+            if (dotmods.length == q - m && memcmp(dotmods.peekChars(), m, q - m) == 0)
             {
-                buf.reset();
+                buf.setsize(0);
                 auto rhs = q[1 .. strlen(q)];
                 if (rhs.length > 0 && (rhs[$ - 1] == '/' || rhs[$ - 1] == '\\'))
                     rhs = rhs[0 .. $ - 1]; // remove trailing separator
@@ -229,6 +249,15 @@ extern (C++) class Package : ScopeDsymbol
     override const(char)* kind() const
     {
         return "package";
+    }
+
+    override bool equals(const RootObject o) const
+    {
+        // custom 'equals' for bug 17441. "package a" and "module a" are not equal
+        if (this == o)
+            return true;
+        auto p = cast(Package)o;
+        return p && isModule() == p.isModule() && ident.equals(p.ident);
     }
 
     /****************************************************
@@ -411,7 +440,9 @@ extern (C++) final class Module : Package
     uint numlines;              // number of lines in source file
     bool isHdrFile;             // if it is a header (.di) file
     bool isDocFile;             // if it is a documentation input file, not D source
+    bool hasAlwaysInlines;      // contains references to functions that must be inlined
     bool isPackageFile;         // if it is a package.d
+    Package pkg;                // if isPackageFile is true, the Package that contains this package.d
     Strings contentImportedFiles; // array of files whose content was imported
     int needmoduleinfo;
     int selfimports;            // 0: don't know, 1: does not, 2: does
@@ -487,7 +518,7 @@ extern (C++) final class Module : Package
     Identifiers* versionids;    // version identifiers
     Identifiers* versionidsNot; // forward referenced version identifiers
 
-    Macro* macrotable;          // document comment macros
+    MacroTable macrotable;      // document comment macros
     Escape* escapetable;        // document comment escapes
 
     size_t nameoffset;          // offset of module name from start of ModuleInfo
@@ -584,8 +615,6 @@ extern (C++) final class Module : Package
             m.importedFrom = m;
             assert(m.isRoot());
         }
-
-        Compiler.loadModule(m);
         return m;
     }
 
@@ -622,7 +651,7 @@ extern (C++) final class Module : Package
                 else version (Windows)
                     import core.sys.windows.winbase : getpid = GetCurrentProcessId;
                 buf.printf("__stdin_%d.d", getpid());
-                arg = buf.peekSlice();
+                arg = buf[];
             }
             if (global.params.preservePaths)
                 argdoc = arg;
@@ -646,7 +675,7 @@ extern (C++) final class Module : Package
 
     extern (D) void setDocfile()
     {
-        docfile = setOutfilename(global.params.docname.toDString, global.params.docdir.toDString, arg, global.doc_ext);
+        docfile = setOutfilename(global.params.docname, global.params.docdir, arg, global.doc_ext);
     }
 
     /**
@@ -664,7 +693,7 @@ extern (C++) final class Module : Package
     {
         //printf("Module::loadSourceBuffer('%s') file '%s'\n", toChars(), srcfile.toChars());
         // take ownership of buffer
-        srcBuffer = new FileBuffer(readResult.extractData());
+        srcBuffer = new FileBuffer(readResult.extractSlice());
         if (readResult.success)
             return true;
 
@@ -694,8 +723,11 @@ extern (C++) final class Module : Package
                     fprintf(stderr, "import path[%llu] = %s\n", cast(ulong)i, p);
             }
             else
+            {
                 fprintf(stderr, "Specify path to file '%s' with -I switch\n", srcfile.toChars());
-            fatal();
+            }
+
+            removeHdrFilesAndFail(global.params, Module.amodules);
         }
         return false;
     }
@@ -723,12 +755,11 @@ extern (C++) final class Module : Package
     /// syntactic parse
     Module parse()
     {
-        scope diagnosticReporter = new StderrDiagnosticReporter(global.params.useDeprecated);
-        return parse!ASTCodegen(diagnosticReporter);
+        return parseModule!ASTCodegen();
     }
 
     /// ditto
-    extern (D) Module parse(AST)(DiagnosticReporter diagnosticReporter)
+    extern (D) Module parseModule(AST)()
     {
 
 
@@ -753,7 +784,7 @@ extern (C++) final class Module : Package
 
             if (buf.length & 3)
             {
-                error("odd length of UTF-32 char source %u", buf.length);
+                error("odd length of UTF-32 char source %llu", cast(ulong) buf.length);
                 fatal();
             }
 
@@ -799,7 +830,7 @@ extern (C++) final class Module : Package
 
             if (buf.length & 1)
             {
-                error("odd length of UTF-16 char source %u", buf.length);
+                error("odd length of UTF-16 char source %llu", cast(ulong) buf.length);
                 fatal();
             }
 
@@ -989,13 +1020,11 @@ extern (C++) final class Module : Package
             isHdrFile = true;
         }
         {
-            scope p = new Parser!AST(this, buf, cast(bool) docfile, diagnosticReporter);
+            scope p = new Parser!AST(this, buf, cast(bool) docfile);
             p.nextToken();
             members = p.parseModule();
             md = p.md;
             numlines = p.scanloc.linnum;
-            if (p.errors)
-                ++global.errors;
         }
         srcBuffer.destroy();
         srcBuffer = null;
@@ -1048,15 +1077,27 @@ extern (C++) final class Module : Package
              *
              * To avoid the conflict:
              * 1. If preceding package name insertion had occurred by Package::resolve,
-             *    later package.d loading will change Package::isPkgMod to PKG.module_ and set Package::mod.
+             *    reuse the previous wrapping 'Package' if it exists
              * 2. Otherwise, 'package.d' wrapped by 'Package' is inserted to the internal tree in here.
+             *
+             * Then change Package::isPkgMod to PKG.module_ and set Package::mod.
+             *
+             * Note that the 'wrapping Package' is the Package that contains package.d and other submodules,
+             * the one inserted to the symbol table.
              */
-            auto p = new Package(Loc.initial, ident);
+            auto ps = dst.lookup(ident);
+            Package p = ps ? ps.isPackage() : null;
+            if (p is null)
+            {
+                p = new Package(Loc.initial, ident);
+                p.tag = this.tag; // reuse the same package tag
+                p.symtab = new DsymbolTable();
+            }
+            this.tag = p.tag; // reuse the 'older' package tag
+            this.pkg = p;
             p.parent = this.parent;
             p.isPkgMod = PKG.module_;
             p.mod = this;
-            p.tag = this.tag; // reuse the same package tag
-            p.symtab = new DsymbolTable();
             s = p;
         }
         if (!dst.insert(s))
@@ -1080,16 +1121,9 @@ extern (C++) final class Module : Package
             }
             else if (Package pkg = prev.isPackage())
             {
-                if (pkg.isPkgMod == PKG.unknown && isPackageFile)
-                {
-                    /* If the previous inserted Package is not yet determined as package.d,
-                     * link it to the actual module.
-                     */
-                    pkg.isPkgMod = PKG.module_;
-                    pkg.mod = this;
-                    pkg.tag = this.tag; // reuse the same package tag
+                // 'package.d' loaded after a previous 'Package' insertion
+                if (isPackageFile)
                     amodules.push(this); // Add to global array of all modules
-                }
                 else
                     error(md ? md.loc : loc, "from file %s conflicts with package name %s", srcname, pkg.toChars());
             }
@@ -1101,6 +1135,7 @@ extern (C++) final class Module : Package
             // Add to global array of all modules
             amodules.push(this);
         }
+        Compiler.onParseModule(this);
         return this;
     }
 
@@ -1174,6 +1209,29 @@ extern (C++) final class Module : Package
     {
         //printf("needModuleInfo() %s, %d, %d\n", toChars(), needmoduleinfo, global.params.cov);
         return needmoduleinfo || global.params.cov;
+    }
+
+    /*******************************************
+     * Print deprecation warning if we're deprecated, when
+     * this module is imported from scope sc.
+     *
+     * Params:
+     *  sc = the scope into which we are imported
+     *  loc = the location of the import statement
+     */
+    void checkImportDeprecation(const ref Loc loc, Scope* sc)
+    {
+        if (md && md.isdeprecated && !sc.isDeprecated)
+        {
+            Expression msg = md.msg;
+            if (StringExp se = msg ? msg.toStringExp() : null)
+            {
+                const slice = se.peekString();
+                deprecation(loc, "is deprecated - %.*s", cast(int)slice.length, slice.ptr);
+            }
+            else
+                deprecation(loc, "is deprecated");
+        }
     }
 
     override Dsymbol search(const ref Loc loc, Identifier ident, int flags = SearchLocalsOnly)
@@ -1415,6 +1473,8 @@ extern (C++) final class Module : Package
     Symbol* stest; // module unit test
     Symbol* sfilename; // symbol for filename
 
+    uint[uint] ctfe_cov; /// coverage information from ctfe execution_count[line]
+
     override inout(Module) isModule() inout
     {
         return this;
@@ -1444,7 +1504,7 @@ extern (C++) final class Module : Package
 
 /***********************************************************
  */
-struct ModuleDeclaration
+extern (C++) struct ModuleDeclaration
 {
     Loc loc;
     Identifier id;

@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Convert a D symbol to a symbol the linker understands (with mangled name).
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/tocsym.d, _tocsym.d)
@@ -45,7 +44,6 @@ import dmd.todt;
 import dmd.tokens;
 import dmd.typinf;
 import dmd.visitor;
-import dmd.irstate;
 import dmd.dmangle;
 
 import dmd.backend.cdef;
@@ -72,7 +70,7 @@ Symbol *toSymbolX(Dsymbol ds, const(char)* prefix, int sclass, type *t, const(ch
 
     OutBuffer buf;
     mangleToBuffer(ds, &buf);
-    size_t nlen = buf.offset;
+    size_t nlen = buf.length;
     const(char)* n = buf.peekChars();
     assert(n);
 
@@ -144,7 +142,7 @@ Symbol *toSymbol(Dsymbol s)
             if (vd.isDataseg())
             {
                 mangleToBuffer(vd, &buf);
-                id = buf.peekChars()[0..buf.offset]; // symbol_calloc needs zero termination
+                id = buf.peekChars()[0..buf.length]; // symbol_calloc needs zero termination
             }
             else
             {
@@ -155,7 +153,7 @@ Symbol *toSymbol(Dsymbol s)
                     {
                         buf.writestring("__nrvo_");
                         buf.writestring(id);
-                        id = buf.peekChars()[0..buf.offset]; // symbol_calloc needs zero termination
+                        id = buf.peekChars()[0..buf.length]; // symbol_calloc needs zero termination
                         isNRVO = true;
                     }
                 }
@@ -604,16 +602,40 @@ Symbol *toVtblSymbol(ClassDeclaration cd)
 
 Symbol *toInitializer(AggregateDeclaration ad)
 {
+    //printf("toInitializer() %s\n", ad.toChars());
     if (!ad.sinit)
     {
-        auto stag = fake_classsym(Id.ClassInfo);
-        auto s = toSymbolX(ad, "__init", SCextern, stag.Stype, "Z");
-        s.Sfl = FLextern;
-        s.Sflags |= SFLnodebug;
+        static structalign_t alignOf(Type t)
+        {
+            const explicitAlignment = t.alignment();
+            return explicitAlignment == STRUCTALIGN_DEFAULT ? t.alignsize() : explicitAlignment;
+        }
+
         auto sd = ad.isStructDeclaration();
-        if (sd)
-            s.Salignment = sd.alignment;
-        ad.sinit = s;
+        if (sd &&
+            alignOf(sd.type) <= 16 &&
+            sd.type.size() <= 128 &&
+            sd.zeroInit &&
+            config.objfmt != OBJ_MACH && // same reason as in toobj.d toObjFile()
+            !(config.objfmt == OBJ_MSCOFF && !global.params.is64bit)) // -m32mscoff relocations are wrong
+        {
+            auto bzsave = bzeroSymbol;
+            ad.sinit = getBzeroSymbol();
+
+            // Ensure emitted only once per object file
+            if (bzsave && bzeroSymbol != bzsave)
+                assert(0);
+        }
+        else
+        {
+            auto stag = fake_classsym(Id.ClassInfo);
+            auto s = toSymbolX(ad, "__init", SCextern, stag.Stype, "Z");
+            s.Sfl = FLextern;
+            s.Sflags |= SFLnodebug;
+            if (sd)
+                s.Salignment = sd.alignment;
+            ad.sinit = s;
+        }
     }
     return ad.sinit;
 }
@@ -623,11 +645,8 @@ Symbol *toInitializer(EnumDeclaration ed)
     if (!ed.sinit)
     {
         auto stag = fake_classsym(Id.ClassInfo);
-        auto ident_save = ed.ident;
-        if (!ed.ident)
-            ed.ident = Identifier.generateId("__enum");
+        assert(ed.ident);
         auto s = toSymbolX(ed, "__init", SCextern, stag.Stype, "Z");
-        ed.ident = ident_save;
         s.Sfl = FLextern;
         s.Sflags |= SFLnodebug;
         ed.sinit = s;
@@ -686,6 +705,7 @@ Symbol *aaGetSymbol(TypeAArray taa, const(char)* func, int flags)
 
 Symbol* toSymbol(StructLiteralExp sle)
 {
+    //printf("toSymbol() %p.sym: %p\n", sle, sle.sym);
     if (sle.sym)
         return sle.sym;
     auto t = type_alloc(TYint);
@@ -705,8 +725,9 @@ Symbol* toSymbol(StructLiteralExp sle)
 
 Symbol* toSymbol(ClassReferenceExp cre)
 {
-    if (cre.value.sym)
-        return cre.value.sym;
+    //printf("toSymbol() %p.value.sym: %p\n", cre, cre.value.sym);
+    if (cre.value.origin.sym)
+        return cre.value.origin.sym;
     auto t = type_alloc(TYint);
     t.Tcount++;
     auto s = symbol_calloc("internal", 8);
@@ -715,6 +736,7 @@ Symbol* toSymbol(ClassReferenceExp cre)
     s.Sflags |= SFLnodebug;
     s.Stype = t;
     cre.value.sym = s;
+    cre.value.origin.sym = s;
     auto dtb = DtBuilder(0);
     ClassReferenceExp_toInstanceDt(cre, dtb);
     s.Sdt = dtb.finish();
@@ -772,4 +794,3 @@ Symbol *toSymbolCppTypeInfo(ClassDeclaration cd)
     s.Stype = t;
     return s;
 }
-

@@ -1,6 +1,13 @@
-// REQUIRED_ARGS: -preview=rvaluerefparam
-// EXTRA_SOURCES: imports/ovs1528a.d imports/ovs1528b.d
-// EXTRA_SOURCES: imports/template_ovs1.d imports/template_ovs2.d imports/template_ovs3.d
+/*
+REQUIRED_ARGS: -preview=rvaluerefparam
+EXTRA_SOURCES: imports/ovs1528a.d imports/ovs1528b.d
+EXTRA_SOURCES: imports/template_ovs1.d imports/template_ovs2.d imports/template_ovs3.d
+EXTRA_FILES: imports/m8668a.d imports/m8668b.d imports/m8668c.d
+RUN_OUTPUT:
+---
+Success
+---
+*/
 
 import imports.template_ovs1;
 import imports.template_ovs2;

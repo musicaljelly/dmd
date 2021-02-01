@@ -1,8 +1,9 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Perform checks for `nothrow`.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Specification: $(LINK2 https://dlang.org/spec/function.html#nothrow-functions, Nothrow Functions)
+ *
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/canthrow.d, _canthrow.d)
@@ -59,6 +60,8 @@ extern (C++) bool canThrow(Expression e, FuncDeclaration func, bool mustNotThrow
                 {
                     e.error("%s `%s` is not `nothrow`",
                         f.kind(), f.toPrettyChars());
+
+                    e.checkOverridenDtor(null, f, dd => dd.type.toTypeFunction().isnothrow, "not nothrow");
                 }
                 stop = true;  // if any function throws, then the whole expression throws
             }
@@ -75,6 +78,9 @@ extern (C++) bool canThrow(Expression e, FuncDeclaration func, bool mustNotThrow
 
         override void visit(CallExp ce)
         {
+            if (ce.inDebugStatement)
+                return;
+
             if (global.errors && !ce.e1.type)
                 return; // error recovery
             /* If calling a function or delegate that is typed as nothrow,
@@ -144,9 +150,6 @@ extern (C++) bool canThrow(Expression e, FuncDeclaration func, bool mustNotThrow
 
             if (ad.dtor)
                 checkFuncThrows(de, ad.dtor);
-
-            if (ad.aggDelete && tb.ty != Tarray)
-                checkFuncThrows(de, ad.aggDelete);
         }
 
         override void visit(AssignExp ae)

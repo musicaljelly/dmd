@@ -1,6 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -68,7 +68,6 @@ class ArrayScopeSymbol;
 class SymbolDeclaration;
 class Expression;
 class ExpressionDsymbol;
-class DeleteDeclaration;
 class OverloadSet;
 struct AA;
 #ifdef IN_GCC
@@ -141,8 +140,6 @@ enum
     IgnoreSymbolVisibility  = 0x80  // also find private and package protected symbols
 };
 
-typedef int (*Dsymbol_apply_ft_t)(Dsymbol *, void *);
-
 class Dsymbol : public ASTNode
 {
 public:
@@ -163,12 +160,12 @@ public:
     UnitTestDeclaration *ddocUnittest; // !=NULL means there's a ddoc unittest associated with this symbol (only use this with ddoc)
 
     static Dsymbol *create(Identifier *);
-    const char *toChars();
+    const char *toChars() const;
     virtual const char *toPrettyCharsHelper(); // helper to print fully qualified (template) arguments
     Loc getLoc();
     const char *locToChars();
-    bool equals(RootObject *o);
-    virtual bool isAnonymous();
+    bool equals(const RootObject *o) const;
+    bool isAnonymous() const;
     void error(const Loc &loc, const char *format, ...);
     void error(const char *format, ...);
     void deprecation(const Loc &loc, const char *format, ...);
@@ -181,7 +178,9 @@ public:
     Dsymbol *toParent2();
     Dsymbol *toParentDecl();
     Dsymbol *toParentLocal();
+    Dsymbol *toParentP(Dsymbol *p1, Dsymbol *p2 = NULL);
     TemplateInstance *isInstantiated();
+    bool followInstantiationContext(Dsymbol *p1, Dsymbol *p2 = NULL);
     TemplateInstance *isSpeculative();
     Ungag ungagSpeculative();
 
@@ -193,7 +192,6 @@ public:
     virtual const char *kind() const;
     virtual Dsymbol *toAlias();                 // resolve real symbol
     virtual Dsymbol *toAlias2();
-    virtual int apply(Dsymbol_apply_ft_t fp, void *param);
     virtual void addMember(Scope *sc, ScopeDsymbol *sds);
     virtual void setScope(Scope *sc);
     virtual void importAll(Scope *sc);
@@ -260,6 +258,8 @@ public:
     virtual UnitTestDeclaration *isUnitTestDeclaration() { return NULL; }
     virtual NewDeclaration *isNewDeclaration() { return NULL; }
     virtual VarDeclaration *isVarDeclaration() { return NULL; }
+    virtual VersionSymbol *isVersionSymbol() { return NULL; }
+    virtual DebugSymbol *isDebugSymbol() { return NULL; }
     virtual ClassDeclaration *isClassDeclaration() { return NULL; }
     virtual StructDeclaration *isStructDeclaration() { return NULL; }
     virtual UnionDeclaration *isUnionDeclaration() { return NULL; }
@@ -270,7 +270,6 @@ public:
     virtual ArrayScopeSymbol *isArrayScopeSymbol() { return NULL; }
     virtual Import *isImport() { return NULL; }
     virtual EnumDeclaration *isEnumDeclaration() { return NULL; }
-    virtual DeleteDeclaration *isDeleteDeclaration() { return NULL; }
     virtual SymbolDeclaration *isSymbolDeclaration() { return NULL; }
     virtual AttribDeclaration *isAttribDeclaration() { return NULL; }
     virtual AnonDeclaration *isAnonDeclaration() { return NULL; }
@@ -330,10 +329,9 @@ public:
 
 class ArrayScopeSymbol : public ScopeDsymbol
 {
+private:
+    RootObject *arrayContent;
 public:
-    Expression *exp;    // IndexExp or SliceExp
-    TypeTuple *type;    // for tuple[length]
-    TupleDeclaration *td;       // for tuples of objects
     Scope *sc;
 
     Dsymbol *search(const Loc &loc, Identifier *ident, int flags = IgnoreNone);
@@ -359,6 +357,7 @@ public:
 
 class ForwardingScopeDsymbol : public ScopeDsymbol
 {
+public:
     ScopeDsymbol *forward;
 
     Dsymbol *symtabInsert(Dsymbol *s);
@@ -371,6 +370,7 @@ class ForwardingScopeDsymbol : public ScopeDsymbol
 
 class ExpressionDsymbol : public Dsymbol
 {
+public:
     Expression *exp;
 
     ExpressionDsymbol *isExpressionDsymbol() { return this; }
@@ -386,10 +386,13 @@ public:
     // Look up Identifier. Return Dsymbol if found, NULL if not.
     Dsymbol *lookup(Identifier const * const ident);
 
-    // Insert Dsymbol in table. Return NULL if already there.
-    Dsymbol *insert(Dsymbol *s);
-
     // Look for Dsymbol in table. If there, return it. If not, insert s and return that.
     Dsymbol *update(Dsymbol *s);
+
+    // Insert Dsymbol in table. Return NULL if already there.
+    Dsymbol *insert(Dsymbol *s);
     Dsymbol *insert(Identifier const * const ident, Dsymbol *s);     // when ident and s are not the same
+
+    // Number of symbols in symbol table
+    size_t length() const;
 };

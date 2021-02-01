@@ -1,15 +1,14 @@
 /*
-PERMUTE_ARGS:
 TEST_OUTPUT:
 ---
-fail_compilation/typeerrors.d(31): Deprecation: `scope` as a type constraint is deprecated.  Use `scope` at the usage site.
 fail_compilation/typeerrors.d(36): Error: tuple index 4 exceeds 4
 fail_compilation/typeerrors.d(38): Error: variable `x` cannot be read at compile time
 fail_compilation/typeerrors.d(39): Error: cannot have array of `void()`
 fail_compilation/typeerrors.d(40): Error: cannot have array of scope `typeerrors.C`
 fail_compilation/typeerrors.d(41): Error: cannot have array of scope `typeerrors.C`
 fail_compilation/typeerrors.d(44): Error: `int[5]` is not an expression
-fail_compilation/typeerrors.d(46): Error: `x` is used as a type
+fail_compilation/typeerrors.d(46): Error: variable `x` is used as a type
+fail_compilation/typeerrors.d(37):        variable `x` is declared here
 fail_compilation/typeerrors.d(47): Error: cannot have associative array key of `void()`
 fail_compilation/typeerrors.d(48): Error: cannot have associative array key of `void`
 fail_compilation/typeerrors.d(49): Error: cannot have array of scope `typeerrors.C`
@@ -20,6 +19,7 @@ fail_compilation/typeerrors.d(55): Error: slice `[1..5]` is out of range of [0..
 fail_compilation/typeerrors.d(56): Error: slice `[2..1]` is out of range of [0..4]
 ---
 */
+
 
 
 
@@ -55,4 +55,3 @@ void foo()
     alias T2 = T[1 .. 5];
     alias T3 = T[2 .. 1];
 }
-

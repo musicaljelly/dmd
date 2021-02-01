@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Stores command line options and contains other miscellaneous declarations.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/globals.d, _globals.d)
@@ -39,6 +38,12 @@ enum DiagnosticReporting : ubyte
     error,        // generate an error
     inform,       // generate a warning
     off,          // disable diagnostic
+}
+
+enum MessageStyle : ubyte
+{
+    digitalmars,  // filename.d(line): message
+    gnu,          // filename.d:line: message, see https://www.gnu.org/prep/standards/html_node/Errors.html
 }
 
 enum CHECKENABLE : ubyte
@@ -99,14 +104,22 @@ enum JsonFieldFlags : uint
 
 enum CppStdRevision : uint
 {
-    cpp98 = 199711,
-    cpp11 = 201103,
-    cpp14 = 201402,
-    cpp17 = 201703
+    cpp98 = 1997_11,
+    cpp11 = 2011_03,
+    cpp14 = 2014_02,
+    cpp17 = 2017_03
+}
+
+/// Configuration for the C++ header generator
+enum CxxHeaderMode : uint
+{
+    none,   /// Don't generate headers
+    silent, /// Generate headers
+    verbose /// Generate headers and add comments for hidden declarations
 }
 
 // Put command line switches in here
-struct Param
+extern (C++) struct Param
 {
     bool obj = true;        // write object file
     bool link = true;       // perform link
@@ -120,6 +133,8 @@ struct Param
     bool vcg_ast;           // write-out codegen-ast
     bool showColumns;       // print character (column) numbers in diagnostics
     bool vtls;              // identify thread local variables
+    bool vtemplates;        // collect and list statistics on template instantiations
+    bool vtemplatesListInstances; // collect and list statistics on template instantiations origins. TODO: make this an enum when we want to list other kinds of instances
     bool vgc;               // identify gc usage
     bool vfield;            // identify non-mutable field variables
     bool vcomplex;          // identify complex/imaginary type usage
@@ -145,6 +160,7 @@ struct Param
     bool useInline = false;     // inline expand functions
     bool useDIP25;          // implement http://wiki.dlang.org/DIP25
     bool noDIP25;           // revert to pre-DIP25 behavior
+    bool useDIP1021;        // implement https://github.com/dlang/DIPs/blob/master/DIPs/DIP1021.md
     bool release;           // build release version
     bool preservePaths;     // true means don't strip path from source file
     DiagnosticReporting warnings = DiagnosticReporting.off;  // how compiler warnings are handled
@@ -152,17 +168,17 @@ struct Param
     bool color;             // use ANSI colors in console output
     bool cov;               // generate code coverage data
     ubyte covPercent;       // 0..100 code coverage percentage required
+    bool ctfe_cov = false;  // generate coverage data for ctfe
     bool nofloat;           // code should not pull in floating point support
     bool ignoreUnsupportedPragmas;  // rather than error on them
     bool useModuleInfo = true;   // generate runtime module information
     bool useTypeInfo = true;     // generate runtime type information
     bool useExceptions = true;   // support exception handling
     bool noSharedAccess;         // read/write access to shared memory objects
+    bool previewIn;         // `in` means `[ref] scope const`, accepts rvalues
     bool betterC;           // be a "better C" compiler; no dependency on D runtime
     bool addMain;           // add a default main() function
     bool allInst;           // generate code for all template instantiations
-    bool check10378;        // check for issues transitioning to 10738 @@@DEPRECATED@@@ Remove in 2020-05 or later
-    bool bug10378;          // use pre- https://issues.dlang.org/show_bug.cgi?id=10378 search strategy  @@@DEPRECATED@@@ Remove in 2020-05 or later
     bool fix16997;          // fix integral promotions for unary + - ~ operators
                             // https://issues.dlang.org/show_bug.cgi?id=16997
     bool fixAliasThis;      // if the current scope has an alias this, check it before searching upper scopes
@@ -177,10 +193,14 @@ struct Param
                             // https://issues.dlang.org/show_bug.cgi?id=14246
     bool fieldwise;         // do struct equality testing field-wise rather than by memcmp()
     bool rvalueRefParam;    // allow rvalues to be arguments to ref parameters
+                            // http://dconf.org/2019/talks/alexandrescu.html
+                            // https://gist.github.com/andralex/e5405a5d773f07f73196c05f8339435a
+                            // https://digitalmars.com/d/archives/digitalmars/D/Binding_rvalues_to_ref_parameters_redux_325087.html
+                            // Implementation: https://github.com/dlang/dmd/pull/9817
 
     CppStdRevision cplusplus = CppStdRevision.cpp98;    // version of C++ standard to support
 
-    bool markdown;          // enable Markdown replacements in Ddoc
+    bool markdown = true;   // enable Markdown replacements in Ddoc
     bool vmarkdown;         // list instances of Markdown replacements in Ddoc
 
     bool showGaggedErrors;  // print gagged errors anyway
@@ -194,6 +214,7 @@ struct Param
     bool revertUsage;       // print help on -revert switch
     bool previewUsage;      // print help on -preview switch
     bool externStdUsage;    // print help on -extern-std switch
+    bool hcUsage;           // print help on -HC switch
     bool logo;              // print compiler logo
 
     CPU cpu = CPU.baseline; // CPU instruction set to target
@@ -219,14 +240,18 @@ struct Param
     const(char)[] libname;               // .lib file output name
 
     bool doDocComments;                 // process embedded documentation comments
-    const(char)* docdir;                // write documentation file to docdir directory
-    const(char)* docname;               // write documentation file to docname
+    const(char)[] docdir;               // write documentation file to docdir directory
+    const(char)[] docname;              // write documentation file to docname
     Array!(const(char)*) ddocfiles;     // macro include files for Ddoc
 
     bool doHdrGeneration;               // process embedded documentation comments
     const(char)[] hdrdir;                // write 'header' file to docdir directory
     const(char)[] hdrname;               // write 'header' file to docname
     bool hdrStripPlainFunctions = true; // strip the bodies of plain (non-template) functions
+
+    CxxHeaderMode doCxxHdrGeneration;      /// Generate 'Cxx header' file
+    const(char)[] cxxhdrdir;            // write 'header' file to docdir directory
+    const(char)[] cxxhdrname;           // write 'header' file to docname
 
     bool doJsonGeneration;              // write JSON file
     const(char)[] jsonfilename;          // write JSON file to jsonfilename
@@ -248,6 +273,7 @@ struct Param
 
     const(char)[] moduleDepsFile;        // filename for deps output
     OutBuffer* moduleDeps;              // contents to be written to deps file
+    MessageStyle messageStyle = MessageStyle.digitalmars; // style of file/line annotations on messages
 
     // Hidden debug switches
     bool debugb;
@@ -263,25 +289,13 @@ struct Param
     // Linker stuff
     Array!(const(char)*) objfiles;
     Array!(const(char)*) linkswitches;
+    Array!bool linkswitchIsForCC;
     Array!(const(char)*) libfiles;
     Array!(const(char)*) dllfiles;
     const(char)[] deffile;
     const(char)[] resfile;
     const(char)[] exefile;
     const(char)[] mapfile;
-
-    // generate code for POSIX
-    @property bool isPOSIX() scope const pure nothrow @nogc @safe
-    out(result) { assert(result || isWindows); }
-    do
-    {
-        return isLinux
-            || isOSX
-            || isFreeBSD
-            || isOpenBSD
-            || isDragonFlyBSD
-            || isSolaris;
-    }
 }
 
 alias structalign_t = uint;
@@ -290,7 +304,7 @@ alias structalign_t = uint;
 // other values are all powers of 2
 enum STRUCTALIGN_DEFAULT = (cast(structalign_t)~0);
 
-struct Global
+extern (C++) struct Global
 {
     const(char)[] inifilename;
     string mars_ext = "d";
@@ -300,17 +314,20 @@ struct Global
     string doc_ext = "html";      // for Ddoc generated files
     string ddoc_ext = "ddoc";     // for Ddoc macro include files
     string hdr_ext = "di";        // for D 'header' import files
+    string cxxhdr_ext = "h";      // for C/C++ 'header' files
     string json_ext = "json";     // for JSON files
     string map_ext = "map";       // for .map files
     bool run_noext;                     // allow -run sources without extensions.
 
-    string copyright = "Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved";
+    string copyright = "Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved";
     string written = "written by Walter Bright";
 
     Array!(const(char)*)* path;         // Array of char*'s which form the import lookup path
     Array!(const(char)*)* filePath;     // Array of char*'s which form the file import lookup path
 
-    string _version;
+    private enum string _version = import("VERSION");
+    private enum uint _versionNumber = parseVersionNumber(_version);
+
     const(char)[] vendor;    // Compiler backend name
 
     Param params;
@@ -324,6 +341,8 @@ struct Global
 
     Array!Identifier* versionids;    // command line versions and predefined versions
     Array!Identifier* debugids;      // command line debug versions and predefined versions
+
+    enum recursionLimit = 500; // number of recursive template expansions before abort
 
   nothrow:
 
@@ -363,8 +382,6 @@ struct Global
 
     extern (C++) void _init()
     {
-        _version = import("VERSION") ~ '\0';
-
         version (MARS)
         {
             vendor = "Digital Mars D";
@@ -446,9 +463,41 @@ struct Global
      * This can be used to restore the state set by `_init` to its original
      * state.
      */
-    void deinitialize()
+    extern (D) void deinitialize()
     {
         this = this.init;
+    }
+
+    /**
+     * Computes the version number __VERSION__ from the compiler version string.
+     */
+    extern (D) private static uint parseVersionNumber(string version_)
+    {
+        //
+        // parse _version
+        //
+        uint major = 0;
+        uint minor = 0;
+        bool point = false;
+        // skip initial 'v'
+        foreach (const c; version_[1..$])
+        {
+            if ('0' <= c && c <= '9') // isdigit
+            {
+                minor = minor * 10 + c - '0';
+            }
+            else if (c == '.')
+            {
+                if (point)
+                    break; // ignore everything after second '.'
+                point = true;
+                major = minor;
+                minor = 0;
+            }
+            else
+                break;
+        }
+        return major * 1000 + minor;
     }
 
     /**
@@ -456,43 +505,29 @@ struct Global
     */
     extern(C++) uint versionNumber()
     {
-        import core.stdc.ctype;
-        __gshared uint cached = 0;
-        if (cached == 0)
-        {
-            //
-            // parse _version
-            //
-            uint major = 0;
-            uint minor = 0;
-            bool point = false;
-            for (const(char)* p = _version.ptr + 1;; p++)
-            {
-                const c = *p;
-                if (isdigit(cast(char)c))
-                {
-                    minor = minor * 10 + c - '0';
-                }
-                else if (c == '.')
-                {
-                    if (point)
-                        break; // ignore everything after second '.'
-                    point = true;
-                    major = minor;
-                    minor = 0;
-                }
-                else
-                    break;
-            }
-            cached = major * 1000 + minor;
-        }
-        return cached;
+        return _versionNumber;
+    }
+
+    /**
+    Returns: compiler version string.
+    */
+    extern(D) string versionString()
+    {
+        return _version;
+    }
+
+    /**
+    Returns: compiler version as char string.
+    */
+    extern(C++) const(char*) versionChars()
+    {
+        return _version.ptr;
     }
 
     /**
     Returns: the final defaultlibname based on the command-line parameters
     */
-    const(char)[] finalDefaultlibname() const
+    extern (D) const(char)[] finalDefaultlibname() const
     {
         return params.betterC ? null :
             params.symdebug ? params.debuglibname : params.defaultlibname;
@@ -537,7 +572,9 @@ nothrow:
         this.filename = filename;
     }
 
-    extern (C++) const(char)* toChars(bool showColumns = global.params.showColumns) const pure nothrow
+    extern (C++) const(char)* toChars(
+        bool showColumns = global.params.showColumns,
+        ubyte messageStyle = global.params.messageStyle) const pure nothrow
     {
         OutBuffer buf;
         if (filename)
@@ -546,14 +583,28 @@ nothrow:
         }
         if (linnum)
         {
-            buf.writeByte('(');
-            buf.print(linnum);
-            if (showColumns && charnum)
+            final switch (messageStyle)
             {
-                buf.writeByte(',');
-                buf.print(charnum);
+                case MessageStyle.digitalmars:
+                    buf.writeByte('(');
+                    buf.print(linnum);
+                    if (showColumns && charnum)
+                    {
+                        buf.writeByte(',');
+                        buf.print(charnum);
+                    }
+                    buf.writeByte(')');
+                    break;
+                case MessageStyle.gnu: // https://www.gnu.org/prep/standards/html_node/Errors.html
+                    buf.writeByte(':');
+                    buf.print(linnum);
+                    if (showColumns && charnum)
+                    {
+                        buf.writeByte(':');
+                        buf.print(charnum);
+                    }
+                    break;
             }
-            buf.writeByte(')');
         }
         return buf.extractChars();
     }
@@ -589,7 +640,7 @@ nothrow:
 
     extern (D) size_t toHash() const @trusted pure nothrow
     {
-        import dmd.utils : toDString;
+        import dmd.root.string : toDString;
 
         auto hash = hashOf(linnum);
         hash = hashOf(charnum, hash);

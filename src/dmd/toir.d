@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Convert to Intermediate Representation (IR) for the back-end.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/_tocsym.d, _toir.d)
@@ -47,7 +46,6 @@ import dmd.globals;
 import dmd.glue;
 import dmd.identifier;
 import dmd.id;
-import dmd.irstate;
 import dmd.mtype;
 import dmd.target;
 import dmd.tocvdebug;
@@ -56,6 +54,95 @@ import dmd.tocsym;
 alias toSymbol = dmd.tocsym.toSymbol;
 alias toSymbol = dmd.glue.toSymbol;
 
+/****************************************
+ * Our label symbol
+ */
+
+struct Label
+{
+    block *lblock;      // The block to which the label is defined.
+}
+
+/***********************************************************
+ * Collect state variables needed by the intermediate representation (IR)
+ */
+struct IRState
+{
+    Module m;                       // module
+    private FuncDeclaration symbol; // function that code is being generate for
+    Symbol* shidden;                // hidden parameter to function
+    Symbol* sthis;                  // 'this' parameter to function (member and nested)
+    Symbol* sclosure;               // pointer to closure instance
+    Blockx* blx;
+    Dsymbols* deferToObj;           // array of Dsymbol's to run toObjFile(bool multiobj) on later
+    elem* ehidden;                  // transmit hidden pointer to CallExp::toElem()
+    Symbol* startaddress;
+    Array!(elem*)* varsInScope;     // variables that are in scope that will need destruction later
+    Label*[void*]* labels;          // table of labels used/declared in function
+    const Param* params;            // command line parameters
+    bool mayThrow;                  // the expression being evaluated may throw
+
+    this(Module m, FuncDeclaration fd, Array!(elem*)* varsInScope, Dsymbols* deferToObj, Label*[void*]* labels,
+        const Param* params)
+    {
+        this.m = m;
+        this.symbol = fd;
+        this.varsInScope = varsInScope;
+        this.deferToObj = deferToObj;
+        this.labels = labels;
+        this.params = params;
+        mayThrow = global.params.useExceptions
+            && ClassDeclaration.throwable
+            && !(fd && fd.eh_none);
+    }
+
+    FuncDeclaration getFunc()
+    {
+        return symbol;
+    }
+
+    /**********************
+     * Returns:
+     *    true if do array bounds checking for the current function
+     */
+    bool arrayBoundsCheck()
+    {
+        bool result;
+        final switch (global.params.useArrayBounds)
+        {
+        case CHECKENABLE.off:
+            result = false;
+            break;
+        case CHECKENABLE.on:
+            result = true;
+            break;
+        case CHECKENABLE.safeonly:
+            {
+                result = false;
+                FuncDeclaration fd = getFunc();
+                if (fd)
+                {
+                    Type t = fd.type;
+                    if (t.ty == Tfunction && (cast(TypeFunction)t).trust == TRUST.safe)
+                        result = true;
+                }
+                break;
+            }
+        case CHECKENABLE._default:
+            assert(0);
+        }
+        return result;
+    }
+
+    /****************************
+     * Returns:
+     *  true if in a nothrow section of code
+     */
+    bool isNothrow()
+    {
+        return !mayThrow;
+    }
+}
 
 extern (C++):
 
@@ -266,7 +353,7 @@ elem *getEthis(const ref Loc loc, IRState *irs, Dsymbol fd, Dsymbol fdp = null, 
                 assert(thisfd.isNested() || thisfd.vthis);
 
                 // pick one context
-                ethis = fixEthis2(ethis, thisfd, followInstantiationContext(thisfd, ctxt0, ctxt1));
+                ethis = fixEthis2(ethis, thisfd, thisfd.followInstantiationContext(ctxt0, ctxt1));
             }
             else
             {
@@ -290,23 +377,23 @@ elem *getEthis(const ref Loc loc, IRState *irs, Dsymbol fd, Dsymbol fdp = null, 
                 if (!ad.isNested() || !(ad.vthis || ad.vthis2))
                     goto Lnoframe;
 
-                bool i = followInstantiationContext(ad, ctxt0, ctxt1);
+                bool i = ad.followInstantiationContext(ctxt0, ctxt1);
                 const voffset = i ? ad.vthis2.offset : ad.vthis.offset;
                 ethis = el_bin(OPadd, TYnptr, ethis, el_long(TYsize_t, voffset));
                 ethis = el_una(OPind, TYnptr, ethis);
             }
-            if (fdparent == toParentP(s, ctxt0, ctxt1))
+            if (fdparent == s.toParentP(ctxt0, ctxt1))
                 break;
 
             /* Remember that frames for functions that have no
              * nested references are skipped in the linked list
              * of frames.
              */
-            FuncDeclaration fdp2 = toParentP(s, ctxt0, ctxt1).isFuncDeclaration();
+            FuncDeclaration fdp2 = s.toParentP(ctxt0, ctxt1).isFuncDeclaration();
             if (fdp2 && fdp2.hasNestedFrameRefs())
                 ethis = el_una(OPind, TYnptr, ethis);
 
-            s = toParentP(s, ctxt0, ctxt1);
+            s = s.toParentP(ctxt0, ctxt1);
             assert(s);
         }
     }
@@ -384,425 +471,138 @@ elem *setEthis(const ref Loc loc, IRState *irs, elem *ey, AggregateDeclaration a
 }
 
 enum NotIntrinsic = -1;
+enum OPtoPrec = OPMAX + 1; // front end only
 
 /*******************************************
  * Convert intrinsic function to operator.
  * Returns:
- *      that operator, NotIntrinsic if not an intrinsic function.
+ *      the operator as backend OPER,
+ *      NotIntrinsic if not an intrinsic function,
+ *      OPtoPrec if frontend-only intrinsic
  */
 int intrinsic_op(FuncDeclaration fd)
 {
+    int op = NotIntrinsic;
     fd = fd.toAliasFunc();
-    const char *name = mangleExact(fd);
+    if (fd.isDeprecated())
+        return op;
     //printf("intrinsic_op(%s)\n", name);
-    __gshared immutable char*[11] std_namearray =
-    [
-        /* The names are mangled differently because of the pure and
-         * nothrow attributes.
-         */
-        "4math3cosFNaNbNiNfeZe",
-        "4math3sinFNaNbNiNfeZe",
-        "4math4fabsFNaNbNiNfeZe",
-        "4math4rintFNaNbNiNfeZe",
-        "4math4sqrtFNaNbNiNfdZd",
-        "4math4sqrtFNaNbNiNfeZe",
-        "4math4sqrtFNaNbNiNffZf",
-        "4math4yl2xFNaNbNiNfeeZe",
-        "4math5ldexpFNaNbNiNfeiZe",
-        "4math6rndtolFNaNbNiNfeZl",
-        "4math6yl2xp1FNaNbNiNfeeZe",
-    ];
-    __gshared immutable char*[11] std_namearray64 =
-    [
-        /* The names are mangled differently because of the pure and
-         * nothrow attributes.
-         */
-        "4math3cosFNaNbNiNfeZe",
-        "4math3sinFNaNbNiNfeZe",
-        "4math4fabsFNaNbNiNfeZe",
-        "4math4rintFNaNbNiNfeZe",
-        "4math4sqrtFNaNbNiNfdZd",
-        "4math4sqrtFNaNbNiNfeZe",
-        "4math4sqrtFNaNbNiNffZf",
-        "4math4yl2xFNaNbNiNfeeZe",
-        "4math5ldexpFNaNbNiNfeiZe",
-        "4math6rndtolFNaNbNiNfeZl",
-        "4math6yl2xp1FNaNbNiNfeeZe",
-    ];
-    __gshared immutable ubyte[11] std_ioptab =
-    [
-        OPcos,
-        OPsin,
-        OPabs,
-        OPrint,
-        OPsqrt,
-        OPsqrt,
-        OPsqrt,
-        OPyl2x,
-        OPscale,
-        OPrndtol,
-        OPyl2xp1,
-    ];
 
-    __gshared immutable char*[70] core_namearray =
-    [
-        //cos
-        "4math3cosFNaNbNiNfdZd",
-        "4math3cosFNaNbNiNfeZe",
-        "4math3cosFNaNbNiNffZf",
-        //sin
-        "4math3sinFNaNbNiNfdZd",
-        "4math3sinFNaNbNiNfeZe",
-        "4math3sinFNaNbNiNffZf",
-        //fabs
-        "4math4fabsFNaNbNiNfdZd",
-        "4math4fabsFNaNbNiNfeZe",
-        "4math4fabsFNaNbNiNffZf",
-        //rint
-        "4math4rintFNaNbNiNfdZd",
-        "4math4rintFNaNbNiNfeZe",
-        "4math4rintFNaNbNiNffZf",
-        //sqrt
-        "4math4sqrtFNaNbNiNfdZd",
-        "4math4sqrtFNaNbNiNfeZe",
-        "4math4sqrtFNaNbNiNffZf",
-        //yl2x
-        "4math4yl2xFNaNbNiNfddZd",
-        "4math4yl2xFNaNbNiNfeeZe",
-        "4math4yl2xFNaNbNiNfffZf",
-        //ldexp
-        "4math5ldexpFNaNbNiNfdiZd",
-        "4math5ldexpFNaNbNiNfeiZe",
-        "4math5ldexpFNaNbNiNffiZf",
-        //rndtol
-        "4math6rndtolFNaNbNiNfdZl",
-        "4math6rndtolFNaNbNiNfeZl",
-        "4math6rndtolFNaNbNiNffZl",
-        //yl2xp1
-        "4math6yl2xp1FNaNbNiNfddZd",
-        "4math6yl2xp1FNaNbNiNfeeZe",
-        "4math6yl2xp1FNaNbNiNfffZf",
+    // Look for [core|std].module.function as id3.id2.id1 ...
+    const Identifier id3 = fd.ident;
+    auto m = fd.getModule();
+    if (!m || !m.md)
+        return op;
 
-        "4simd10__prefetchFNaNbNiNfxPvhZv",
-        "4simd10__simd_stoFNaNbNiNfEQBgQBe3XMMNhG16vQgZQj",
-        "4simd10__simd_stoFNaNbNiNfEQBgQBe3XMMdNhG16vZQh",
-        "4simd10__simd_stoFNaNbNiNfEQBgQBe3XMMfNhG16vZQh",
-        "4simd6__simdFNaNbNiNfEQBbQz3XMMNhG16vQgZQj",
-        "4simd6__simdFNaNbNiNfEQBbQz3XMMNhG16vQghZQk",
-        "4simd6__simdFNaNbNiNfEQBbQz3XMMNhG16vZQh",
-        "4simd6__simdFNaNbNiNfEQBbQz3XMMdZNhG16v",
-        "4simd6__simdFNaNbNiNfEQBbQz3XMMfZNhG16v",
-        "4simd9__simd_ibFNaNbNiNfEQBeQBc3XMMNhG16vhZQi",
+    const md = m.md;
+    const Identifier id2 = md.id;
 
-        // @deprecated volatileLoad
-        "5bitop12volatileLoadFNbNiNfPhZh",
-        "5bitop12volatileLoadFNbNiNfPkZk",
-        "5bitop12volatileLoadFNbNiNfPmZm",
-        "5bitop12volatileLoadFNbNiNfPtZt",
-        // @deprecated volatileStore
-        "5bitop13volatileStoreFNbNiNfPhhZv",
-        "5bitop13volatileStoreFNbNiNfPkkZv",
-        "5bitop13volatileStoreFNbNiNfPmmZv",
-        "5bitop13volatileStoreFNbNiNfPttZv",
+    if (!md.packages)
+        return op;
 
-        "5bitop3bsfFNaNbNiNfkZi",
-        "5bitop3bsfFNaNbNiNfmZi",
-        "5bitop3bsrFNaNbNiNfkZi",
-        "5bitop3bsrFNaNbNiNfmZi",
-        "5bitop3btcFNaNbNiPkkZi",
-        "5bitop3btrFNaNbNiPkkZi",
-        "5bitop3btsFNaNbNiPkkZi",
-        "5bitop3inpFNbNikZh",
-        "5bitop4inplFNbNikZk",
-        "5bitop4inpwFNbNikZt",
-        "5bitop4outpFNbNikhZh",
-        "5bitop5bswapFNaNbNiNfkZk",
-        "5bitop5outplFNbNikkZk",
-        "5bitop5outpwFNbNiktZt",
+    // get type of first argument
+    auto tf = fd.type ? fd.type.isTypeFunction() : null;
+    auto param1 = tf && tf.parameterList.length > 0 ? tf.parameterList[0] : null;
+    auto argtype1 = param1 ? param1.type : null;
 
-        "5bitop7_popcntFNaNbNiNfkZi",
-        "5bitop7_popcntFNaNbNiNfmxx", // don't find 64 bit version in 32 bit code
-        "5bitop7_popcntFNaNbNiNftZt",
-        // volatileLoad
-        "8volatile12volatileLoadFNbNiNfPhZh",
-        "8volatile12volatileLoadFNbNiNfPkZk",
-        "8volatile12volatileLoadFNbNiNfPmZm",
-        "8volatile12volatileLoadFNbNiNfPtZt",
-        // volatileStore
-        "8volatile13volatileStoreFNbNiNfPhhZv",
-        "8volatile13volatileStoreFNbNiNfPkkZv",
-        "8volatile13volatileStoreFNbNiNfPmmZv",
-        "8volatile13volatileStoreFNbNiNfPttZv",
-    ];
-    __gshared immutable char*[70] core_namearray64 =
-    [
-        //cos
-        "4math3cosFNaNbNiNfdZd",
-        "4math3cosFNaNbNiNfeZe",
-        "4math3cosFNaNbNiNffZf",
-        //sin
-        "4math3sinFNaNbNiNfdZd",
-        "4math3sinFNaNbNiNfeZe",
-        "4math3sinFNaNbNiNffZf",
-        //fabs
-        "4math4fabsFNaNbNiNfdZd",
-        "4math4fabsFNaNbNiNfeZe",
-        "4math4fabsFNaNbNiNffZf",
-        //rint
-        "4math4rintFNaNbNiNfdZd",
-        "4math4rintFNaNbNiNfeZe",
-        "4math4rintFNaNbNiNffZf",
-        //sqrt
-        "4math4sqrtFNaNbNiNfdZd",
-        "4math4sqrtFNaNbNiNfeZe",
-        "4math4sqrtFNaNbNiNffZf",
-        //yl2x
-        "4math4yl2xFNaNbNiNfddZd",
-        "4math4yl2xFNaNbNiNfeeZe",
-        "4math4yl2xFNaNbNiNfffZf",
-        //ldexp
-        "4math5ldexpFNaNbNiNfdiZd",
-        "4math5ldexpFNaNbNiNfeiZe",
-        "4math5ldexpFNaNbNiNffiZf",
-        //rndtol
-        "4math6rndtolFNaNbNiNfdZl",
-        "4math6rndtolFNaNbNiNfeZl",
-        "4math6rndtolFNaNbNiNffZl",
-        //yl2xp1
-        "4math6yl2xp1FNaNbNiNfddZd",
-        "4math6yl2xp1FNaNbNiNfeeZe",
-        "4math6yl2xp1FNaNbNiNfffZf",
-
-        "4simd10__prefetchFNaNbNiNfxPvhZv",
-        "4simd10__simd_stoFNaNbNiNfEQBgQBe3XMMNhG16vQgZQj",
-        "4simd10__simd_stoFNaNbNiNfEQBgQBe3XMMdNhG16vZQh",
-        "4simd10__simd_stoFNaNbNiNfEQBgQBe3XMMfNhG16vZQh",
-        "4simd6__simdFNaNbNiNfEQBbQz3XMMNhG16vQgZQj",
-        "4simd6__simdFNaNbNiNfEQBbQz3XMMNhG16vQghZQk",
-        "4simd6__simdFNaNbNiNfEQBbQz3XMMNhG16vZQh",
-        "4simd6__simdFNaNbNiNfEQBbQz3XMMdZNhG16v",
-        "4simd6__simdFNaNbNiNfEQBbQz3XMMfZNhG16v",
-        "4simd9__simd_ibFNaNbNiNfEQBeQBc3XMMNhG16vhZQi",
-
-        // @deprecated volatileLoad
-        "5bitop12volatileLoadFNbNiNfPhZh",
-        "5bitop12volatileLoadFNbNiNfPkZk",
-        "5bitop12volatileLoadFNbNiNfPmZm",
-        "5bitop12volatileLoadFNbNiNfPtZt",
-        // @deprecated volatileStore
-        "5bitop13volatileStoreFNbNiNfPhhZv",
-        "5bitop13volatileStoreFNbNiNfPkkZv",
-        "5bitop13volatileStoreFNbNiNfPmmZv",
-        "5bitop13volatileStoreFNbNiNfPttZv",
-
-        "5bitop3bsfFNaNbNiNfkZi",
-        "5bitop3bsfFNaNbNiNfmZi",
-        "5bitop3bsrFNaNbNiNfkZi",
-        "5bitop3bsrFNaNbNiNfmZi",
-        "5bitop3btcFNaNbNiPmmZi",
-        "5bitop3btrFNaNbNiPmmZi",
-        "5bitop3btsFNaNbNiPmmZi",
-        "5bitop3inpFNbNikZh",
-        "5bitop4inplFNbNikZk",
-        "5bitop4inpwFNbNikZt",
-        "5bitop4outpFNbNikhZh",
-        "5bitop5bswapFNaNbNiNfkZk",
-        "5bitop5outplFNbNikkZk",
-        "5bitop5outpwFNbNiktZt",
-
-        "5bitop7_popcntFNaNbNiNfkZi",
-        "5bitop7_popcntFNaNbNiNfmZi",
-        "5bitop7_popcntFNaNbNiNftZt",
-        // volatileLoad
-        "8volatile12volatileLoadFNbNiNfPhZh",
-        "8volatile12volatileLoadFNbNiNfPkZk",
-        "8volatile12volatileLoadFNbNiNfPmZm",
-        "8volatile12volatileLoadFNbNiNfPtZt",
-        // volatileStore
-        "8volatile13volatileStoreFNbNiNfPhhZv",
-        "8volatile13volatileStoreFNbNiNfPkkZv",
-        "8volatile13volatileStoreFNbNiNfPmmZv",
-        "8volatile13volatileStoreFNbNiNfPttZv",
-    ];
-    __gshared immutable ubyte[70] core_ioptab =
-    [
-        OPcos,
-        OPcos,
-        OPcos,
-
-        OPsin,
-        OPsin,
-        OPsin,
-
-        OPabs,
-        OPabs,
-        OPabs,
-
-        OPrint,
-        OPrint,
-        OPrint,
-
-        OPsqrt,
-        OPsqrt,
-        OPsqrt,
-
-        OPyl2x,
-        OPyl2x,
-        OPyl2x,
-
-        OPscale,
-        OPscale,
-        OPscale,
-
-        OPrndtol,
-        OPrndtol,
-        OPrndtol,
-
-        OPyl2xp1,
-        OPyl2xp1,
-        OPyl2xp1,
-
-        OPprefetch,
-        OPvector,
-        OPvector,
-        OPvector,
-        OPvector,
-        OPvector,
-        OPvector,
-        OPvector,
-        OPvector,
-        OPvector,
-
-        OPind,
-        OPind,
-        OPind,
-        OPind,
-
-        OPeq,
-        OPeq,
-        OPeq,
-        OPeq,
-
-        OPbsf,
-        OPbsf,
-        OPbsr,
-        OPbsr,
-        OPbtc,
-        OPbtr,
-        OPbts,
-        OPinp,
-        OPinp,
-        OPinp,
-        OPoutp,
-
-        OPbswap,
-        OPoutp,
-        OPoutp,
-
-        OPpopcnt,
-        OPpopcnt,
-        OPpopcnt,
-
-        OPind,
-        OPind,
-        OPind,
-        OPind,
-
-        OPeq,
-        OPeq,
-        OPeq,
-        OPeq,
-    ];
-
-    static assert(std_namearray.length == std_namearray64.length);
-    static assert(std_namearray.length == std_ioptab.length);
-    static assert(core_namearray.length == core_namearray64.length);
-    static assert(core_namearray.length == core_ioptab.length);
-    debug
+    const Identifier id1 = (*md.packages)[0];
+    // ... except std.math package and core.stdc.stdarg.va_start.
+    if (md.packages.dim == 2)
     {
-        for (size_t i = 0; i < std_namearray.length - 1; i++)
+        if (id2 == Id.trig &&
+            (*md.packages)[1] == Id.math &&
+            id1 == Id.std)
         {
-            if (strcmp(std_namearray[i], std_namearray[i + 1]) >= 0)
+            goto Lstdmath;
+        }
+        goto Lva_start;
+    }
+
+    if (id1 == Id.std && id2 == Id.math)
+    {
+    Lstdmath:
+        if (argtype1 is Type.tfloat80 || id3 == Id._sqrt)
+            goto Lmath;
+        if (id3 == Id.fabs &&
+            (argtype1 is Type.tfloat32 || argtype1 is Type.tfloat64))
+        {
+            op = OPabs;
+        }
+    }
+    else if (id1 == Id.core)
+    {
+        if (id2 == Id.math)
+        {
+        Lmath:
+            if (argtype1 is Type.tfloat80 || argtype1 is Type.tfloat32 || argtype1 is Type.tfloat64)
             {
-                printf("std_namearray[%ld] = '%s'\n", cast(long)i, std_namearray[i]);
-                assert(0);
+                     if (id3 == Id.cos)    op = OPcos;
+                else if (id3 == Id.sin)    op = OPsin;
+                else if (id3 == Id.fabs)   op = OPabs;
+                else if (id3 == Id.rint)   op = OPrint;
+                else if (id3 == Id._sqrt)  op = OPsqrt;
+                else if (id3 == Id.yl2x)   op = OPyl2x;
+                else if (id3 == Id.ldexp)  op = OPscale;
+                else if (id3 == Id.rndtol) op = OPrndtol;
+                else if (id3 == Id.yl2xp1) op = OPyl2xp1;
+                else if (id3 == Id.toPrec) op = OPtoPrec;
             }
         }
-        for (size_t i = 0; i < std_namearray64.length - 1; i++)
+        else if (id2 == Id.simd)
         {
-            if (strcmp(std_namearray64[i], std_namearray64[i + 1]) >= 0)
-            {
-                printf("std_namearray64[%ld] = '%s'\n", cast(long)i, std_namearray64[i]);
-                assert(0);
-            }
+                 if (id3 == Id.__prefetch) op = OPprefetch;
+            else if (id3 == Id.__simd_sto) op = OPvector;
+            else if (id3 == Id.__simd)     op = OPvector;
+            else if (id3 == Id.__simd_ib)  op = OPvector;
         }
-        for (size_t i = 0; i < core_namearray.length - 1; i++)
+        else if (id2 == Id.bitop)
         {
-            //printf("test1 %s %s %d\n", core_namearray[i], core_namearray[i + 1], strcmp(core_namearray[i], core_namearray[i + 1]));
-            if (strcmp(core_namearray[i], core_namearray[i + 1]) >= 0)
-            {
-                printf("core_namearray[%ld] = '%s'\n", cast(long)i, core_namearray[i]);
-                assert(0);
-            }
+                 if (id3 == Id.volatileLoad)  op = OPind;
+            else if (id3 == Id.volatileStore) op = OPeq;
+
+            else if (id3 == Id.bsf) op = OPbsf;
+            else if (id3 == Id.bsr) op = OPbsr;
+            else if (id3 == Id.btc) op = OPbtc;
+            else if (id3 == Id.btr) op = OPbtr;
+            else if (id3 == Id.bts) op = OPbts;
+
+            else if (id3 == Id.inp)  op = OPinp;
+            else if (id3 == Id.inpl) op = OPinp;
+            else if (id3 == Id.inpw) op = OPinp;
+
+            else if (id3 == Id.outp)  op = OPoutp;
+            else if (id3 == Id.outpl) op = OPoutp;
+            else if (id3 == Id.outpw) op = OPoutp;
+
+            else if (id3 == Id.bswap)   op = OPbswap;
+            else if (id3 == Id._popcnt) op = OPpopcnt;
         }
-        for (size_t i = 0; i < core_namearray64.length - 1; i++)
+        else if (id2 == Id.volatile)
         {
-            if (strcmp(core_namearray64[i], core_namearray64[i + 1]) >= 0)
-            {
-                printf("core_namearray64[%ld] = '%s'\n", cast(long)i, core_namearray64[i]);
-                assert(0);
-            }
+                 if (id3 == Id.volatileLoad)  op = OPind;
+            else if (id3 == Id.volatileStore) op = OPeq;
         }
     }
 
-    size_t length = strlen(name);
-
-    if (length > 10 &&
-        (name[7] == 'm' || name[7] == 'i') &&
-        !memcmp(name, "_D3std".ptr, 6))
+    if (!global.params.is64bit)
+    // No 64-bit bsf bsr in 32bit mode
     {
-        int i = binary(name + 6,
-            cast(const(char)**)(global.params.is64bit ? std_namearray64.ptr : std_namearray.ptr),
-            cast(int)std_namearray.length);
-        return (i == -1) ? NotIntrinsic : std_ioptab[i];
+        if ((op == OPbsf || op == OPbsr) && argtype1 is Type.tuns64)
+            return NotIntrinsic;
     }
-    if (length > 12 &&
-        (name[8] == 'm' || name[8] == 'b' || name[8] == 's' || name[8] == 'v') &&
-        !memcmp(name, "_D4core".ptr, 7))
+    return op;
+
+Lva_start:
+    if (global.params.is64bit &&
+        fd.toParent().isTemplateInstance() &&
+        id3 == Id.va_start &&
+        id2 == Id.stdarg &&
+        (*md.packages)[1] == Id.stdc &&
+        id1 == Id.core)
     {
-        int i = binary(name + 7,
-            cast(const(char)**)(global.params.is64bit ? core_namearray64.ptr : core_namearray.ptr),
-            cast(int)core_namearray.length);
-        if (i != -1)
-        {
-            int op = core_ioptab[i];
-            if (!global.params.is64bit &&
-                (op == OPbsf || op == OPbsr) &&
-                op == core_ioptab[i - 1])
-            {
-                // Don't recognize 64 bit bsf() / bsr() in 32 bit mode
-                op = NotIntrinsic;
-            }
-            return op;
-        }
-
-        if (global.params.is64bit &&
-            fd.toParent().isTemplateInstance() &&
-            fd.ident == Id.va_start)
-        {
-            OutBuffer buf;
-            mangleToBuffer(fd.getModule(), &buf);
-            const s = buf.peekChars();
-            if (!strcmp(s, "4core4stdc6stdarg"))
-            {
-                return OPva_start;
-            }
-        }
-
-        return NotIntrinsic;
+        return OPva_start;
     }
-
-    return NotIntrinsic;
+    return op;
 }
 
 /**************************************
@@ -892,53 +692,54 @@ TYPE* getParentClosureType(Symbol* sthis, FuncDeclaration fd)
  */
 void setClosureVarOffset(FuncDeclaration fd)
 {
-    if (fd.needsClosure())
+    // Nothing to do
+    if (!fd.needsClosure())
+        return;
+
+    uint offset = target.ptrsize;      // leave room for previous sthis
+
+    foreach (v; fd.closureVars)
     {
-        uint offset = target.ptrsize;      // leave room for previous sthis
-
-        foreach (v; fd.closureVars)
+        /* Align and allocate space for v in the closure
+         * just like AggregateDeclaration.addField() does.
+         */
+        uint memsize;
+        uint memalignsize;
+        structalign_t xalign;
+        if (v.storage_class & STC.lazy_)
         {
-            /* Align and allocate space for v in the closure
-             * just like AggregateDeclaration.addField() does.
+            /* Lazy variables are really delegates,
+             * so give same answers that TypeDelegate would
              */
-            uint memsize;
-            uint memalignsize;
-            structalign_t xalign;
-            if (v.storage_class & STC.lazy_)
-            {
-                /* Lazy variables are really delegates,
-                 * so give same answers that TypeDelegate would
-                 */
-                memsize = target.ptrsize * 2;
-                memalignsize = memsize;
-                xalign = STRUCTALIGN_DEFAULT;
-            }
-            else if (v.storage_class & (STC.out_ | STC.ref_))
-            {
-                // reference parameters are just pointers
-                memsize = target.ptrsize;
-                memalignsize = memsize;
-                xalign = STRUCTALIGN_DEFAULT;
-            }
-            else
-            {
-                memsize = cast(uint)v.type.size();
-                memalignsize = v.type.alignsize();
-                xalign = v.alignment;
-            }
-            AggregateDeclaration.alignmember(xalign, memalignsize, &offset);
-            v.offset = offset;
-            //printf("closure var %s, offset = %d\n", v.toChars(), v.offset);
+            memsize = target.ptrsize * 2;
+            memalignsize = memsize;
+            xalign = STRUCTALIGN_DEFAULT;
+        }
+        else if (v.storage_class & (STC.out_ | STC.ref_))
+        {
+            // reference parameters are just pointers
+            memsize = target.ptrsize;
+            memalignsize = memsize;
+            xalign = STRUCTALIGN_DEFAULT;
+        }
+        else
+        {
+            memsize = cast(uint)v.type.size();
+            memalignsize = v.type.alignsize();
+            xalign = v.alignment;
+        }
+        AggregateDeclaration.alignmember(xalign, memalignsize, &offset);
+        v.offset = offset;
+        //printf("closure var %s, offset = %d\n", v.toChars(), v.offset);
 
-            offset += memsize;
+        offset += memsize;
 
-            /* Can't do nrvo if the variable is put in a closure, since
-             * what the shidden points to may no longer exist.
-             */
-            if (fd.nrvo_can && fd.nrvo_var == v)
-            {
-                fd.nrvo_can = false;
-            }
+        /* Can't do nrvo if the variable is put in a closure, since
+         * what the shidden points to may no longer exist.
+         */
+        if (fd.nrvo_can && fd.nrvo_var == v)
+        {
+            fd.nrvo_can = false;
         }
     }
 }

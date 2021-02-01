@@ -97,7 +97,7 @@ void test4()
 
 /***************************************/
 
-import std.math; // trigger use of sqrt intrinsic
+import core.math; // trigger use of sqrt intrinsic
 
 void test5x(double p)
 {
@@ -113,7 +113,7 @@ void test5()
 
 /***************************************/
 
-import std.math; // trigger use of sqrt intrinsic
+import core.math; // trigger use of sqrt intrinsic
 
 void dstatsEnforce(bool, string) { }
 
@@ -194,6 +194,32 @@ void test9()
 }
 
 /***************************************/
+// https://issues.dlang.org/show_bug.cgi?id=20349
+
+double f20349(double a, int b)
+{
+    import core.math;
+    return core.math.sqrt(-a / b) / b;
+}
+
+void test20349()
+{
+    assert(f20349(-9, 1) == 3);
+}
+
+/****************************************/
+// https://issues.dlang.org/show_bug.cgi?id=20963
+
+void test20963()
+{
+    ulong v = 0xE3251BACB112CB8B;
+    double d = cast(double)v;
+    printf("%a\n", d); //0x1.c64a37596225ap+63
+    assert(d == 0x1.c64a375962259p+63);
+}
+
+/***************************************/
+
 
 int main()
 {
@@ -205,6 +231,8 @@ int main()
     test7();
     test8();
     test9();
+    test20349();
+    test20963();
 
     printf("Success\n");
     return EXIT_SUCCESS;

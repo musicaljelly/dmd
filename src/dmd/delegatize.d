@@ -1,8 +1,9 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Implements conversion from expressions to delegates for lazy parameters.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Specification: $(LINK2 https://dlang.org/spec/function.html#lazy-params, Lazy Parameters)
+ *
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/delegatize.d, _delegatize.d)
@@ -41,7 +42,7 @@ import dmd.visitor;
  * Returns:
  *  A delegate literal
  */
-extern (C++) Expression toDelegate(Expression e, Type t, Scope* sc)
+Expression toDelegate(Expression e, Type t, Scope* sc)
 {
     //printf("Expression::toDelegate(t = %s) %s\n", t.toChars(), e.toChars());
     Loc loc = e.loc;
@@ -56,7 +57,7 @@ extern (C++) Expression toDelegate(Expression e, Type t, Scope* sc)
     bool r = lambdaCheckForNestedRef(e, sc);
     sc = sc.pop();
     if (r)
-        return new ErrorExp();
+        return ErrorExp.get();
 
     Statement s;
     if (t.ty == Tvoid)
@@ -297,7 +298,7 @@ bool ensureStaticLinkTo(Dsymbol s, Dsymbol p)
             if (ad.storage_class & STC.static_)
                 break;
         }
-        s = toParentP(s, p);
+        s = s.toParentP(p);
     }
     return false;
 }

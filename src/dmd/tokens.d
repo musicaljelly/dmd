@@ -1,8 +1,9 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Defines lexical tokens.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Specification: $(LINK2 https://dlang.org/spec/lex.html#tokens, Tokens)
+ *
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/tokens.d, _tokens.d)
@@ -421,6 +422,17 @@ private immutable TOK[] keywords =
     TOK.immutable_,
 ];
 
+// Initialize the identifier pool
+shared static this() nothrow
+{
+    Identifier.initTable();
+    foreach (kw; keywords)
+    {
+        //printf("keyword[%d] = '%s'\n",kw, tochars[kw].ptr);
+        Identifier.idPool(Token.tochars[kw].ptr, Token.tochars[kw].length, cast(uint)kw);
+    }
+}
+
 /***********************************************************
  */
 extern (C++) struct Token
@@ -429,8 +441,8 @@ extern (C++) struct Token
     Loc loc;
     const(char)* ptr; // pointer to first character of this token within buffer
     TOK value;
-    const(char)* blockComment; // doc comment string prior to this token
-    const(char)* lineComment; // doc comment for previous token
+    const(char)[] blockComment; // doc comment string prior to this token
+    const(char)[] lineComment; // doc comment for previous token
 
     union
     {
@@ -450,7 +462,7 @@ extern (C++) struct Token
         Identifier ident;
     }
 
-    extern (D) private __gshared immutable string[TOK.max_] tochars =
+    extern (D) private static immutable string[TOK.max_] tochars =
     [
         // Keywords
         TOK.this_: "this",
@@ -707,16 +719,6 @@ extern (C++) struct Token
 
 nothrow:
 
-    shared static this()
-    {
-        Identifier.initTable();
-        foreach (kw; keywords)
-        {
-            //printf("keyword[%d] = '%s'\n",kw, tochars[kw].ptr);
-            Identifier.idPool(tochars[kw].ptr, tochars[kw].length, cast(uint)kw);
-        }
-    }
-
     int isKeyword() const
     {
         foreach (kw; keywords)
@@ -735,7 +737,7 @@ nothrow:
      */
     void setString(const(char)* ptr, size_t length)
     {
-        auto s = cast(char*)mem.xmalloc(length + 1);
+        auto s = cast(char*)mem.xmalloc_noscan(length + 1);
         memcpy(s, ptr, length);
         s[length] = 0;
         ustring = s;
@@ -750,7 +752,7 @@ nothrow:
      */
     void setString(const ref OutBuffer buf)
     {
-        setString(cast(const(char)*)buf.data, buf.offset);
+        setString(cast(const(char)*)buf[].ptr, buf.length);
     }
 
     /****
@@ -814,7 +816,7 @@ nothrow:
                 for (size_t i = 0; i < len;)
                 {
                     dchar c;
-                    utf_decodeChar(ustring, len, i, c);
+                    utf_decodeChar(ustring[0 .. len], i, c);
                     switch (c)
                     {
                     case 0:
@@ -842,7 +844,8 @@ nothrow:
                 buf.writeByte('"');
                 if (postfix)
                     buf.writeByte(postfix);
-                p = buf.extractChars();
+                buf.writeByte(0);
+                p = buf.extractSlice().ptr;
             }
             break;
         case TOK.hexadecimalString:
@@ -860,7 +863,7 @@ nothrow:
                 if (postfix)
                     buf.writeByte(postfix);
                 buf.writeByte(0);
-                p = buf.extractData();
+                p = buf.extractSlice().ptr;
                 break;
             }
         case TOK.identifier:
@@ -900,12 +903,12 @@ nothrow:
         return p;
     }
 
-    static const(char)* toChars(TOK value)
+    static const(char)* toChars(ubyte value)
     {
         return toString(value).ptr;
     }
 
-    extern (D) static string toString(TOK value) pure nothrow @nogc @safe
+    extern (D) static string toString(ubyte value) pure nothrow @nogc @safe
     {
         return tochars[value];
     }

@@ -1,6 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -42,9 +42,6 @@ class StaticForeach;
 
 // Back end
 struct code;
-
-bool inferAggregate(ForeachStatement *fes, Scope *sc, Dsymbol *&sapply);
-bool inferApplyArgTypes(ForeachStatement *fes, Scope *sc, Dsymbol *&sapply);
 
 /* How a statement exits; this is returned by blockExit()
  */
@@ -103,7 +100,7 @@ enum
     STMTgoto,
     STMTlabel,
     STMTasm, STMTinlineAsm, STMTgccAsm,
-    STMTimport,
+    STMTimport
 };
 
 class Statement : public ASTNode
@@ -114,7 +111,7 @@ public:
 
     virtual Statement *syntaxCopy();
 
-    const char *toChars();
+    const char *toChars() const;
 
     void error(const char *format, ...);
     void warning(const char *format, ...);
@@ -268,6 +265,7 @@ public:
 
 class ForwardingStatement : public Statement
 {
+public:
     ForwardingScopeDsymbol *sym;
     Statement *statement;
 
@@ -461,6 +459,7 @@ public:
 
     int index;          // which case it is (since we sort this)
     VarDeclaration *lastVar;
+    void* extra;            // for use by Statement_toIR()
 
     Statement *syntaxCopy();
 
@@ -688,7 +687,7 @@ public:
     ScopeGuardStatement *os;
     VarDeclaration *lastVar;
     Statement *gotoTarget;      // interpret
-
+    void* extra;                // used by Statement_toIR()
     bool breaks;                // someone did a 'break ident'
 
     Statement *syntaxCopy();

@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Generate the object file for function declarations and critical sections.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/glue.d, _glue.d)
@@ -21,6 +20,7 @@ import dmd.root.file;
 import dmd.root.filename;
 import dmd.root.outbuffer;
 import dmd.root.rmem;
+import dmd.root.string;
 
 import dmd.backend.cdef;
 import dmd.backend.cc;
@@ -52,7 +52,6 @@ import dmd.func;
 import dmd.globals;
 import dmd.identifier;
 import dmd.id;
-import dmd.irstate;
 import dmd.lib;
 import dmd.mtype;
 import dmd.objc_glue;
@@ -76,6 +75,7 @@ __gshared
 {
     elem *eictor;
     Symbol *ictorlocalgot;
+    Symbol* bzeroSymbol;        /// common location for immutable zeros
     symbols sctors;
     StaticDtorDeclarations ectorgates;
     symbols sdtors;
@@ -131,20 +131,18 @@ void obj_write_deferred(Library library)
          */
         OutBuffer idbuf;
         idbuf.printf("%s.%d", m ? m.ident.toChars() : mname, count);
-        char *idstr = idbuf.peekChars();
 
         if (!m)
         {
             // it doesn't make sense to make up a module if we don't know where to put the symbol
             //  so output it into it's own object file without ModuleInfo
-            objmod.initfile(idstr, null, mname);
+            objmod.initfile(idbuf.peekChars(), null, mname);
             toObjFile(s, false);
             objmod.termfile();
         }
         else
         {
-            idbuf.data = null;
-            Identifier id = Identifier.create(idstr);
+            Identifier id = Identifier.create(idbuf.extractChars());
 
             Module md = new Module(mname.toDString, id, 0, 0);
             md.members = new Dsymbols();
@@ -250,13 +248,14 @@ void obj_start(const(char)* srcfile)
 {
     //printf("obj_start()\n");
 
+    bzeroSymbol = null;
     rtlsym_reset();
     clearStringTab();
 
     version (Windows)
     {
         // Produce Ms COFF files for 64 bit code, OMF for 32 bit code
-        assert(objbuf.size() == 0);
+        assert(objbuf.length() == 0);
         objmod = global.params.mscoff ? MsCoffObj_init(&objbuf, srcfile, null)
                                       :    OmfObj_init(&objbuf, srcfile, null);
     }
@@ -268,6 +267,7 @@ void obj_start(const(char)* srcfile)
     el_reset();
     cg87_reset();
     out_reset();
+    objc.reset();
 }
 
 
@@ -277,21 +277,17 @@ void obj_end(Library library, const(char)* objfilename)
     //delete objmod;
     objmod = null;
 
-    const data = objbuf.buf[0 .. objbuf.p - objbuf.buf];
     if (library)
     {
-        // Transfer image to library
-        library.addObject(objfilename, data);
+        // Transfer ownership of image buffer to library
+        library.addObject(objfilename.toDString(), objbuf.extractSlice[]);
     }
     else
     {
         //printf("write obj %s\n", objfilename);
-        writeFile(Loc.initial, objfilename.toDString, data);
-        free(objbuf.buf); // objbuf is a backend `Outbuffer` managed by C malloc/free
+        writeFile(Loc.initial, objfilename.toDString, objbuf[]);
     }
-    objbuf.buf = null;
-    objbuf.pend = null;
-    objbuf.p = null;
+    objbuf.dtor();
 }
 
 bool obj_includelib(const(char)* name) nothrow
@@ -324,21 +320,6 @@ void genObjFile(Module m, bool multiobj)
     //EEcontext *ee = env.getEEcontext();
 
     //printf("Module.genobjfile(multiobj = %d) %s\n", multiobj, m.toChars());
-
-    if (m.ident == Id.entrypoint)
-    {
-        bool v = global.params.verbose;
-        global.params.verbose = false;
-
-        foreach (member; *m.members)
-        {
-            //printf("toObjFile %s %s\n", member.kind(), member.toChars());
-            toObjFile(member, multiobj);
-        }
-
-        global.params.verbose = v;
-        return;
-    }
 
     lastmname = m.srcfile.toChars();
 
@@ -394,7 +375,37 @@ void genObjFile(Module m, bool multiobj)
         m.cov.Sfl = FLdata;
 
         auto dtb = DtBuilder(0);
-        dtb.nzeros(4 * m.numlines);
+
+        if (m.ctfe_cov)
+        {
+            // initalize the uint[] __coverage symbol with data from ctfe.
+            static extern (C) int comp_uints (const scope void* a, const scope void* b)
+                { return (*cast(uint*) a) - (*cast(uint*) b); }
+
+            uint[] sorted_lines = m.ctfe_cov.keys;
+            qsort(sorted_lines.ptr, sorted_lines.length, sorted_lines[0].sizeof,
+                &comp_uints);
+
+            uint lastLine = 0;
+            foreach (line;sorted_lines)
+            {
+                // zero fill from last line to line.
+                if (line)
+                {
+                    assert(line > lastLine);
+                    dtb.nzeros((line - lastLine - 1) * 4);
+                }
+                dtb.dword(m.ctfe_cov[line]);
+                lastLine = line;
+            }
+            // zero fill from last line to end
+            if (m.numlines > lastLine)
+                dtb.nzeros((m.numlines - lastLine) * 4);
+        }
+        else
+        {
+            dtb.nzeros(4 * m.numlines);
+        }
         m.cov.Sdt = dtb.finish();
 
         outdata(m.cov);
@@ -514,194 +525,6 @@ void genObjFile(Module m, bool multiobj)
 
 
 
-/**************************************
- * Search for a druntime array op
- */
-private bool isDruntimeArrayOp(Identifier ident)
-{
-    /* Some of the array op functions are written as library functions,
-     * presumably to optimize them with special CPU vector instructions.
-     * List those library functions here, in alpha order.
-     */
-    __gshared const(char)*[143] libArrayopFuncs =
-    [
-        "_arrayExpSliceAddass_a",
-        "_arrayExpSliceAddass_d",
-        "_arrayExpSliceAddass_f",           // T[]+=T
-        "_arrayExpSliceAddass_g",
-        "_arrayExpSliceAddass_h",
-        "_arrayExpSliceAddass_i",
-        "_arrayExpSliceAddass_k",
-        "_arrayExpSliceAddass_s",
-        "_arrayExpSliceAddass_t",
-        "_arrayExpSliceAddass_u",
-        "_arrayExpSliceAddass_w",
-
-        "_arrayExpSliceDivass_d",           // T[]/=T
-        "_arrayExpSliceDivass_f",           // T[]/=T
-
-        "_arrayExpSliceMinSliceAssign_a",
-        "_arrayExpSliceMinSliceAssign_d",   // T[]=T-T[]
-        "_arrayExpSliceMinSliceAssign_f",   // T[]=T-T[]
-        "_arrayExpSliceMinSliceAssign_g",
-        "_arrayExpSliceMinSliceAssign_h",
-        "_arrayExpSliceMinSliceAssign_i",
-        "_arrayExpSliceMinSliceAssign_k",
-        "_arrayExpSliceMinSliceAssign_s",
-        "_arrayExpSliceMinSliceAssign_t",
-        "_arrayExpSliceMinSliceAssign_u",
-        "_arrayExpSliceMinSliceAssign_w",
-
-        "_arrayExpSliceMinass_a",
-        "_arrayExpSliceMinass_d",           // T[]-=T
-        "_arrayExpSliceMinass_f",           // T[]-=T
-        "_arrayExpSliceMinass_g",
-        "_arrayExpSliceMinass_h",
-        "_arrayExpSliceMinass_i",
-        "_arrayExpSliceMinass_k",
-        "_arrayExpSliceMinass_s",
-        "_arrayExpSliceMinass_t",
-        "_arrayExpSliceMinass_u",
-        "_arrayExpSliceMinass_w",
-
-        "_arrayExpSliceMulass_d",           // T[]*=T
-        "_arrayExpSliceMulass_f",           // T[]*=T
-        "_arrayExpSliceMulass_i",
-        "_arrayExpSliceMulass_k",
-        "_arrayExpSliceMulass_s",
-        "_arrayExpSliceMulass_t",
-        "_arrayExpSliceMulass_u",
-        "_arrayExpSliceMulass_w",
-
-        "_arraySliceExpAddSliceAssign_a",
-        "_arraySliceExpAddSliceAssign_d",   // T[]=T[]+T
-        "_arraySliceExpAddSliceAssign_f",   // T[]=T[]+T
-        "_arraySliceExpAddSliceAssign_g",
-        "_arraySliceExpAddSliceAssign_h",
-        "_arraySliceExpAddSliceAssign_i",
-        "_arraySliceExpAddSliceAssign_k",
-        "_arraySliceExpAddSliceAssign_s",
-        "_arraySliceExpAddSliceAssign_t",
-        "_arraySliceExpAddSliceAssign_u",
-        "_arraySliceExpAddSliceAssign_w",
-
-        "_arraySliceExpDivSliceAssign_d",   // T[]=T[]/T
-        "_arraySliceExpDivSliceAssign_f",   // T[]=T[]/T
-
-        "_arraySliceExpMinSliceAssign_a",
-        "_arraySliceExpMinSliceAssign_d",   // T[]=T[]-T
-        "_arraySliceExpMinSliceAssign_f",   // T[]=T[]-T
-        "_arraySliceExpMinSliceAssign_g",
-        "_arraySliceExpMinSliceAssign_h",
-        "_arraySliceExpMinSliceAssign_i",
-        "_arraySliceExpMinSliceAssign_k",
-        "_arraySliceExpMinSliceAssign_s",
-        "_arraySliceExpMinSliceAssign_t",
-        "_arraySliceExpMinSliceAssign_u",
-        "_arraySliceExpMinSliceAssign_w",
-
-        "_arraySliceExpMulSliceAddass_d",   // T[] += T[]*T
-        "_arraySliceExpMulSliceAddass_f",
-        "_arraySliceExpMulSliceAddass_r",
-
-        "_arraySliceExpMulSliceAssign_d",   // T[]=T[]*T
-        "_arraySliceExpMulSliceAssign_f",   // T[]=T[]*T
-        "_arraySliceExpMulSliceAssign_i",
-        "_arraySliceExpMulSliceAssign_k",
-        "_arraySliceExpMulSliceAssign_s",
-        "_arraySliceExpMulSliceAssign_t",
-        "_arraySliceExpMulSliceAssign_u",
-        "_arraySliceExpMulSliceAssign_w",
-
-        "_arraySliceExpMulSliceMinass_d",   // T[] -= T[]*T
-        "_arraySliceExpMulSliceMinass_f",
-        "_arraySliceExpMulSliceMinass_r",
-
-        "_arraySliceSliceAddSliceAssign_a",
-        "_arraySliceSliceAddSliceAssign_d", // T[]=T[]+T[]
-        "_arraySliceSliceAddSliceAssign_f", // T[]=T[]+T[]
-        "_arraySliceSliceAddSliceAssign_g",
-        "_arraySliceSliceAddSliceAssign_h",
-        "_arraySliceSliceAddSliceAssign_i",
-        "_arraySliceSliceAddSliceAssign_k",
-        "_arraySliceSliceAddSliceAssign_r", // T[]=T[]+T[]
-        "_arraySliceSliceAddSliceAssign_s",
-        "_arraySliceSliceAddSliceAssign_t",
-        "_arraySliceSliceAddSliceAssign_u",
-        "_arraySliceSliceAddSliceAssign_w",
-
-        "_arraySliceSliceAddass_a",
-        "_arraySliceSliceAddass_d",         // T[]+=T[]
-        "_arraySliceSliceAddass_f",         // T[]+=T[]
-        "_arraySliceSliceAddass_g",
-        "_arraySliceSliceAddass_h",
-        "_arraySliceSliceAddass_i",
-        "_arraySliceSliceAddass_k",
-        "_arraySliceSliceAddass_s",
-        "_arraySliceSliceAddass_t",
-        "_arraySliceSliceAddass_u",
-        "_arraySliceSliceAddass_w",
-
-        "_arraySliceSliceMinSliceAssign_a",
-        "_arraySliceSliceMinSliceAssign_d", // T[]=T[]-T[]
-        "_arraySliceSliceMinSliceAssign_f", // T[]=T[]-T[]
-        "_arraySliceSliceMinSliceAssign_g",
-        "_arraySliceSliceMinSliceAssign_h",
-        "_arraySliceSliceMinSliceAssign_i",
-        "_arraySliceSliceMinSliceAssign_k",
-        "_arraySliceSliceMinSliceAssign_r", // T[]=T[]-T[]
-        "_arraySliceSliceMinSliceAssign_s",
-        "_arraySliceSliceMinSliceAssign_t",
-        "_arraySliceSliceMinSliceAssign_u",
-        "_arraySliceSliceMinSliceAssign_w",
-
-        "_arraySliceSliceMinass_a",
-        "_arraySliceSliceMinass_d",         // T[]-=T[]
-        "_arraySliceSliceMinass_f",         // T[]-=T[]
-        "_arraySliceSliceMinass_g",
-        "_arraySliceSliceMinass_h",
-        "_arraySliceSliceMinass_i",
-        "_arraySliceSliceMinass_k",
-        "_arraySliceSliceMinass_s",
-        "_arraySliceSliceMinass_t",
-        "_arraySliceSliceMinass_u",
-        "_arraySliceSliceMinass_w",
-
-        "_arraySliceSliceMulSliceAssign_d", // T[]=T[]*T[]
-        "_arraySliceSliceMulSliceAssign_f", // T[]=T[]*T[]
-        "_arraySliceSliceMulSliceAssign_i",
-        "_arraySliceSliceMulSliceAssign_k",
-        "_arraySliceSliceMulSliceAssign_s",
-        "_arraySliceSliceMulSliceAssign_t",
-        "_arraySliceSliceMulSliceAssign_u",
-        "_arraySliceSliceMulSliceAssign_w",
-
-        "_arraySliceSliceMulass_d",         // T[]*=T[]
-        "_arraySliceSliceMulass_f",         // T[]*=T[]
-        "_arraySliceSliceMulass_i",
-        "_arraySliceSliceMulass_k",
-        "_arraySliceSliceMulass_s",
-        "_arraySliceSliceMulass_t",
-        "_arraySliceSliceMulass_u",
-        "_arraySliceSliceMulass_w",
-    ];
-    const(char)* name = ident.toChars();
-    int i = binary(name, libArrayopFuncs.ptr, libArrayopFuncs.length);
-    if (i != -1)
-        return true;
-
-    debug    // Make sure our array is alphabetized
-    {
-        foreach (s; libArrayopFuncs)
-        {
-            if (strcmp(name, s) == 0)
-                assert(0);
-        }
-    }
-    return false;
-}
-
-
 /* ================================================================== */
 
 private UnitTestDeclaration needsDeferredNested(FuncDeclaration fd)
@@ -801,12 +624,6 @@ void FuncDeclaration_toObjFile(FuncDeclaration fd, bool multiobj)
         return;
     }
 
-    if (fd.isArrayOp && isDruntimeArrayOp(fd.ident))
-    {
-        // Implementation is in druntime
-        return;
-    }
-
     // start code generation
     fd.semanticRun = PASS.obj;
 
@@ -842,15 +659,22 @@ void FuncDeclaration_toObjFile(FuncDeclaration fd, bool multiobj)
     {
         if (p.isTemplateInstance())
         {
+            // functions without D or C++ name mangling mixed in at global scope
+            // shouldn't have multiple definitions
+            if (p.isTemplateMixin() && (fd.linkage == LINK.c || fd.linkage == LINK.windows ||
+                fd.linkage == LINK.pascal || fd.linkage == LINK.objc))
+            {
+                const q = p.toParent();
+                if (q && q.isModule())
+                {
+                    s.Sclass = SCglobal;
+                    break;
+                }
+            }
             s.Sclass = SCcomdat;
             break;
         }
     }
-
-    /* Vector operations should be comdat's
-     */
-    if (fd.isArrayOp)
-        s.Sclass = SCcomdat;
 
     if (fd.inlinedNestedCallees)
     {
@@ -920,15 +744,15 @@ void FuncDeclaration_toObjFile(FuncDeclaration fd, bool multiobj)
         // If function returns a struct, put a pointer to that
         // as the first argument
         .type *thidden = Type_toCtype(tf.next.pointerTo());
-        char[5+4+1] hiddenparam = void;
-        __gshared int hiddenparami;    // how many we've generated so far
+        char[5 + 10 + 1] hiddenparam = void;
+        __gshared uint hiddenparami;    // how many we've generated so far
 
         const(char)* name;
         if (fd.nrvo_can && fd.nrvo_var)
             name = fd.nrvo_var.ident.toChars();
         else
         {
-            sprintf(hiddenparam.ptr, "__HID%d", ++hiddenparami);
+            sprintf(hiddenparam.ptr, "__HID%u", ++hiddenparami);
             name = hiddenparam.ptr;
         }
         shidden = symbol_name(name, SCparameter, thidden);
@@ -960,7 +784,7 @@ void FuncDeclaration_toObjFile(FuncDeclaration fd, bool multiobj)
     size_t pi = (fd.v_arguments !is null);
     if (fd.parameters)
         pi += fd.parameters.dim;
-    if (fd.selector)
+    if (fd.objc.selector)
         pi++; // Extra argument for Objective-C selector
     // Create a temporary buffer, params[], to hold function parameters
     Symbol*[10] paramsbuf = void;
@@ -1024,8 +848,7 @@ void FuncDeclaration_toObjFile(FuncDeclaration fd, bool multiobj)
         pi++;
     }
 
-    if ((global.params.isLinux || global.params.isOSX || global.params.isFreeBSD || global.params.isDragonFlyBSD || global.params.isSolaris) &&
-         fd.linkage != LINK.d && shidden && sthis)
+    if (target.isPOSIX && fd.linkage != LINK.d && shidden && sthis)
     {
         /* swap shidden and sthis
          */
@@ -1101,7 +924,7 @@ void FuncDeclaration_toObjFile(FuncDeclaration fd, bool multiobj)
      * 2. impact on function inlining
      * 3. what to do when writing out .di files, or other pretty printing
      */
-    if (global.params.trace && !fd.isCMain() && !fd.naked)
+    if (global.params.trace && !fd.isCMain() && !fd.naked && !(fd.hasReturnExp & 8))
     {
         /* The profiler requires TLS, and TLS may not be set up yet when C main()
          * gets control (i.e. OSX), leading to a crash.
@@ -1271,14 +1094,6 @@ void FuncDeclaration_toObjFile(FuncDeclaration fd, bool multiobj)
         }
     }
 
-    if (global.params.isLinux || global.params.isOSX || global.params.isFreeBSD ||
-        global.params.isDragonFlyBSD || global.params.isSolaris)
-    {
-        // A hack to get a pointer to this function put in the .dtors segment
-        if (fd.ident && memcmp(fd.ident.toChars(), "_STD".ptr, 4) == 0)
-            objmod.staticdtor(s);
-    }
-
     if (irs.startaddress)
     {
         //printf("Setting start address\n");
@@ -1305,8 +1120,7 @@ private void specialFunctions(Obj objmod, FuncDeclaration fd)
     // Pull in RTL startup code (but only once)
     if (fd.isMain() && onlyOneMain(fd.loc))
     {
-        if (global.params.isLinux || global.params.isOSX || global.params.isFreeBSD ||
-            global.params.isOpenBSD || global.params.isDragonFlyBSD || global.params.isSolaris)
+        if (target.isPOSIX)
         {
             objmod.external_def("_main");
         }
@@ -1325,9 +1139,7 @@ private void specialFunctions(Obj objmod, FuncDeclaration fd)
     }
     else if (fd.isRtInit())
     {
-        if (global.params.isLinux || global.params.isOSX || global.params.isFreeBSD ||
-            global.params.isOpenBSD || global.params.isDragonFlyBSD || global.params.isSolaris ||
-            global.params.mscoff)
+        if (target.isPOSIX || global.params.mscoff)
         {
             objmod.ehsections();   // initialize exception handling sections
         }
@@ -1336,7 +1148,7 @@ private void specialFunctions(Obj objmod, FuncDeclaration fd)
     {
         if (global.params.mscoff)
         {
-            if (global.params.mscrtlib && global.params.mscrtlib[0])
+            if (global.params.mscrtlib.length && global.params.mscrtlib[0])
                 obj_includelib(global.params.mscrtlib);
             objmod.includelib("OLDNAMES");
         }
@@ -1352,7 +1164,7 @@ private void specialFunctions(Obj objmod, FuncDeclaration fd)
         if (global.params.mscoff)
         {
             objmod.includelib("uuid");
-            if (global.params.mscrtlib && global.params.mscrtlib[0])
+            if (global.params.mscrtlib.length && global.params.mscrtlib[0])
                 obj_includelib(global.params.mscrtlib);
             objmod.includelib("OLDNAMES");
         }
@@ -1371,7 +1183,7 @@ private void specialFunctions(Obj objmod, FuncDeclaration fd)
         if (global.params.mscoff)
         {
             objmod.includelib("uuid");
-            if (global.params.mscrtlib && global.params.mscrtlib[0])
+            if (global.params.mscrtlib.length && global.params.mscrtlib[0])
                 obj_includelib(global.params.mscrtlib);
             objmod.includelib("OLDNAMES");
         }
@@ -1566,6 +1378,40 @@ Symbol *toSymbol(Type t)
     }
     assert(0);
 }
+
+/*******************************************
+ * Generate readonly symbol that consists of a bunch of zeros.
+ * Immutable Symbol instances can be mapped over it.
+ * Only one is generated per object file.
+ * Returns:
+ *    bzero symbol
+ */
+Symbol* getBzeroSymbol()
+{
+    Symbol* s = bzeroSymbol;
+    if (s)
+        return s;
+
+    s = symbol_calloc("__bzeroBytes");
+    s.Stype = type_static_array(128, type_fake(TYuchar));
+    s.Stype.Tmangle = mTYman_c;
+    s.Stype.Tcount++;
+    s.Sclass = SCglobal;
+    s.Sfl = FLdata;
+    s.Sflags |= SFLnodebug;
+    s.Salignment = 16;
+
+    auto dtb = DtBuilder(0);
+    dtb.nzeros(128);
+    s.Sdt = dtb.finish();
+    dt2common(&s.Sdt);
+
+    outdata(s);
+
+    bzeroSymbol = s;
+    return s;
+}
+
 
 
 /**************************************

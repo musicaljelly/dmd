@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Performs the semantic2 stage, which deals with initializer expressions.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/semantic2.d, _semantic2.d)
@@ -61,7 +60,6 @@ import dmd.statementsem;
 import dmd.staticassert;
 import dmd.tokens;
 import dmd.utf;
-import dmd.utils;
 import dmd.statement;
 import dmd.target;
 import dmd.templateparamsem;
@@ -119,8 +117,8 @@ private extern(C++) final class Semantic2Visitor : Visitor
                 if (StringExp se = sa.msg.toStringExp())
                 {
                     // same with pragma(msg)
-                    se = se.toUTF8(sc);
-                    error(sa.loc, "static assert:  \"%.*s\"", cast(int)se.len, se.string);
+                    const slice = se.toUTF8(sc).peekString();
+                    error(sa.loc, "static assert:  \"%.*s\"", cast(int)slice.length, slice.ptr);
                 }
                 else
                     error(sa.loc, "static assert:  %s", sa.msg.toChars());
@@ -242,12 +240,25 @@ private extern(C++) final class Semantic2Visitor : Visitor
             return;
         }
 
+        UserAttributeDeclaration.checkGNUABITag(vd, vd.linkage);
+
         if (vd._init && !vd.toParent().isFuncDeclaration())
         {
             vd.inuse++;
+
+            /* https://issues.dlang.org/show_bug.cgi?id=20280
+             *
+             * Template instances may import modules that have not
+             * finished semantic1.
+             */
+            if (!vd.type)
+                vd.dsymbolSemantic(sc);
+
+
             // https://issues.dlang.org/show_bug.cgi?id=14166
-            // Don't run CTFE for the temporary variables inside typeof
-            vd._init = vd._init.initializerSemantic(sc, vd.type, sc.intypeof == 1 ? INITnointerpret : INITinterpret);
+            // https://issues.dlang.org/show_bug.cgi?id=20417
+            // Don't run CTFE for the temporary variables inside typeof or __traits(compiles)
+            vd._init = vd._init.initializerSemantic(sc, vd.type, sc.intypeof == 1 || sc.flags & SCOPE.compile ? INITnointerpret : INITinterpret);
             vd.inuse--;
         }
         if (vd._init && vd.storage_class & STC.manifest)
@@ -402,7 +413,6 @@ private extern(C++) final class Semantic2Visitor : Visitor
                     if (f1.fbody is null || f2.fbody is null)
                         return 0;
 
-                    auto tf1 = cast(TypeFunction)f1.type;
                     auto tf2 = cast(TypeFunction)f2.type;
                     error(f2.loc, "%s `%s%s` cannot be overloaded with %s`extern(%s)` function at %s",
                             f2.kind(),
@@ -440,10 +450,10 @@ private extern(C++) final class Semantic2Visitor : Visitor
             return;
         TypeFunction f = cast(TypeFunction) fd.type;
 
+        UserAttributeDeclaration.checkGNUABITag(fd, fd.linkage);
         //semantic for parameters' UDAs
-        foreach (i; 0 .. f.parameterList.length)
+        foreach (i, param; f.parameterList)
         {
-            Parameter param = f.parameterList[i];
             if (param && param.userAttribDecl)
                 param.userAttribDecl.semantic2(sc);
         }
@@ -473,6 +483,7 @@ private extern(C++) final class Semantic2Visitor : Visitor
         {
             printf("+Nspace::semantic2('%s')\n", ns.toChars());
         }
+        UserAttributeDeclaration.checkGNUABITag(ns, LINK.cpp);
         if (ns.members)
         {
             assert(sc);
@@ -532,11 +543,18 @@ private extern(C++) final class Semantic2Visitor : Visitor
         visit(cast(AttribDeclaration)ad);
     }
 
+    override void visit(CPPNamespaceDeclaration decl)
+    {
+        UserAttributeDeclaration.checkGNUABITag(decl, LINK.cpp);
+        visit(cast(AttribDeclaration)decl);
+    }
+
     override void visit(UserAttributeDeclaration uad)
     {
         if (uad.decl && uad.atts && uad.atts.dim && uad._scope)
         {
-            static void eval(Scope* sc, Expressions* exps)
+            Expression* lastTag;
+            static void eval(Scope* sc, Expressions* exps, ref Expression* lastTag)
             {
                 foreach (ref Expression e; *exps)
                 {
@@ -548,14 +566,18 @@ private extern(C++) final class Semantic2Visitor : Visitor
                         if (e.op == TOK.tuple)
                         {
                             TupleExp te = cast(TupleExp)e;
-                            eval(sc, te.exps);
+                            eval(sc, te.exps, lastTag);
                         }
+
+                        // Handles compiler-recognized `core.attribute.gnuAbiTag`
+                        if (UserAttributeDeclaration.isGNUABITag(e))
+                            doGNUABITagSemantic(e, lastTag);
                     }
                 }
             }
 
             uad._scope = null;
-            eval(sc, uad.atts);
+            eval(sc, uad.atts, lastTag);
         }
         visit(cast(AttribDeclaration)uad);
     }
@@ -572,6 +594,9 @@ private extern(C++) final class Semantic2Visitor : Visitor
             return;
         }
 
+        UserAttributeDeclaration.checkGNUABITag(
+            ad, ad.classKind == ClassKind.cpp ? LINK.cpp : LINK.d);
+
         auto sc2 = ad.newScope(sc);
 
         ad.determineSize(ad.loc);
@@ -585,4 +610,102 @@ private extern(C++) final class Semantic2Visitor : Visitor
 
         sc2.pop();
     }
+}
+
+/**
+ * Perform semantic analysis specific to the GNU ABI tags
+ *
+ * The GNU ABI tags are a feature introduced in C++11, specific to g++
+ * and the Itanium ABI.
+ * They are mandatory for C++ interfacing, simply because the templated struct
+ *`std::basic_string`, of which the ubiquitous `std::string` is a instantiation
+ * of, uses them.
+ *
+ * Params:
+ *   e = Expression to perform semantic on
+ *       See `Semantic2Visitor.visit(UserAttributeDeclaration)`
+ *   lastTag = When `!is null`, we already saw an ABI tag.
+ *            To simplify implementation and reflection code,
+ *            only one ABI tag object is allowed per symbol
+ *            (but it can have multiple tags as it's an array exp).
+ */
+private void doGNUABITagSemantic(ref Expression e, ref Expression* lastTag)
+{
+    import dmd.dmangle;
+
+    // When `@gnuAbiTag` is used, the type will be the UDA, not the struct literal
+    if (e.op == TOK.type)
+    {
+        e.error("`@%s` at least one argument expected", Id.udaGNUAbiTag.toChars());
+        return;
+    }
+
+    // Definition is in `core.attributes`. If it's not a struct literal,
+    // it shouldn't have passed semantic, hence the `assert`.
+    auto sle = e.isStructLiteralExp();
+    if (sle is null)
+    {
+        assert(global.errors);
+        return;
+    }
+    // The definition of `gnuAttributes` only have 1 member, `string[] tags`
+    assert(sle.elements && sle.elements.length == 1);
+    // `gnuAbiTag`'s constructor is defined as `this(string[] tags...)`
+    auto ale = (*sle.elements)[0].isArrayLiteralExp();
+    if (ale is null)
+    {
+        e.error("`@%s` at least one argument expected", Id.udaGNUAbiTag.toChars());
+        return;
+    }
+
+    // Check that it's the only tag on the symbol
+    if (lastTag !is null)
+    {
+        const str1 = (*lastTag.isStructLiteralExp().elements)[0].toString();
+        const str2 = ale.toString();
+        e.error("only one `@%s` allowed per symbol", Id.udaGNUAbiTag.toChars());
+        e.errorSupplemental("instead of `@%s @%s`, use `@%s(%.*s, %.*s)`",
+            lastTag.toChars(), e.toChars(), Id.udaGNUAbiTag.toChars(),
+            // Avoid [ ... ]
+            cast(int)str1.length - 2, str1.ptr + 1,
+            cast(int)str2.length - 2, str2.ptr + 1);
+        return;
+    }
+    lastTag = &e;
+
+    // We already know we have a valid array literal of strings.
+    // Now checks that elements are valid.
+    foreach (idx, elem; *ale.elements)
+    {
+        const str = elem.toStringExp().peekString();
+        if (!str.length)
+        {
+            e.error("argument `%d` to `@%s` cannot be %s", cast(int)(idx + 1),
+                    Id.udaGNUAbiTag.toChars(),
+                    elem.isNullExp() ? "`null`".ptr : "empty".ptr);
+            continue;
+        }
+
+        foreach (c; str)
+        {
+            if (!c.isValidMangling())
+            {
+                e.error("`@%s` char `0x%02x` not allowed in mangling",
+                        Id.udaGNUAbiTag.toChars(), c);
+                break;
+            }
+        }
+        // Valid element
+    }
+    // Since ABI tags need to be sorted, we sort them in place
+    // It might be surprising for users that inspects the UDAs,
+    // but it's a concession to practicality.
+    // Casts are unfortunately necessary as `implicitConvTo` is not
+    // `const` (and nor is `StringExp`, by extension).
+    static int predicate(const scope Expression* e1, const scope Expression* e2) nothrow
+    {
+        scope(failure) assert(0, "An exception was thrown");
+        return (cast(Expression*)e1).toStringExp().compare((cast(Expression*)e2).toStringExp());
+    }
+    ale.elements.sort!predicate;
 }

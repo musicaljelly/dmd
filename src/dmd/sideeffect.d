@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Find side-effects of expressions.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/sideeffect.d, _sideeffect.d)
@@ -335,8 +334,8 @@ bool discardValue(Expression e)
             {
                 return false;
             }
-            // Don't check e1 until we cast(void) the a,b code generation
-            //discardValue(ce.e1);
+            // Don't check e1 until we cast(void) the a,b code generation.
+            // This is concretely done in expressionSemantic, if a CommaExp has Tvoid as type
             return discardValue(ce.e2);
         }
     case TOK.tuple:
@@ -363,7 +362,7 @@ bool discardValue(Expression e)
  * Returns:
  *  Newly created temporary variable.
  */
-VarDeclaration copyToTemp(StorageClass stc, const char* name, Expression e)
+VarDeclaration copyToTemp(StorageClass stc, const char[] name, Expression e)
 {
     assert(name[0] == '_' && name[1] == '_');
     auto vd = new VarDeclaration(e.loc, e.type,
@@ -387,10 +386,19 @@ VarDeclaration copyToTemp(StorageClass stc, const char* name, Expression e)
  * Note:
  *  e's lvalue-ness will be handled well by STC.ref_ or STC.rvalue.
  */
-Expression extractSideEffect(Scope* sc, const char* name,
+Expression extractSideEffect(Scope* sc, const char[] name,
     ref Expression e0, Expression e, bool alwaysCopy = false)
 {
-    if (!alwaysCopy && isTrivialExp(e))
+    //printf("extractSideEffect(e: %s)\n", e.toChars());
+
+    /* The trouble here is that if CTFE is running, extracting the side effect
+     * results in an assignment, and then the interpreter says it cannot evaluate the
+     * side effect assignment variable. But we don't have to worry about side
+     * effects in function calls anyway, because then they won't CTFE.
+     * https://issues.dlang.org/show_bug.cgi?id=17145
+     */
+    if (!alwaysCopy &&
+        ((sc.flags & SCOPE.ctfe) ? !hasSideEffect(e) : isTrivialExp(e)))
         return e;
 
     auto vd = copyToTemp(0, name, e);

@@ -68,7 +68,9 @@ static void frontend_init()
 
     global._init();
     global.params.isLinux = true;
-    global.vendor = DString("Front-End Tester");
+    global.vendor = "Front-End Tester";
+    global.params.objname = NULL;
+    global.params.cpu = CPU::native;
 
     Type::_init();
     Id::initialize();
@@ -92,8 +94,34 @@ static void frontend_term()
 
 /**********************************/
 
+void test_tokens()
+{
+    // First valid TOK value
+    assert(TOKlparen == 1);
+    assert(strcmp(Token::toChars(TOKlparen), "(") == 0);
+
+    // Last valid TOK value
+    assert(TOKvectorarray == TOKMAX - 1);
+    assert(strcmp(Token::toChars(TOKvectorarray), "vectorarray") == 0);
+}
+
+void test_compiler_globals()
+{
+    // only check constant prefix of version
+    assert(strncmp(global.versionChars(), "v2.", 3) == 0);
+    unsigned versionNumber = global.versionNumber();
+    assert(versionNumber >= 2060 && versionNumber <= 3000);
+
+    assert(strcmp(target.architectureName.ptr, "X86_64") == 0 ||
+           strcmp(target.architectureName.ptr, "X86") == 0);
+}
+
+/**********************************/
+
 class TestVisitor : public Visitor
 {
+  using Visitor::visit;
+
   public:
     bool expr;
     bool package;
@@ -104,9 +132,11 @@ class TestVisitor : public Visitor
     bool decl;
     bool typeinfo;
     bool idexpr;
+    bool function;
 
     TestVisitor() : expr(false), package(false), stmt(false), type(false),
-        aggr(false), attrib(false), decl(false), typeinfo(false), idexpr(false)
+        aggr(false), attrib(false), decl(false), typeinfo(false), idexpr(false),
+        function(false)
     {
     }
 
@@ -153,6 +183,11 @@ class TestVisitor : public Visitor
     void visit(TypeInfoDeclaration *)
     {
         typeinfo = true;
+    }
+
+    void visit(FuncDeclaration *)
+    {
+        function = true;
     }
 };
 
@@ -210,6 +245,15 @@ void test_visitors()
     assert(ti->tinfo == tp);
     ti->accept(&tv);
     assert(tv.typeinfo == true);
+
+    Parameters *args = new Parameters;
+    TypeFunction *tf = TypeFunction::create(args, Type::tvoid, VARARGnone, LINKc);
+    FuncDeclaration *fd = FuncDeclaration::create(Loc (), Loc (), Identifier::idPool("test"),
+                                                  STCextern, tf);
+    assert(fd->isFuncDeclaration() == fd);
+    assert(fd->type == tf);
+    fd->accept(&tv);
+    assert(tv.function == true);
 }
 
 /**********************************/
@@ -241,7 +285,7 @@ void test_semantic()
     Dsymbol *s = m->search(Loc(), Identifier::idPool("Error"));
     assert(s);
     AggregateDeclaration *ad = s->isAggregateDeclaration();
-    assert(ad && ad->ctor);
+    assert(ad && ad->ctor && ad->sizeok == SIZEOKdone);
     CtorDeclaration *ctor = ad->ctor->isCtorDeclaration();
     assert(ctor->isMember() && !ctor->isNested());
     assert(0 == strcmp(ctor->type->toChars(), "Error(string)"));
@@ -307,6 +351,30 @@ void test_parameters()
     assert(tf->parameterList.length() == 2);
     assert(tf->parameterList[0]->type == Type::tint32);
     assert(tf->parameterList[1]->type == Type::tint64);
+    assert(!tf->isDstyleVariadic());
+}
+
+/**********************************/
+
+void test_types()
+{
+    Parameters *args = new Parameters;
+    StorageClass stc = STCnothrow|STCproperty|STCreturn|STCreturninferred|STCtrusted;
+    TypeFunction *tfunction = TypeFunction::create(args, Type::tvoid, VARARGnone, LINKd, stc);
+
+    assert(tfunction->isnothrow());
+    assert(!tfunction->isnogc());
+    assert(tfunction->isproperty());
+    assert(!tfunction->isref());
+    tfunction->isref(true);
+    assert(tfunction->isref());
+    assert(tfunction->isreturn());
+    assert(!tfunction->isScopeQual());
+    assert(tfunction->isreturninferred());
+    assert(!tfunction->isscopeinferred());
+    assert(tfunction->linkage == LINKd);
+    assert(tfunction->trust == TRUST::trusted);
+    assert(tfunction->purity == PURE::impure);
 }
 
 /**********************************/
@@ -315,7 +383,82 @@ void test_location()
 {
     Loc loc1 = Loc("test.d", 24, 42);
     assert(loc1.equals(Loc("test.d", 24, 42)));
-    assert(strcmp(loc1.toChars(true), "test.d(24,42)") == 0);
+    assert(strcmp(loc1.toChars(true, MESSAGESTYLEdigitalmars), "test.d(24,42)") == 0);
+    assert(strcmp(loc1.toChars(true, MESSAGESTYLEgnu), "test.d:24:42") == 0);
+}
+
+/**********************************/
+
+void test_array()
+{
+    Array<double> array;
+    array.setDim(4);
+    array.shift(10);
+    array.push(20);
+    array[2] = 15;
+    assert(array[0] == 10);
+    assert(array.find(10) == 0);
+    assert(array.find(20) == 5);
+    assert(!array.contains(99));
+    array.remove(1);
+    assert(array.length == 5);
+    assert(array[1] == 15);
+    assert(array.pop() == 20);
+    assert(array.length == 4);
+    array.insert(1, 30);
+    assert(array[1] == 30);
+    assert(array[2] == 15);
+
+    Array<int> arrayA;
+    array.setDim(0);
+    int buf[3] = {10, 15, 20};
+    arrayA.push(buf[0]);
+    arrayA.push(buf[1]);
+    arrayA.push(buf[2]);
+    assert(memcmp(arrayA.tdata(), buf, sizeof(buf)) == 0);
+    Array<int> *arrayPtr = arrayA.copy();
+    assert(arrayPtr);
+    assert(memcmp(arrayPtr->tdata(), arrayA.tdata(), arrayA.length * sizeof(int)) == 0);
+    assert(arrayPtr->tdata() != arrayA.tdata());
+
+    arrayPtr->setDim(0);
+    int buf2[2] = {100, 200};
+    arrayPtr->push(buf2[0]);
+    arrayPtr->push(buf2[1]);
+
+    arrayA.append(arrayPtr);
+    assert(memcmp(arrayA.tdata() + 3, buf2, sizeof(buf2)) == 0);
+    arrayA.insert(0, arrayPtr);
+    assert(arrayA[0] == 100);
+    assert(arrayA[1] == 200);
+    assert(arrayA[2] == 10);
+    assert(arrayA[3] == 15);
+    assert(arrayA[4] == 20);
+    assert(arrayA[5] == 100);
+    assert(arrayA[6] == 200);
+
+    arrayA.zero();
+    for (size_t i = 0; i < arrayA.length; i++)
+        assert(arrayA[i] == 0);
+}
+
+void test_outbuffer()
+{
+    OutBuffer buf;
+    mangleToBuffer(Type::tint64, &buf);
+    assert(strcmp(buf.peekChars(), "l") == 0);
+    buf.reset();
+
+    buf.reserve(16);
+    buf.writestring("hello");
+    buf.writeByte(' ');
+    buf.write(&buf);
+    buf.writenl();
+    assert(buf.length() == 13);
+
+    const char *data = buf.extractChars();
+    assert(buf.length() == 0);
+    assert(strcmp(data, "hello hello \n") == 0);
 }
 
 /**********************************/
@@ -324,13 +467,18 @@ int main(int argc, char **argv)
 {
     frontend_init();
 
+    test_tokens();
+    test_compiler_globals();
     test_visitors();
     test_semantic();
     test_expression();
     test_target();
     test_emplace();
     test_parameters();
+    test_types();
     test_location();
+    test_array();
+    test_outbuffer();
 
     frontend_term();
 

@@ -1,6 +1,6 @@
 /*
-REQUIRED_ARGS: -Ifail_compilation/extra-files/minimal/ -checkaction=context
-PERMUTE_ARGS:
+REQUIRED_ARGS: -checkaction=context
+EXTRA_SOURCES: extra-files/minimal/object.d
 */
 
 /************************************************************/

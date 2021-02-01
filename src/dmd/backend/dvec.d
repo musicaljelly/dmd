@@ -4,7 +4,7 @@
  *
  * Simple bit vector implementation.
  *
- * Copyright:   Copyright (C) 2013-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 2013-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/dvec.d, backend/dvec.d)
@@ -253,6 +253,17 @@ vec_t vec_realloc(vec_t v, size_t numbits)
     return newv;
 }
 
+/********************************
+ * Recycle a vector `v` to a new size `numbits`, clear all bits.
+ * Re-uses original if possible.
+ */
+void vec_recycle(ref vec_t v, size_t numbits)
+{
+    vec_free(v);
+    v = vec_calloc(numbits);
+}
+
+
 /**************************
  * Set bit b in vector v.
  */
@@ -264,7 +275,7 @@ void vec_setbit(size_t b, vec_t v)
     {
         if (!(v && b < vec_numbits(v)))
             printf("vec_setbit(v = %p,b = %d): numbits = %d dim = %d\n",
-                v,b,v ? vec_numbits(v) : 0, v ? vec_dim(v) : 0);
+                v, cast(int) b, cast(int) (v ? vec_numbits(v) : 0), cast(int) (v ? vec_dim(v) : 0));
     }
     assert(v && b < vec_numbits(v));
     core.bitop.bts(v, b);
@@ -294,7 +305,7 @@ size_t vec_testbit(size_t b, const vec_t v)
     {
         if (!(v && b < vec_numbits(v)))
             printf("vec_setbit(v = %p,b = %d): numbits = %d dim = %d\n",
-                v,b,v ? vec_numbits(v) : 0, v ? vec_dim(v) : 0);
+                v, cast(int) b, cast(int) (v ? vec_numbits(v) : 0), cast(int) (v ? vec_dim(v) : 0));
     }
     assert(v && b < vec_numbits(v));
     return core.bitop.bt(v, b);
@@ -525,8 +536,9 @@ void vec_copy(vec_t to, const vec_t from)
         debug
         {
             if (!(to && from && vec_numbits(to) == vec_numbits(from)))
-                printf("to = x%lx, from = x%lx, numbits(to) = %d, numbits(from) = %d\n",
-                    cast(int)to,cast(int)from,to ? vec_numbits(to) : 0, from ? vec_numbits(from): 0);
+                printf("to = x%p, from = x%p, numbits(to) = %d, numbits(from) = %d\n",
+                    to, from, cast(int) (to ? vec_numbits(to) : 0),
+                    cast(int) (from ? vec_numbits(from): 0));
         }
         assert(to && from && vec_numbits(to) == vec_numbits(from));
         memcpy(to, from, to[0].sizeof * vec_dim(to));
@@ -594,7 +606,7 @@ void vec_print(const vec_t v)
 {
     debug
     {
-        printf(" Vec %p, numbits %d dim %d",v,vec_numbits(v),vec_dim(v));
+        printf(" Vec %p, numbits %d dim %d", v, cast(int) vec_numbits(v), cast(int) vec_dim(v));
         if (v)
         {
             fputc('\t',stdout);

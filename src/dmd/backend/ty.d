@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1983-1998 by Symantec
- *              Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/ty.d, backend/_ty.d)
@@ -141,8 +141,9 @@ enum
     TYsharePtr          = 0x5C, // pointer to shared data
     TYimmutPtr          = 0x5D, // pointer to immutable data
     TYfgPtr             = 0x5E, // GS: pointer (I32) FS: pointer (I64)
+    TYrestrictPtr       = 0x5F, // restrict pointer
 
-    TYMAX               = 0x5F,
+    TYMAX               = 0x60,
 }
 
 alias TYerror = TYint;
@@ -186,6 +187,10 @@ enum
     mTYimmutable    = 0x00080000,    // immutable data
     mTYshared       = 0x00100000,    // shared data
     mTYnothrow      = 0x00200000,    // nothrow function
+
+    // SROA types
+    mTYxmmgpr       = 0x00400000,    // first slice in XMM register, the other in GPR
+    mTYgprxmm       = 0x00800000,    // first slice in GPR register, the other in XMM
 
     // Used only by C/C++ compiler
 //#if TARGET_LINUX || TARGET_OSX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_DRAGONFLYBSD || TARGET_SOLARIS

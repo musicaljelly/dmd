@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1984-1995 by Symantec
- *              Copyright (C) 2000-2019 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/dcgcv.d, backend/dcgcv.d)
@@ -53,7 +53,7 @@ version (SCPP)
 }
 version (MARS)
 {
-    import dmd.backend.varstats;
+    import dmd.backend.dvarstats;
 }
 
 extern (C++):
@@ -86,7 +86,7 @@ __gshared
 private Barray!(debtyp_t*) debtyp;
 
 private vec_t debtypvec;     // vector of used entries
-enum DEBTYPVECDIM = 16001;   //8009 //3001     // dimension of debtypvec (should be prime)
+enum DEBTYPVECDIM = 16_001;   //8009 //3001     // dimension of debtypvec (should be prime)
 
 enum DEBTYPHASHDIM = 1009;
 private uint[DEBTYPHASHDIM] debtyphash;
@@ -445,16 +445,16 @@ void cv_init()
     if (reset_symbuf)
     {
         Symbol **p = cast(Symbol **)reset_symbuf.buf;
-        const size_t n = reset_symbuf.size() / (Symbol *).sizeof;
+        const size_t n = reset_symbuf.length() / (Symbol *).sizeof;
         for (size_t i = 0; i < n; ++i)
             symbol_reset(p[i]);
-        reset_symbuf.setsize(0);
+        reset_symbuf.reset();
     }
     else
     {
         reset_symbuf = cast(Outbuffer*) calloc(1, Outbuffer.sizeof);
         assert(reset_symbuf);
-        reset_symbuf.enlarge(10 * (Symbol *).sizeof);
+        reset_symbuf.reserve(10 * (Symbol*).sizeof);
     }
 
     /* Reset for different OBJ file formats     */
@@ -476,6 +476,7 @@ void cv_init()
             dttab4[TYsptr] = 0x600;
             dttab4[TYimmutPtr] = 0x600;
             dttab4[TYsharePtr] = 0x600;
+            dttab4[TYrestrictPtr] = 0x600;
             dttab4[TYfgPtr] = 0x600;
         }
         else
@@ -485,6 +486,7 @@ void cv_init()
             dttab4[TYnptr] = 0x400;
             dttab4[TYimmutPtr] = 0x400;
             dttab4[TYsharePtr] = 0x400;
+            dttab4[TYrestrictPtr] = 0x400;
             dttab4[TYfgPtr] = 0x400;
         }
         dttab4[TYcptr] = 0x400;
@@ -1736,7 +1738,45 @@ static if (SYMDEB_TDB)
 }
 
 }
+else
+{
+private uint cv4_fwdenum(type* t)
+{
+    Symbol* s = t.Ttag;
 
+    // write a forward reference enum record that is enough for the linker to
+    // fold with original definition from EnumDeclaration
+    uint bty = dttab4[tybasic(t.Tnext.Tty)];
+    const id = prettyident(s);
+    uint len = config.fulltypes == CV8 ? 14 : 10;
+    debtyp_t* d = debtyp_alloc(len + cv_stringbytes(id));
+    switch (config.fulltypes)
+    {
+        case CV8:
+            TOWORD(d.data.ptr, LF_ENUM_V3);
+            TOLONG(d.data.ptr + 2, 0);    // count
+            TOWORD(d.data.ptr + 4, 0x80); // property : forward reference
+            TOLONG(d.data.ptr + 6, bty);  // memtype
+            TOLONG(d.data.ptr + 10, 0);   // fieldlist
+            break;
+
+        case CV4:
+            TOWORD(d.data.ptr,LF_ENUM);
+            TOWORD(d.data.ptr + 2, 0);    // count
+            TOWORD(d.data.ptr + 4, bty);  // memtype
+            TOLONG(d.data.ptr + 6, 0);    // fieldlist
+            TOWORD(d.data.ptr + 8, 0x80); // property : forward reference
+            break;
+
+        default:
+            assert(0);
+    }
+    cv_namestring(d.data.ptr + len, id);
+    s.Stypidx = cv_debtyp(d);
+    return s.Stypidx;
+}
+
+}
 /************************************************
  * Return 'calling convention' type of function.
  */
@@ -1928,6 +1968,7 @@ L1:
         case TYnptr:
         case TYimmutPtr:
         case TYsharePtr:
+        case TYrestrictPtr:
 version (MARS)
 {
             if (t.Tkey)
@@ -2261,7 +2302,7 @@ version (SCPP)
 }
             }
             else
-                typidx = dttab4[tybasic(t.Tnext.Tty)];
+                typidx = cv4_fwdenum(t);
             break;
 
 version (SCPP)

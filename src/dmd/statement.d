@@ -1,8 +1,9 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Defines AST nodes for statements.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Specification: $(LINK2 https://dlang.org/spec/statement.html, Statements)
+ *
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/statement.d, _statement.d)
@@ -166,36 +167,66 @@ extern (C++) abstract class Statement : ASTNode
         return b;
     }
 
-    override final const(char)* toChars()
+    override final const(char)* toChars() const
     {
         HdrGenState hgs;
         OutBuffer buf;
         .toCBuffer(this, &buf, &hgs);
-        return buf.extractChars();
+        buf.writeByte(0);
+        return buf.extractSlice().ptr;
     }
 
-    final void error(const(char)* format, ...)
+    static if (__VERSION__ < 2092)
     {
-        va_list ap;
-        va_start(ap, format);
-        .verror(loc, format, ap);
-        va_end(ap);
-    }
+        final void error(const(char)* format, ...)
+        {
+            va_list ap;
+            va_start(ap, format);
+            .verror(loc, format, ap);
+            va_end(ap);
+        }
 
-    final void warning(const(char)* format, ...)
-    {
-        va_list ap;
-        va_start(ap, format);
-        .vwarning(loc, format, ap);
-        va_end(ap);
-    }
+        final void warning(const(char)* format, ...)
+        {
+            va_list ap;
+            va_start(ap, format);
+            .vwarning(loc, format, ap);
+            va_end(ap);
+        }
 
-    final void deprecation(const(char)* format, ...)
+        final void deprecation(const(char)* format, ...)
+        {
+            va_list ap;
+            va_start(ap, format);
+            .vdeprecation(loc, format, ap);
+            va_end(ap);
+        }
+    }
+    else
     {
-        va_list ap;
-        va_start(ap, format);
-        .vdeprecation(loc, format, ap);
-        va_end(ap);
+        pragma(printf) final void error(const(char)* format, ...)
+        {
+            va_list ap;
+            va_start(ap, format);
+            .verror(loc, format, ap);
+            va_end(ap);
+        }
+
+        pragma(printf) final void warning(const(char)* format, ...)
+        {
+            va_list ap;
+            va_start(ap, format);
+            .vwarning(loc, format, ap);
+            va_end(ap);
+        }
+
+        pragma(printf) final void deprecation(const(char)* format, ...)
+        {
+            va_list ap;
+            va_start(ap, format);
+            .vdeprecation(loc, format, ap);
+            va_end(ap);
+        }
     }
 
     Statement getRelatedLabeled()
@@ -432,6 +463,7 @@ extern (C++) abstract class Statement : ASTNode
     inout(DtorExpStatement)     isDtorExpStatement()     { return stmt == STMT.DtorExp     ? cast(typeof(return))this : null; }
     inout(ForwardingStatement)  isForwardingStatement()  { return stmt == STMT.Forwarding  ? cast(typeof(return))this : null; }
     inout(DoStatement)          isDoStatement()          { return stmt == STMT.Do          ? cast(typeof(return))this : null; }
+    inout(WhileStatement)       isWhileStatement()       { return stmt == STMT.While       ? cast(typeof(return))this : null; }
     inout(ForStatement)         isForStatement()         { return stmt == STMT.For         ? cast(typeof(return))this : null; }
     inout(ForeachStatement)     isForeachStatement()     { return stmt == STMT.Foreach     ? cast(typeof(return))this : null; }
     inout(SwitchStatement)      isSwitchStatement()      { return stmt == STMT.Switch      ? cast(typeof(return))this : null; }
@@ -603,6 +635,11 @@ private Statement toStatement(Dsymbol s)
             result = visitMembers(d.loc, d.decl);
         }
 
+        override void visit(ForwardingAttribDeclaration d)
+        {
+            result = visitMembers(d.loc, d.decl);
+        }
+
         override void visit(StaticAssert s)
         {
         }
@@ -623,8 +660,7 @@ private Statement toStatement(Dsymbol s)
         override void visit(StaticForeachDeclaration d)
         {
             assert(d.sfe && !!d.sfe.aggrfe ^ !!d.sfe.rangefe);
-            (d.sfe.aggrfe ? d.sfe.aggrfe._body : d.sfe.rangefe._body) = visitMembers(d.loc, d.decl);
-            result = new StaticForeachStatement(d.loc, d.sfe);
+            result = visitMembers(d.loc, d.include(null));
         }
 
         override void visit(CompileDeclaration d)
@@ -810,21 +846,18 @@ extern (C++) final class CompileStatement : Statement
             return errorStatements();
 
         const errors = global.errors;
-        const len = buf.offset;
-        const str = buf.extractChars()[0 .. len];
-        scope diagnosticReporter = new StderrDiagnosticReporter(global.params.useDeprecated);
-        scope p = new Parser!ASTCodegen(loc, sc._module, str, false, diagnosticReporter);
+        const len = buf.length;
+        buf.writeByte(0);
+        const str = buf.extractSlice()[0 .. len];
+        scope p = new Parser!ASTCodegen(loc, sc._module, str, false);
         p.nextToken();
 
         auto a = new Statements();
         while (p.token.value != TOK.endOfFile)
         {
             Statement s = p.parseStatement(ParseStatementFlags.semi | ParseStatementFlags.curlyScope);
-            if (!s || p.errors)
-            {
-                assert(!p.errors || global.errors != errors); // make sure we caught all the cases
+            if (!s || global.errors != errors)
                 return errorStatements();
-            }
             a.push(s);
         }
         return a;
@@ -1432,7 +1465,10 @@ extern (C++) final class ConditionalStatement : Statement
         {
             DebugCondition dc = condition.isDebugCondition();
             if (dc)
+            {
                 s = new DebugStatement(loc, ifbody);
+                debugThrowWalker(ifbody);
+            }
             else
                 s = ifbody;
         }
@@ -1448,6 +1484,37 @@ extern (C++) final class ConditionalStatement : Statement
     {
         v.visit(this);
     }
+}
+
+/**
+Marks all occurring ThrowStatements as internalThrows.
+This is intended to be called from a DebugStatement as it allows
+to mark all its nodes as nothrow.
+
+Params:
+    s = AST Node to traverse
+*/
+private void debugThrowWalker(Statement s)
+{
+
+    extern(C++) final class DebugWalker : SemanticTimeTransitiveVisitor
+    {
+        alias visit = SemanticTimeTransitiveVisitor.visit;
+    public:
+
+        override void visit(ThrowStatement s)
+        {
+            s.internalThrow = true;
+        }
+
+        override void visit(CallExp s)
+        {
+            s.inDebugStatement = true;
+        }
+    }
+
+    scope walker = new DebugWalker();
+    s.accept(walker);
 }
 
 /***********************************************************
@@ -1473,7 +1540,7 @@ extern (C++) final class StaticForeachStatement : Statement
 
     override Statement syntaxCopy()
     {
-        return new StaticForeachStatement(loc,sfe.syntaxCopy());
+        return new StaticForeachStatement(loc, sfe.syntaxCopy());
     }
 
     override Statements* flatten(Scope* sc)
@@ -1482,7 +1549,7 @@ extern (C++) final class StaticForeachStatement : Statement
         if (sfe.ready())
         {
             import dmd.statementsem;
-            auto s = makeTupleForeach!(true,false)(sc, sfe.aggrfe,sfe.needExpansion);
+            auto s = makeTupleForeach!(true, false)(sc, sfe.aggrfe, sfe.needExpansion);
             auto result = s.flatten(sc);
             if (result)
             {
@@ -1650,6 +1717,7 @@ extern (C++) final class CaseStatement : Statement
 
     int index;              // which case it is (since we sort this)
     VarDeclaration lastVar;
+    void* extra;            // for use by Statement_toIR()
 
     extern (D) this(const ref Loc loc, Expression exp, Statement statement)
     {
@@ -2100,11 +2168,11 @@ extern (C++) final class ScopeGuardStatement : Statement
                  *  sexception:    x = true;
                  *  sfinally: if (!x) statement;
                  */
-                auto v = copyToTemp(0, "__os", new IntegerExp(Loc.initial, 0, Type.tbool));
+                auto v = copyToTemp(0, "__os", IntegerExp.createBool(false));
                 v.dsymbolSemantic(sc);
                 *sentry = new ExpStatement(loc, v);
 
-                Expression e = new IntegerExp(Loc.initial, 1, Type.tbool);
+                Expression e = IntegerExp.createBool(true);
                 e = new AssignExp(Loc.initial, new VarExp(Loc.initial, v), e);
                 *sexception = new ExpStatement(Loc.initial, e);
 
@@ -2305,6 +2373,7 @@ extern (C++) final class LabelStatement : Statement
     ScopeGuardStatement os;
     VarDeclaration lastVar;
     Statement gotoTarget;       // interpret
+    void* extra;                // used by Statement_toIR()
     bool breaks;                // someone did a 'break ident'
 
     extern (D) this(const ref Loc loc, Identifier ident, Statement statement)

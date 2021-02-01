@@ -1,7 +1,7 @@
 /**
- * Compiler implementation of the $(LINK2 http://www.dlang.org, D programming language)
+ * Do mangling for C++ linkage for Digital Mars C++ and Microsoft Visual C++.
  *
- * Copyright: Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright: Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors: Walter Bright, http://www.digitalmars.com
  * License:   $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:    $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/cppmanglewin.d, _cppmanglewin.d)
@@ -16,8 +16,10 @@ import core.stdc.stdio;
 
 import dmd.arraytypes;
 import dmd.cppmangle : isPrimaryDtor, isCppOperator, CppOperator;
+import dmd.dclass;
 import dmd.declaration;
 import dmd.denum : isSpecialEnumIdent;
+import dmd.dstruct;
 import dmd.dsymbol;
 import dmd.dtemplate;
 import dmd.errors;
@@ -32,9 +34,6 @@ import dmd.target;
 import dmd.tokens;
 import dmd.typesem;
 import dmd.visitor;
-
-/* Do mangling for C++ linkage for Digital Mars C++ and Microsoft Visual C++
- */
 
 extern (C++):
 
@@ -388,10 +387,11 @@ public:
             return;
         //printf("visit(TypeStruct); is_not_top_type = %d\n", (int)(flags & IS_NOT_TOP_TYPE));
         mangleModifier(type);
+        const agg = type.sym.isStructDeclaration();
         if (type.sym.isUnionDeclaration())
             buf.writeByte('T');
         else
-            buf.writeByte(type.cppmangle == CPPMANGLE.asClass ? 'V' : 'U');
+            buf.writeByte(agg.cppmangle == CPPMANGLE.asClass ? 'V' : 'U');
         mangleIdent(type.sym);
         flags &= ~IS_NOT_TOP_TYPE;
         flags &= ~IGNORE_CONST;
@@ -459,7 +459,8 @@ public:
             buf.writeByte('E');
         flags |= IS_NOT_TOP_TYPE;
         mangleModifier(type);
-        buf.writeByte(type.cppmangle == CPPMANGLE.asStruct ? 'U' : 'V');
+        const cldecl = type.sym.isClassDeclaration();
+        buf.writeByte(cldecl.cppmangle == CPPMANGLE.asStruct ? 'U' : 'V');
         mangleIdent(type.sym);
         flags &= ~IS_NOT_TOP_TYPE;
         flags &= ~IGNORE_CONST;
@@ -705,7 +706,7 @@ private:
             switch (whichOp)
             {
             case CppOperator.Unary:
-                switch (str.peekSlice())
+                switch (str.peekString())
                 {
                     case "*":   symName = "?D";     goto continue_template;
                     case "++":  symName = "?E";     goto continue_template;
@@ -716,7 +717,7 @@ private:
                     default:    return false;
                 }
             case CppOperator.Binary:
-                switch (str.peekSlice())
+                switch (str.peekString())
                 {
                     case ">>":  symName = "?5";     goto continue_template;
                     case "<<":  symName = "?6";     goto continue_template;
@@ -731,7 +732,7 @@ private:
                     default:    return false;
                     }
             case CppOperator.OpAssign:
-                switch (str.peekSlice())
+                switch (str.peekString())
                 {
                     case "*":   symName = "?X";     goto continue_template;
                     case "+":   symName = "?Y";     goto continue_template;
@@ -1226,10 +1227,10 @@ private:
         }
         else
         {
-            int mangleParameterDg(size_t n, Parameter p)
+            foreach (n, p; type.parameterList)
             {
                 Type t = p.type;
-                if (p.storageClass & (STC.out_ | STC.ref_))
+                if (p.isReference())
                 {
                     t = t.referenceTo();
                 }
@@ -1249,10 +1250,8 @@ private:
                 tmp.flags &= ~IS_NOT_TOP_TYPE;
                 tmp.flags &= ~IGNORE_CONST;
                 t.accept(tmp);
-                return 0;
             }
 
-            Parameter._foreach(type.parameterList.parameters, &mangleParameterDg);
             if (type.parameterList.varargs == VarArg.variadic)
             {
                 tmp.buf.writeByte('Z');

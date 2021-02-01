@@ -1,6 +1,8 @@
 // EXTRA_OBJC_SOURCES: objc_instance_variable.m
 // REQUIRED_ARGS: -L-framework -LFoundation
 
+import core.attribute : selector;
+
 extern (Objective-C) extern class NSObject {}
 
 // Defined in `runnable/extra-files/objc_instance_variable.m`
@@ -35,7 +37,7 @@ extern (C) int getInstanceVariableC(Foo);
 // sets the a value for the instance variables `a`, `b` and `c`.
 extern (C) int setInstanceVariables(Foo);
 
-import std.stdio;
+import core.stdc.stdio;
 
 void main()
 {

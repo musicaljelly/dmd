@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Cache the contents from files read from disk into memory.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/filecache.d, filecache.d)
@@ -45,7 +44,7 @@ class FileAndLines
         auto readResult = File.read(file.toChars());
         // FIXME: check success
         // take ownership of buffer
-        buffer = new FileBuffer(readResult.extractData());
+        buffer = new FileBuffer(readResult.extractSlice());
         ubyte* buf = buffer.data.ptr;
         // slice into lines
         while (*buf)
@@ -89,7 +88,7 @@ It stores its cached files as $(LREF FileAndLines)
 */
 struct FileCache
 {
-    private StringTable files;
+    private StringTable!(FileAndLines) files;
 
   nothrow:
 
@@ -108,11 +107,11 @@ struct FileCache
         if (auto payload = files.lookup(file))
         {
             if (payload !is null)
-                return cast(typeof(return)) payload.ptrvalue;
+                return payload.value;
         }
 
         auto lines = new FileAndLines(file);
-        files.insert(file, cast(void*) lines);
+        files.insert(file, lines);
         return lines;
     }
 

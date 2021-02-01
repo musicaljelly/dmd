@@ -1,5 +1,16 @@
-// REQUIRED_ARGS:
-//
+/*
+REQUIRED_ARGS:
+TEST_OUTPUT:
+---
+success
+myInt int
+myBool bool
+i
+s
+C6test42__T4T219TiZ1C
+C6test427test219FZ8__mixin11C
+---
+*/
 
 module test42;
 
@@ -51,7 +62,7 @@ void test3()
 {
     auto i = mixin("__LINE__");
     printf("%d\n", i);
-    assert(i == 52);
+    assert(i == 63);
 }
 
 /***************************************************/
@@ -195,7 +206,7 @@ void test12()
     assert((foo ~ cast(char[])"foo").length == foo.length + 1);
     assert((cast(char[])"foo" ~ foo).length == foo.length + 1);
 
-    printf("%d\n", (foo ~ cast(char[])"foo")[0].length);
+    printf("%zd\n", (foo ~ cast(char[])"foo")[0].length);
 
     assert((foo ~ [cast(char[])"foo"]).length == foo.length + 1);
 
@@ -801,7 +812,7 @@ void test54()
     string[] k=["adf","AsdfadSF","dfdsfassdf"];
     foreach(d;k)
     {
-        printf("%.*s\n", d.length, d.ptr);
+        printf("%.*s\n", cast(int)d.length, d.ptr);
         string foo() {assert(d!="");return d;}
         func54(&foo);
         func54(delegate string() {assert(d!="");return d;});
@@ -1378,7 +1389,7 @@ void test83()
 void test84()
 {
     int[0][10] arr;
-    printf("%u\n", &arr[9] - &arr[0]);
+    printf("%tu\n", &arr[9] - &arr[0]);
     auto i = &arr[9] - &arr[0];
     assert(i == 0);
 }
@@ -1674,14 +1685,13 @@ void test101()
 
 /***************************************************/
 
-version(X86)
-{
 int x103;
 
 void external(...)
 {
-    printf("external: %d\n", *cast (int *) _argptr);
-    x103 = *cast (int *) _argptr;
+    int arg = va_arg!int(_argptr);
+    printf("external: %d\n", arg);
+    x103 = arg;
 }
 
 class C103
@@ -1690,8 +1700,9 @@ class C103
     {
         void internal (...)
         {
-            printf("internal: %d\n", *cast (int *)_argptr);
-            x103 = *cast (int *) _argptr;
+            int arg = va_arg!int(_argptr);
+            printf("internal: %d\n", arg);
+            x103 = arg;
         }
 
         internal (43);
@@ -1705,14 +1716,6 @@ void test103()
     assert(x103 == 42);
     (new C103).method ();
 }
-}
-else version(X86_64)
-{
-    pragma(msg, "Not ported to x86-64 compatible varargs, yet.");
-    void test103() {}
-}
-else
-    static assert(false, "Unknown platform");
 
 /***************************************************/
 
@@ -1980,7 +1983,7 @@ struct Foobar;
 int test124()
 {   int result;
     dchar[] aa;
-    alias uint foo_t;
+    alias size_t foo_t;
 
     foreach (foo_t i, dchar d; aa)
     {
@@ -2276,7 +2279,7 @@ void test140()
 class Foo141 {
     Foo141 next;
     void start()
-    in { assert (!next); } body
+    in { assert (!next); } do
     {
         void* p = cast(void*)this;
     }
@@ -3282,7 +3285,7 @@ void test201() {
 
 
 void foo202(int x, ...) {
-    printf("%d arguments\n", _arguments.length);
+    printf("%zd arguments\n", _arguments.length);
     for (int i = 0; i < _arguments.length; i++) {
         int j = va_arg!(int)(_argptr);
         printf("\t%d\n", j);
@@ -3291,7 +3294,7 @@ void foo202(int x, ...) {
 }
 
 void fooRef202(ref int x, ...) {
-    printf("%d arguments\n", _arguments.length);
+    printf("%zd arguments\n", _arguments.length);
     for (int i = 0; i < _arguments.length; i++) {
         int j = va_arg!(int)(_argptr);
         printf("\t%d\n", j);
@@ -3681,7 +3684,7 @@ class A221 : B221
 {
     final override I221 sync()
     in { assert( valid ); }
-    body
+    do
     {
         return null;
     }
@@ -3691,7 +3694,7 @@ class B221 : J221
 {
     override I221 sync()
     in { assert( valid ); }
-    body
+    do
     {
         return null;
     }
@@ -4352,12 +4355,6 @@ void test240() {
     double a = void;
     double b = void;
     double x = void;
-    version (D_SIMD)
-    {
-//	assert((cast(size_t)&a & 7) == 0);
-//	assert((cast(size_t)&b & 7) == 0);
-//	assert((cast(size_t)&x & 7) == 0);
-    }
     a = foo240();
     b = foo240();
     x = a*a + a*a + a*a + a*a + a*a + a*a + a*a +
@@ -6504,4 +6501,3 @@ int main()
     printf("Success\n");
     return 0;
 }
-

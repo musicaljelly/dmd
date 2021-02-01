@@ -1,6 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (C) 2015-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright (C) 2015-2020 by The D Language Foundation, All Rights Reserved
  * written by Michel Fortin
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -10,8 +10,7 @@
 
 #pragma once
 
-#include <stddef.h>
-
+#include "root/dsystem.h"
 #include "arraytypes.h"
 
 class AggregateDeclaration;
@@ -47,6 +46,12 @@ struct ObjcClassDeclaration
     Dsymbols* methodList;
 
     bool isRootClass() const;
+};
+
+struct ObjcFuncDeclaration
+{
+    ObjcSelector* selector;
+    VarDeclaration* selectorParameter;
 };
 
 class Objc

@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1986-1998 by Symantec
- *              Copyright (C) 2000-2019 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     Distributed under the Boost Software License, Version 1.0.
  *              http://www.boost.org/LICENSE_1_0.txt
@@ -32,6 +32,7 @@ import dmd.backend.el;
 import dmd.backend.ty;
 import dmd.backend.type;
 
+import dmd.backend.barray;
 import dmd.backend.dlist;
 import dmd.backend.dvec;
 
@@ -60,7 +61,6 @@ void flowlv();
 void flowae();
 void flowvbe();
 void flowcp();
-void flowae();
 void genkillae();
 void flowarraybounds();
 int ae_field_affect(elem *lvalue,elem *e);
@@ -84,7 +84,7 @@ void rmdeadass();
 void elimass(elem *);
 void deadvar();
 void verybusyexp();
-list_t listrds(vec_t, elem *, vec_t);
+void listrds(vec_t, elem *, vec_t, Barray!(elem*)*);
 
 /* gslice.c */
 void sliceStructs(symtab_t*, block*);
@@ -98,9 +98,9 @@ void go_term()
     vec_free(go.defkill);
     vec_free(go.starkill);
     vec_free(go.vptrkill);
-    go.defnod.__dtor();
-    go.expnod.__dtor();
-    go.expblk.__dtor();
+    go.defnod.dtor();
+    go.expnod.dtor();
+    go.expblk.dtor();
 }
 
 debug

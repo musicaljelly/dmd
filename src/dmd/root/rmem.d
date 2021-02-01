@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the D programming language
- * http://dlang.org
+ * Allocate memory using `malloc` or the GC depending on the configuration.
  *
- * Copyright: Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright: Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:   Walter Bright, http://www.digitalmars.com
  * License:   $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:    $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/root/rmem.d, root/_rmem.d)
@@ -57,6 +56,15 @@ extern (C++) struct Mem
         return size ? check(pureMalloc(size)) : null;
     }
 
+    static void* xmalloc_noscan(size_t size) pure nothrow
+    {
+        version (GC)
+            if (isGCEnabled)
+                return size ? GC.malloc(size, GC.BlkAttr.NO_SCAN) : null;
+
+        return size ? check(pureMalloc(size)) : null;
+    }
+
     static void* xcalloc(size_t size, size_t n) pure nothrow
     {
         version (GC)
@@ -66,11 +74,35 @@ extern (C++) struct Mem
         return (size && n) ? check(pureCalloc(size, n)) : null;
     }
 
+    static void* xcalloc_noscan(size_t size, size_t n) pure nothrow
+    {
+        version (GC)
+            if (isGCEnabled)
+                return size * n ? GC.calloc(size * n, GC.BlkAttr.NO_SCAN) : null;
+
+        return (size && n) ? check(pureCalloc(size, n)) : null;
+    }
+
     static void* xrealloc(void* p, size_t size) pure nothrow
     {
         version (GC)
             if (isGCEnabled)
                 return GC.realloc(p, size);
+
+        if (!size)
+        {
+            pureFree(p);
+            return null;
+        }
+
+        return check(pureRealloc(p, size));
+    }
+
+    static void* xrealloc_noscan(void* p, size_t size) pure nothrow
+    {
+        version (GC)
+            if (isGCEnabled)
+                return GC.realloc(p, size, GC.BlkAttr.NO_SCAN);
 
         if (!size)
         {
@@ -104,10 +136,11 @@ extern (C++) struct Mem
     {
         __gshared bool _isGCEnabled = true;
 
-        static bool isGCEnabled() pure nothrow @nogc
+        // fake purity by making global variable immutable (_isGCEnabled only modified before startup)
+        enum _pIsGCEnabled = cast(immutable bool*) &_isGCEnabled;
+
+        static bool isGCEnabled() pure nothrow @nogc @safe
         {
-            // fake purity by making global variable immutable (_isGCEnabled only modified before startup)
-            enum _pIsGCEnabled = cast(immutable bool*) &_isGCEnabled;
             return *_pIsGCEnabled;
         }
 
@@ -137,7 +170,7 @@ enum CHUNK_SIZE = (256 * 4096 - 64);
 __gshared size_t heapleft = 0;
 __gshared void* heapp;
 
-extern (C) void* allocmemory(size_t m_size) nothrow @nogc
+extern (D) void* allocmemoryNoFree(size_t m_size) nothrow @nogc
 {
     // 16 byte alignment is better (and sometimes needed) for doubles
     m_size = (m_size + 15) & ~15;
@@ -162,6 +195,15 @@ extern (C) void* allocmemory(size_t m_size) nothrow @nogc
     goto L1;
 }
 
+extern (D) void* allocmemory(size_t m_size) nothrow
+{
+    version (GC)
+        if (mem.isGCEnabled)
+            return GC.malloc(m_size);
+
+    return allocmemoryNoFree(m_size);
+}
+
 version (DigitalMars)
 {
     enum OVERRIDE_MEMALLOC = true;
@@ -172,6 +214,13 @@ else version (LDC)
     import ldc.attributes;
     enum OVERRIDE_MEMALLOC = is(typeof(ldc.attributes.weak));
 }
+else version (GNU)
+{
+    version (IN_GCC)
+        enum OVERRIDE_MEMALLOC = false;
+    else
+        enum OVERRIDE_MEMALLOC = true;
+}
 else
 {
     enum OVERRIDE_MEMALLOC = false;
@@ -180,16 +229,12 @@ else
 static if (OVERRIDE_MEMALLOC)
 {
     // Override the host druntime allocation functions in order to use the bump-
-    // pointer allocation scheme (`allocmemory()` above) if the GC is disabled.
+    // pointer allocation scheme (`allocmemoryNoFree()` above) if the GC is disabled.
     // That scheme is faster and comes with less memory overhead than using a
     // disabled GC alone.
 
     extern (C) void* _d_allocmemory(size_t m_size) nothrow
     {
-        version (GC)
-            if (mem.isGCEnabled)
-                return GC.malloc(m_size);
-
         return allocmemory(m_size);
     }
 
@@ -218,9 +263,9 @@ static if (OVERRIDE_MEMALLOC)
         const initializer = ci.initializer;
 
         version (GC)
-            auto p = mem.isGCEnabled ? allocClass(ci) : allocmemory(initializer.length);
+            auto p = mem.isGCEnabled ? allocClass(ci) : allocmemoryNoFree(initializer.length);
         else
-            auto p = allocmemory(initializer.length);
+            auto p = allocmemoryNoFree(initializer.length);
 
         memcpy(p, initializer.ptr, initializer.length);
         return cast(Object) p;
@@ -234,16 +279,16 @@ static if (OVERRIDE_MEMALLOC)
                 if (mem.isGCEnabled)
                     return cast(Object) allocClass(ci);
 
-            return cast(Object) allocmemory(ci.initializer.length);
+            return cast(Object) allocmemoryNoFree(ci.initializer.length);
         }
     }
 
     extern (C) void* _d_newitemT(TypeInfo ti) nothrow
     {
         version (GC)
-            auto p = mem.isGCEnabled ? _d_newitemU(ti) : allocmemory(ti.tsize);
+            auto p = mem.isGCEnabled ? _d_newitemU(ti) : allocmemoryNoFree(ti.tsize);
         else
-            auto p = allocmemory(ti.tsize);
+            auto p = allocmemoryNoFree(ti.tsize);
 
         memset(p, 0, ti.tsize);
         return p;
@@ -252,9 +297,9 @@ static if (OVERRIDE_MEMALLOC)
     extern (C) void* _d_newitemiT(TypeInfo ti) nothrow
     {
         version (GC)
-            auto p = mem.isGCEnabled ? _d_newitemU(ti) : allocmemory(ti.tsize);
+            auto p = mem.isGCEnabled ? _d_newitemU(ti) : allocmemoryNoFree(ti.tsize);
         else
-            auto p = allocmemory(ti.tsize);
+            auto p = allocmemoryNoFree(ti.tsize);
 
         const initializer = ti.initializer;
         memcpy(p, initializer.ptr, initializer.length);
@@ -315,7 +360,7 @@ extern (D) char[] xarraydup(const(char)[] s) pure nothrow
     if (!s)
         return null;
 
-    auto p = cast(char*)mem.xmalloc(s.length + 1);
+    auto p = cast(char*)mem.xmalloc_noscan(s.length + 1);
     char[] a = p[0 .. s.length];
     a[] = s[0 .. s.length];
     p[s.length] = 0;    // preserve 0 terminator semantics

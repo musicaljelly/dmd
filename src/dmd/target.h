@@ -1,6 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (C) 2013-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright (C) 2013-2020 by The D Language Foundation, All Rights Reserved
  * written by Iain Buclaw
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -44,6 +44,11 @@ struct TargetCPP
     bool fundamentalType(const Type *t, bool& isFundamental);
 };
 
+struct TargetObjC
+{
+    bool supported;     // set if compiler can interface with Objective-C
+};
+
 struct Target
 {
     // D ABI
@@ -59,6 +64,11 @@ struct Target
 
     // C++ ABI
     TargetCPP cpp;
+
+    // Objective-C ABI
+    TargetObjC objc;
+
+    DString architectureName;    // name of the platform architecture (e.g. X86_64)
 
     template <typename T>
     struct FPTypeProperties
@@ -81,12 +91,16 @@ struct Target
     FPTypeProperties<double> DoubleProperties;
     FPTypeProperties<real_t> RealProperties;
 
+private:
+    Type *tvalist;
+
+public:
     void _init(const Param& params);
     // Type sizes and support.
     unsigned alignsize(Type *type);
     unsigned fieldalign(Type *type);
     unsigned critsecsize();
-    Type *va_listType();  // get type of va_list
+    Type *va_listType(const Loc &loc, Scope *sc);  // get type of va_list
     int isVectorTypeSupported(int sz, Type *type);
     bool isVectorOpSupported(Type *type, TOK op, Type *t2 = NULL);
     // ABI and backend.
@@ -94,6 +108,7 @@ struct Target
     TypeTuple *toArgTypes(Type *t);
     bool isReturnOnStack(TypeFunction *tf, bool needsThis);
     d_uns64 parameterSize(const Loc& loc, Type *t);
+    void applyInRefParams(TypeFunction *tf);
     Expression *getTargetInfo(const char* name, const Loc& loc);
 };
 

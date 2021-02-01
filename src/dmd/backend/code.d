@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1985-1998 by Symantec
- *              Copyright (C) 2000-2019 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/code.d, backend/_code.d)
@@ -13,6 +13,7 @@ module dmd.backend.code;
 
 // Online documentation: https://dlang.org/phobos/dmd_backend_code.html
 
+import dmd.backend.barray;
 import dmd.backend.cc;
 import dmd.backend.cdef;
 import dmd.backend.code_x86;
@@ -233,7 +234,7 @@ struct seg_data
     targ_size_t          SDoffset;      // starting offset for data
     int                  SDalignment;   // power of 2
 
-    version (Windows) // OMFOBJ
+    static if (TARGET_WINDOS)
     {
         bool isfarseg;
         int segidx;                     // internal object file segment number
@@ -262,9 +263,7 @@ struct seg_data
 
     uint             SDaranges_offset;  // if !=0, offset in .debug_aranges
 
-    uint             SDlinnum_count;
-    uint             SDlinnum_max;
-    linnum_data     *SDlinnum_data;     // array of line number / offset data
+    Barray!(linnum_data) SDlinnum_data;     // array of line number / offset data
 
   nothrow:
     version (Windows)
@@ -273,19 +272,23 @@ struct seg_data
         int isCode() { return seg_data_isCode(this); }
 }
 
-extern int seg_data_isCode(const ref seg_data sd);
+extern int seg_data_isCode(const ref seg_data sd) @system;
 
 struct linnum_data
 {
     const(char) *filename;
     uint filenumber;        // corresponding file number for DW_LNS_set_file
 
-    uint linoff_count;
-    uint linoff_max;
-    uint[2]* linoff;        // [0] = line number, [1] = offset
+    Barray!(LinOff) linoff;    // line numbers and offsets
 }
 
-extern __gshared seg_data **SegData;
+struct LinOff
+{
+    uint lineNumber;
+    uint offset;
+}
+
+extern __gshared Rarray!(seg_data*) SegData;
 
 ref targ_size_t Offset(int seg) { return SegData[seg].SDoffset; }
 ref targ_size_t Doffset() { return Offset(DATA); }
@@ -316,8 +319,8 @@ struct FuncParamRegs
     const(ubyte)* floatregs;    // map to fp register
 }
 
-extern FuncParamRegs FuncParamRegs_create(tym_t tyf);
-extern int FuncParamRegs_alloc(ref FuncParamRegs fpr, type *t, tym_t ty, reg_t *preg1, reg_t *preg2);
+extern FuncParamRegs FuncParamRegs_create(tym_t tyf) @system;
+extern int FuncParamRegs_alloc(ref FuncParamRegs fpr, type *t, tym_t ty, reg_t *preg1, reg_t *preg2) @system;
 
 extern __gshared
 {
@@ -385,6 +388,7 @@ void freenode(elem *e);
 int isregvar(elem *e, regm_t *pregm, reg_t *preg);
 void allocreg(ref CodeBuilder cdb, regm_t *pretregs, reg_t *preg, tym_t tym, int line, const(char)* file);
 void allocreg(ref CodeBuilder cdb, regm_t *pretregs, reg_t *preg, tym_t tym);
+reg_t allocScratchReg(ref CodeBuilder cdb, regm_t regm);
 regm_t lpadregs();
 void useregs (regm_t regm);
 void getregs(ref CodeBuilder cdb, regm_t r);
@@ -437,7 +441,9 @@ void cdmemcpy(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
 void cdmemset(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
 void cdmsw(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
 void cdmul(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
+void cddiv(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
 void cdmulass(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
+void cddivass(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
 void cdneg(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
 void cdnot(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
 void cdorth(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
@@ -458,6 +464,7 @@ void cdstrcpy(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
 void cdstreq(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
 void cdstrlen(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
 void cdstrthis(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
+void cdtoprec(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
 void cdvecfill(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
 void cdvecsto(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
 void cdvector(ref CodeBuilder cdb, elem* e, regm_t* pretregs);
@@ -486,6 +493,7 @@ void fixresult(ref CodeBuilder cdb, elem *e, regm_t retregs, regm_t *pretregs);
 void callclib(ref CodeBuilder cdb, elem *e, uint clib, regm_t *pretregs, regm_t keepmask);
 void pushParams(ref CodeBuilder cdb,elem *, uint, tym_t tyf);
 void offsetinreg(ref CodeBuilder cdb, elem *e, regm_t *pretregs);
+void argtypes(type* t, ref type* arg1type, ref type* arg2type);
 
 /* cod2.c */
 bool movOnly(const elem *e);
@@ -553,6 +561,7 @@ void searchfixlist(Symbol *s) {}
 void outfixlist();
 void code_hydrate(code **pc);
 void code_dehydrate(code **pc);
+regm_t allocretregs(tym_t ty, type *t, tym_t tyf, reg_t *reg1, reg_t *reg2);
 
 extern __gshared
 {
@@ -571,7 +580,7 @@ extern __gshared
 void prolog_ifunc(ref CodeBuilder cdb, tym_t* tyf);
 void prolog_ifunc2(ref CodeBuilder cdb, tym_t tyf, tym_t tym, bool pushds);
 void prolog_16bit_windows_farfunc(ref CodeBuilder cdb, tym_t* tyf, bool* pushds);
-void prolog_frame(ref CodeBuilder cdb, uint farfunc, uint* xlocalsize, bool* enter, int* cfa_offset);
+void prolog_frame(ref CodeBuilder cdb, bool farfunc, ref uint xlocalsize, out bool enter, out int cfa_offset);
 void prolog_frameadj(ref CodeBuilder cdb, tym_t tyf, uint xlocalsize, bool enter, bool* pushalloc);
 void prolog_frameadj2(ref CodeBuilder cdb, tym_t tyf, uint xlocalsize, bool* pushalloc);
 void prolog_setupalloca(ref CodeBuilder cdb);
@@ -605,6 +614,8 @@ void xmmcnvt(ref CodeBuilder cdb,elem *e,regm_t *pretregs);
 void xmmopass(ref CodeBuilder cdb,elem *e, regm_t *pretregs);
 void xmmpost(ref CodeBuilder cdb, elem *e, regm_t *pretregs);
 void xmmneg(ref CodeBuilder cdb,elem *e, regm_t *pretregs);
+void xmmabs(ref CodeBuilder cdb,elem *e, regm_t *pretregs);
+void cloadxmm(ref CodeBuilder cdb,elem *e, regm_t *pretregs);
 uint xmmload(tym_t tym, bool aligned = true);
 uint xmmstore(tym_t tym, bool aligned = true);
 bool xmmIsAligned(elem *e);
@@ -636,7 +647,6 @@ void cnvt87(ref CodeBuilder cdb, elem *e , regm_t *pretregs );
 void neg87(ref CodeBuilder cdb, elem *e , regm_t *pretregs);
 void neg_complex87(ref CodeBuilder cdb, elem *e, regm_t *pretregs);
 void cdind87(ref CodeBuilder cdb,elem *e,regm_t *pretregs);
-extern __gshared { int stackused; }
 void cload87(ref CodeBuilder cdb, elem *e, regm_t *pretregs);
 void cdd_u64(ref CodeBuilder cdb, elem *e, regm_t *pretregs);
 void cdd_u32(ref CodeBuilder cdb, elem *e, regm_t *pretregs);

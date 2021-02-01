@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Semantic analysis of initializers.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/initsem.d, _initsem.d)
@@ -33,6 +32,7 @@ import dmd.id;
 import dmd.identifier;
 import dmd.init;
 import dmd.mtype;
+import dmd.opover;
 import dmd.statement;
 import dmd.target;
 import dmd.tokens;
@@ -74,7 +74,7 @@ Expression toAssocArrayLiteral(ArrayInitializer ai)
     return e;
 Lno:
     error(ai.loc, "not an associative array initializer");
-    return new ErrorExp();
+    return ErrorExp.get();
 }
 
 /******************************************
@@ -111,7 +111,7 @@ extern(C++) Initializer initializerSemantic(Initializer init, Scope* sc, Type t,
         if (t.ty == Tstruct)
         {
             StructDeclaration sd = (cast(TypeStruct)t).sym;
-            if (sd.ctor)
+            if (sd.hasNonDisabledCtor())
             {
                 error(i.loc, "%s `%s` has constructors, cannot use `{ initializers }`, use `%s( initializers )` instead", sd.kind(), sd.toChars(), sd.toChars());
                 return new ErrorInitializer();
@@ -295,7 +295,7 @@ extern(C++) Initializer initializerSemantic(Initializer init, Scope* sc, Type t,
                 const uinteger_t idxvalue = idx.toInteger();
                 if (idxvalue >= amax)
                 {
-                    error(i.loc, "array index %llu overflow", ulong(idxvalue));
+                    error(i.loc, "array index %llu overflow", idxvalue);
                     errors = true;
                 }
                 length = cast(uint)idxvalue;
@@ -438,8 +438,7 @@ extern(C++) Initializer initializerSemantic(Initializer init, Scope* sc, Type t,
             Type typeb = se.type.toBasetype();
             TY tynto = tb.nextOf().ty;
             if (!se.committed &&
-                (typeb.ty == Tarray || typeb.ty == Tsarray) &&
-                (tynto == Tchar || tynto == Twchar || tynto == Tdchar) &&
+                (typeb.ty == Tarray || typeb.ty == Tsarray) && tynto.isSomeChar &&
                 se.numberOfCodeUnits(tynto) < (cast(TypeSArray)tb).dim.toInteger())
             {
                 i.exp = se.castTo(sc, t);
@@ -458,6 +457,25 @@ extern(C++) Initializer initializerSemantic(Initializer init, Scope* sc, Type t,
                 e = new DotIdExp(i.loc, e, Id.ctor);
                 e = new CallExp(i.loc, e, i.exp);
                 e = e.expressionSemantic(sc);
+                if (needInterpret)
+                    i.exp = e.ctfeInterpret();
+                else
+                    i.exp = e.optimize(WANTvalue);
+            }
+            else if (search_function(sd, Id.call))
+            {
+                /* https://issues.dlang.org/show_bug.cgi?id=1547
+                 *
+                 * Look for static opCall
+                 *
+                 * Rewrite as:
+                 *  i.exp = typeof(sd).opCall(arguments)
+                 */
+
+                Expression e = typeDotIdExp(i.loc, sd.type, Id.call);
+                e = new CallExp(i.loc, e, i.exp);
+                e = e.expressionSemantic(sc);
+                e = resolveProperties(sc, e);
                 if (needInterpret)
                     i.exp = e.ctfeInterpret();
                 else
@@ -499,7 +517,7 @@ extern(C++) Initializer initializerSemantic(Initializer init, Scope* sc, Type t,
                 if (dim1 != dim2)
                 {
                     i.exp.error("mismatched array lengths, %d and %d", cast(int)dim1, cast(int)dim2);
-                    i.exp = new ErrorExp();
+                    i.exp = ErrorExp.get();
                 }
             }
             i.exp = i.exp.implicitCastTo(sc, t);
@@ -622,7 +640,7 @@ Initializer inferType(Initializer init, Scope* sc)
 
     Initializer visitExp(ExpInitializer init)
     {
-        //printf("ExpInitializer::inferType() %s\n", toChars());
+        //printf("ExpInitializer::inferType() %s\n", init.toChars());
         init.exp = init.exp.expressionSemantic(sc);
 
         // for static alias this: https://issues.dlang.org/show_bug.cgi?id=17684
@@ -702,7 +720,7 @@ extern (C++) Expression initializerToExpression(Initializer init, Type itype = n
 
     Expression visitError(ErrorInitializer)
     {
-        return new ErrorExp();
+        return ErrorExp.get();
     }
 
     /***************************************
@@ -732,7 +750,7 @@ extern (C++) Expression initializerToExpression(Initializer init, Type itype = n
         {
             if (init.type == Type.terror)
             {
-                return new ErrorExp();
+                return ErrorExp.get();
             }
             t = init.type.toBasetype();
             switch (t.ty)

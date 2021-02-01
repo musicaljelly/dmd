@@ -1,5 +1,6 @@
 // PERMUTE_ARGS:
 // EXTRA_SOURCES: imports/mangle10077.d
+// EXTRA_FILES: imports/testmangle.d
 /*
 TEST_OUTPUT:
 ---
@@ -601,6 +602,12 @@ void fooB(void delegate (void delegate()) scope dg)
 //pragma(msg, fooB.mangleof);
 static assert(typeof(fooA).mangleof != typeof(fooB).mangleof);
 
+
+/***************************************************/
+
+@live int testLive() { return 42; }
+
+static assert(testLive.mangleof == "_D6mangle8testLiveFNmZi");
 
 /***************************************************/
 

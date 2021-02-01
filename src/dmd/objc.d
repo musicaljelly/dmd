@@ -1,8 +1,9 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Interfacing with Objective-C.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Specification: $(LINK2 https://dlang.org/spec/objc_interface.html, Interfacing to Objective-C)
+ *
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/objc.d, _objc.d)
@@ -33,14 +34,16 @@ import dmd.gluelayer;
 import dmd.id;
 import dmd.identifier;
 import dmd.mtype;
+import dmd.root.array;
 import dmd.root.outbuffer;
 import dmd.root.stringtable;
+import dmd.target;
+import dmd.tokens;
 
 struct ObjcSelector
 {
     // MARK: Selector
-    private __gshared StringTable stringtable;
-    private __gshared StringTable vTableDispatchSelectors;
+    private __gshared StringTable!(ObjcSelector*) stringtable;
     private __gshared int incnum = 0;
     const(char)* stringvalue;
     size_t stringlen;
@@ -75,12 +78,12 @@ struct ObjcSelector
 
     extern (D) static ObjcSelector* lookup(const(char)* s, size_t len, size_t pcount)
     {
-        StringValue* sv = stringtable.update(s, len);
-        ObjcSelector* sel = cast(ObjcSelector*)sv.ptrvalue;
+        auto sv = stringtable.update(s, len);
+        ObjcSelector* sel = sv.value;
         if (!sel)
         {
             sel = new ObjcSelector(sv.toDchars(), len, pcount);
-            sv.ptrvalue = cast(char*)sel;
+            sv.value = sel;
         }
         return sel;
     }
@@ -88,11 +91,11 @@ struct ObjcSelector
     extern (C++) static ObjcSelector* create(FuncDeclaration fdecl)
     {
         OutBuffer buf;
-        size_t pcount = 0;
         TypeFunction ftype = cast(TypeFunction)fdecl.type;
         const id = fdecl.ident.toString();
+        const nparams = ftype.parameterList.length;
         // Special case: property setter
-        if (ftype.isproperty && ftype.parameterList.parameters && ftype.parameterList.parameters.dim == 1)
+        if (ftype.isproperty && nparams == 1)
         {
             // rewrite "identifier" as "setIdentifier"
             char firstChar = id[0];
@@ -100,29 +103,26 @@ struct ObjcSelector
                 firstChar = cast(char)(firstChar - 'a' + 'A');
             buf.writestring("set");
             buf.writeByte(firstChar);
-            buf.write(id.ptr + 1, id.length - 1);
+            buf.write(id[1 .. id.length - 1]);
             buf.writeByte(':');
             goto Lcomplete;
         }
         // write identifier in selector
-        buf.write(id.ptr, id.length);
+        buf.write(id[]);
         // add mangled type and colon for each parameter
-        if (ftype.parameterList.parameters && ftype.parameterList.parameters.dim)
+        if (nparams)
         {
             buf.writeByte('_');
-            Parameters* arguments = ftype.parameterList.parameters;
-            size_t dim = Parameter.dim(arguments);
-            for (size_t i = 0; i < dim; i++)
+            foreach (i, fparam; ftype.parameterList)
             {
-                Parameter arg = Parameter.getNth(arguments, i);
-                mangleToBuffer(arg.type, &buf);
+                mangleToBuffer(fparam.type, &buf);
                 buf.writeByte(':');
             }
-            pcount = dim;
         }
     Lcomplete:
         buf.writeByte('\0');
-        return lookup(cast(const(char)*)buf.data, buf.size, pcount);
+        // the slice is not expected to include a terminating 0
+        return lookup(cast(const(char)*)buf[].ptr, buf.length - 1, nparams);
     }
 
     extern (D) const(char)[] toString() const pure
@@ -161,12 +161,12 @@ extern (C++) struct ObjcClassDeclaration
     ClassDeclaration metaclass;
 
     /// List of non-inherited methods.
-    Dsymbols* methodList;
+    FuncDeclarations* methodList;
 
     extern (D) this(ClassDeclaration classDeclaration)
     {
         this.classDeclaration = classDeclaration;
-        methodList = new Dsymbols;
+        methodList = new FuncDeclarations;
     }
 
     bool isRootClass() const
@@ -177,12 +177,25 @@ extern (C++) struct ObjcClassDeclaration
     }
 }
 
+/**
+ * Contains all data for a function declaration that is needed for the
+ * Objective-C integration.
+ */
+extern (C++) struct ObjcFuncDeclaration
+{
+    /// The method selector (member functions only).
+    ObjcSelector* selector;
+
+    /// The implicit selector parameter.
+    VarDeclaration selectorParameter;
+}
+
 // Should be an interface
 extern(C++) abstract class Objc
 {
     static void _init()
     {
-        if (global.params.isOSX && global.params.is64bit)
+        if (target.objc.supported)
             _objc = new Supported;
         else
             _objc = new Unsupported;
@@ -491,7 +504,7 @@ extern(C++) private final class Supported : Objc
     {
         assert(id.classKind == ClassKind.objc);
     }
-    body
+    do
     {
         // don't report deprecations for the metaclass to avoid duplicated
         // messages.
@@ -506,48 +519,38 @@ extern(C++) private final class Supported : Objc
 
     override void setSelector(FuncDeclaration fd, Scope* sc)
     {
-        import dmd.tokens;
+        foreachUda(fd, sc, (e) {
+            if (e.op != TOK.structLiteral)
+                return 0;
 
-        if (!fd.userAttribDecl)
-            return;
-        Expressions* udas = fd.userAttribDecl.getAttributes();
-        arrayExpressionSemantic(udas, sc, true);
-        for (size_t i = 0; i < udas.dim; i++)
-        {
-            Expression uda = (*udas)[i];
-            assert(uda);
-            if (uda.op != TOK.tuple)
-                continue;
-            Expressions* exps = (cast(TupleExp)uda).exps;
-            for (size_t j = 0; j < exps.dim; j++)
+            auto literal = cast(StructLiteralExp) e;
+            assert(literal.sd);
+
+            if (!isCoreUda(literal.sd, Id.udaSelector))
+                return 0;
+
+            if (fd.objc.selector)
             {
-                Expression e = (*exps)[j];
-                assert(e);
-                if (e.op != TOK.structLiteral)
-                    continue;
-                StructLiteralExp literal = cast(StructLiteralExp)e;
-                assert(literal.sd);
-                if (!isUdaSelector(literal.sd))
-                    continue;
-                if (fd.selector)
-                {
-                    fd.error("can only have one Objective-C selector per method");
-                    return;
-                }
-                assert(literal.elements.dim == 1);
-                StringExp se = (*literal.elements)[0].toStringExp();
-                assert(se);
-                fd.selector = ObjcSelector.lookup(cast(const(char)*)se.toUTF8(sc).string);
+                fd.error("can only have one Objective-C selector per method");
+                return 1;
             }
-        }
+
+            assert(literal.elements.dim == 1);
+            auto se = (*literal.elements)[0].toStringExp();
+            assert(se);
+
+            fd.objc.selector = ObjcSelector.lookup(se.toUTF8(sc).peekString().ptr);
+
+            return 0;
+        });
     }
 
     override void validateSelector(FuncDeclaration fd)
     {
-        if (!fd.selector)
+        if (!fd.objc.selector)
             return;
         TypeFunction tf = cast(TypeFunction)fd.type;
-        if (fd.selector.paramCount != tf.parameterList.parameters.dim)
+        if (fd.objc.selector.paramCount != tf.parameterList.parameters.dim)
             fd.error("number of colons in Objective-C selector must match number of parameters");
         if (fd.parent && fd.parent.isTemplateInstance())
             fd.error("template cannot have an Objective-C selector attached");
@@ -555,7 +558,7 @@ extern(C++) private final class Supported : Objc
 
     override void checkLinkage(FuncDeclaration fd)
     {
-        if (fd.linkage != LINK.objc && fd.selector)
+        if (fd.linkage != LINK.objc && fd.objc.selector)
             fd.error("must have Objective-C linkage to attach a selector");
     }
 
@@ -565,7 +568,7 @@ extern(C++) private final class Supported : Objc
         assert(fd.selector);
         assert(fd.isMember);
     }
-    body
+    do
     {
         // * final member functions are kept virtual with Objective-C linkage
         //   because the Objective-C runtime always use dynamic dispatch.
@@ -580,7 +583,7 @@ extern(C++) private final class Supported : Objc
     {
         assert(metaclass);
     }
-    body
+    do
     {
         if (cd.classKind == ClassKind.objc && fd.isStatic && !cd.objc.isMeta)
             return cd.objc.metaclass;
@@ -593,12 +596,12 @@ extern(C++) private final class Supported : Objc
     {
         assert(fd.parent.isClassDeclaration);
     }
-    body
+    do
     {
         if (cd.classKind != ClassKind.objc)
             return;
 
-        if (!fd.selector)
+        if (!fd.objc.selector)
             return;
 
         assert(fd.isStatic ? cd.objc.isMeta : !cd.objc.isMeta);
@@ -610,7 +613,7 @@ extern(C++) private final class Supported : Objc
     {
         with(funcDeclaration)
         {
-            if (!selector)
+            if (!objc.selector)
                 return null;
 
             // Use Objective-C class object as 'this'
@@ -631,12 +634,13 @@ extern(C++) private final class Supported : Objc
     {
         assert(fd.selectorParameter is null);
     }
-    body
+    do
     {
-        if (!fd.selector)
+        if (!fd.objc.selector)
             return null;
 
-        auto var = new VarDeclaration(fd.loc, Type.tvoidptr, Identifier.anonymous, null);
+        auto ident = Identifier.generateAnonymousId("_cmd");
+        auto var = new VarDeclaration(fd.loc, Type.tvoidptr, ident, null);
         var.storage_class |= STC.parameter;
         var.dsymbolSemantic(sc);
         if (!sc.insert(var))
@@ -648,9 +652,10 @@ extern(C++) private final class Supported : Objc
 
     override void setMetaclass(InterfaceDeclaration interfaceDeclaration, Scope* sc) const
     {
-        static auto newMetaclass(Loc loc, BaseClasses* metaBases)
+        auto newMetaclass(Loc loc, BaseClasses* metaBases)
         {
-            return new InterfaceDeclaration(loc, null, metaBases);
+            auto ident = createMetaclassIdentifier(interfaceDeclaration);
+            return new InterfaceDeclaration(loc, ident, metaBases);
         }
 
         .setMetaclass!newMetaclass(interfaceDeclaration, sc);
@@ -660,7 +665,8 @@ extern(C++) private final class Supported : Objc
     {
         auto newMetaclass(Loc loc, BaseClasses* metaBases)
         {
-            return new ClassDeclaration(loc, null, metaBases, new Dsymbols(), 0);
+            auto ident = createMetaclassIdentifier(classDeclaration);
+            return new ClassDeclaration(loc, ident, metaBases, new Dsymbols(), 0);
         }
 
         .setMetaclass!newMetaclass(classDeclaration, sc);
@@ -725,12 +731,62 @@ extern(C++) private final class Supported : Objc
             "of Objective-C classes. Please use the Objective-C runtime instead");
     }
 
-    extern(D) private bool isUdaSelector(StructDeclaration sd)
+extern(D) private:
+
+    /**
+     * Returns `true` if the given symbol is a symbol declared in
+     * `core.attribute` and has the given identifier.
+     *
+     * This is used to determine if a symbol is a UDA declared in
+     * `core.attribute`.
+     *
+     * Params:
+     *  sd = the symbol to check
+     *  ident = the name of the expected UDA
+     */
+    bool isCoreUda(ScopeDsymbol sd, Identifier ident) const
     {
-        if (sd.ident != Id.udaSelector || !sd.parent)
+        if (sd.ident != ident || !sd.parent)
             return false;
-        Module _module = sd.parent.isModule();
+
+        auto _module = sd.parent.isModule();
         return _module && _module.isCoreModule(Id.attribute);
+    }
+
+    /**
+     * Iterates the UDAs attached to the given function declaration.
+     *
+     * If `dg` returns `!= 0`, it will stop the iteration and return that
+     * value, otherwise it will return 0.
+     *
+     * Params:
+     *  fd = the function declaration to get the UDAs from
+     *  dg = called once for each UDA. If `dg` returns `!= 0`, it will stop the
+     *      iteration and return that value, otherwise it will return `0`.
+     */
+    int foreachUda(FuncDeclaration fd, Scope* sc, int delegate(Expression) dg) const
+    {
+        if (!fd.userAttribDecl)
+            return 0;
+
+        auto udas = fd.userAttribDecl.getAttributes();
+        arrayExpressionSemantic(udas, sc, true);
+
+        return udas.each!((uda) {
+            if (uda.op != TOK.tuple)
+                return 0;
+
+            auto exps = (cast(TupleExp) uda).exps;
+
+            return exps.each!((e) {
+                assert(e);
+
+                if (auto result = dg(e))
+                    return result;
+
+                return 0;
+            });
+        });
     }
 }
 
@@ -799,4 +855,10 @@ if (is(T == ClassDeclaration) || is(T == InterfaceDeclaration))
 
         objc.metaclass.dsymbolSemantic(sc);
     }
+}
+
+private Identifier createMetaclassIdentifier(ClassDeclaration classDeclaration)
+{
+    const name = "class_" ~ classDeclaration.ident.toString ~ "_Meta";
+    return Identifier.generateAnonymousId(name);
 }

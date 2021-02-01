@@ -1,6 +1,6 @@
 
 /* Compiler implementation of the D programming language
- * Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * written by Walter Bright
  * http://www.digitalmars.com
  * Distributed under the Boost Software License, Version 1.0.
@@ -13,9 +13,13 @@
 #include "dsymbol.h"
 
 struct ModuleDeclaration;
-struct Macro;
 struct Escape;
 struct FileBuffer;
+
+struct MacroTable
+{
+    void* internal;  // PIMPL
+};
 
 enum PKG
 {
@@ -32,6 +36,8 @@ public:
     Module *mod;        // != NULL if isPkgMod == PKGmodule
 
     const char *kind() const;
+
+    bool equals(const RootObject *o) const;
 
     Package *isPackage() { return this; }
 
@@ -70,7 +76,9 @@ public:
     unsigned numlines;  // number of lines in source file
     bool isHdrFile;     // if it is a header (.di) file
     bool isDocFile;     // if it is a documentation input file, not D source
+    bool hasAlwaysInlines; // contains references to functions that must be inlined
     bool isPackageFile; // if it is a package.d
+    Package *pkg;       // if isPackageFile is true, the Package that contains this package.d
     Strings contentImportedFiles;  // array of files whose content was imported
     int needmoduleinfo;
     int selfimports;            // 0: don't know, 1: does not, 2: does
@@ -94,14 +102,14 @@ public:
     Modules aimports;             // all imported modules
 
     unsigned debuglevel;        // debug level
-    Strings *debugids;      // debug identifiers
-    Strings *debugidsNot;       // forward referenced debug identifiers
+    Identifiers *debugids;      // debug identifiers
+    Identifiers *debugidsNot;   // forward referenced debug identifiers
 
     unsigned versionlevel;      // version level
-    Strings *versionids;    // version identifiers
-    Strings *versionidsNot;     // forward referenced version identifiers
+    Identifiers *versionids;    // version identifiers
+    Identifiers *versionidsNot; // forward referenced version identifiers
 
-    Macro *macrotable;          // document comment macros
+    MacroTable macrotable;      // document comment macros
     Escape *escapetable;        // document comment escapes
 
     size_t nameoffset;          // offset of module name from start of ModuleInfo
@@ -144,6 +152,8 @@ public:
     Symbol *stest;              // module unit test
 
     Symbol *sfilename;          // symbol for filename
+
+    void *ctfe_cov;             // stores coverage information from ctfe
 
     Module *isModule() { return this; }
     void accept(Visitor *v) { v->visit(this); }

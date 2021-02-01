@@ -8,25 +8,6 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 GNU_MAKE="$(which make)"
 
-install_host_dmd() {
-    if [ ! -f dmd2/README.TXT ]; then
-        download "http://downloads.dlang.org/releases/2.x/${HOST_DMD_VERSION}/dmd.${HOST_DMD_VERSION}.windows.7z" dmd2.7z
-        7z x dmd2.7z > /dev/null
-    fi
-    export PATH="$PWD/dmd2/windows/bin/:$PATH"
-    export HOST_DC="$PWD/dmd2/windows/bin/dmd.exe"
-    export DM_MAKE="$PWD/dmd2/windows/bin/make.exe"
-    dmd --version
-}
-
-install_host_dmc() {
-    if [ ! -f dm/README.TXT ]; then
-        download "http://downloads.dlang.org/other/dm857c.zip" dmc.zip
-        7z x dmc.zip > /dev/null
-    fi
-    dm/bin/dmc | head -n 1 || true
-}
-
 ################################################################################
 # Setup required tools
 ################################################################################
@@ -45,11 +26,13 @@ echo "GNU_MAKE: $("${GNU_MAKE}" --version)"
 echo "GREP_VERSION: $(grep --version)"
 
 ################################################################################
-# Prepare C compiler
+# Prepare DigitalMars make and C compiler
 ################################################################################
 
+install_host_dmc
+export DM_MAKE="$PWD/dm/bin/make.exe"
+
 if [ "$MODEL" == "32" ] ; then
-    install_host_dmc
     export CC="$PWD/dm/bin/dmc.exe"
     export AR="$PWD/dm/bin/lib.exe"
 else
@@ -80,15 +63,13 @@ clone_repos
 ################################################################################
 
 if [ "$MODEL" == "64" ] ; then
-    export MODEL_FLAG="-m64"
     MAKE_FILE="win64.mak"
     LIBNAME=phobos64.lib
 elif [ "$MODEL" == "32mscoff" ] ; then
-    export MODEL_FLAG="-m32mscoff"
     MAKE_FILE="win64.mak"
     LIBNAME=phobos32mscoff.lib
 else
-    export MODEL_FLAG="-m32"
+    export LIB="$PWD/dmd2/windows/lib"
     MAKE_FILE="win32.mak"
     LIBNAME=phobos.lib
 fi
@@ -100,7 +81,7 @@ fi
 DMD_BIN_PATH="$DMD_DIR/generated/windows/release/${MODEL}/dmd"
 
 cd "${DMD_DIR}/src"
-"${DM_MAKE}" -f "${MAKE_FILE}" reldmd DMD="$DMD_BIN_PATH"
+"${DM_MAKE}" -f "${MAKE_FILE}" reldmd-asserts DMD="$DMD_BIN_PATH" MAKE="$DM_MAKE"
 
 ################################################################################
 # WORKAROUND: Build zlib separately with DigitalMars make
@@ -109,7 +90,7 @@ cd "${DMD_DIR}/src"
 
 if [ "$MODEL" != "32" ] ; then
     cd "${DMD_DIR}/../phobos/etc/c/zlib"
-    ${DM_MAKE} -f win64.mak MODEL=${MODEL} "zlib${MODEL}.lib" "CC=$CC" "LIB=$AR" VCDIR=.
+    "${DM_MAKE}" -f win64.mak MODEL=${MODEL} "zlib${MODEL}.lib" "CC=$CC" "LIB=$AR" VCDIR=. MAKE="$DM_MAKE"
 fi
 
 ################################################################################
@@ -118,19 +99,43 @@ fi
 
 for proj in druntime phobos; do
     cd "${DMD_DIR}/../${proj}"
-    "${DM_MAKE}" -f "${MAKE_FILE}" MODEL=$MODEL DMD="$DMD_BIN_PATH" "CC=$CC" "AR=$AR" VCDIR=.
+    "${DM_MAKE}" -f "${MAKE_FILE}" MODEL=$MODEL DMD="$DMD_BIN_PATH" "CC=$CC" "AR=$AR" VCDIR=. MAKE="$DM_MAKE"
 done
+
+################################################################################
+# Run druntime tests
+################################################################################
+cd "${DMD_DIR}/../druntime"
+"${DM_MAKE}" -f "${MAKE_FILE}" MODEL=$MODEL DMD="$DMD_BIN_PATH" "CC=$CC" "AR=$AR" VCDIR=. MAKE="$DM_MAKE" unittest test_all
 
 ################################################################################
 # Run DMD testsuite
 ################################################################################
 cd "${DMD_DIR}/test"
 
-# WORKAROUND: Copy the built Phobos library in the path
-# REASON: LIB argument doesn't seem to work
-cp "${DMD_DIR}/../phobos/$LIBNAME" .
+if [ "$MODEL" == "32" ] ; then
+    # WORKAROUND: Make Optlink use freshly built Phobos, not the host compiler's.
+    # Optlink apparently prefers LIB in sc.ini over the LIB env variable (and
+    # `-conf=` for DMD apparently doesn't prevent that).
+    # There's apparently no sane way to specify a libdir for Optlink in the DMD
+    # cmdline, so remove the sc.ini file and set the DFLAGS and LIB env variables
+    # manually for the host compiler. These 2 variables are adapted for the
+    # actual tests with the tested compiler (by run.d).
+    HOST_DMD_DIR="$(cygpath -w "$DMD_DIR/tools/dmd2")"
+    rm "$HOST_DMD_DIR/windows/bin/sc.ini"
+    export DFLAGS="-I$HOST_DMD_DIR/src/phobos -I$HOST_DMD_DIR/src/druntime/import"
+    export LIB="$HOST_DMD_DIR/windows/lib"
+fi
 
-DMD_TESTSUITE_MAKE_ARGS="-j$N" "${GNU_MAKE}" -j1 start_all_tests ARGS="-O -inline -g" MODEL="$MODEL"  MODEL_FLAG="$MODEL_FLAG"
+"$HOST_DC" -m$MODEL -g -i run.d
+targets=("all")
+args=('ARGS=-O -inline -g') # no -release for faster builds
+if [ "$HOST_DMD_VERSION" = "2.079.0" ] ; then
+    # do not run runnable_cxx or unit_tests with older bootstrap compilers
+    targets=("compilable" "fail_compilation" "runnable"  "dshell")
+    args=() # use default set of args
+fi
+./run --environment --jobs=$N "${targets[@]}" "${args[@]}" MODEL="$MODEL"
 
 ################################################################################
 # Prepare artifacts

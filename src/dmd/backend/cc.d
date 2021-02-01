@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1985-1998 by Symantec
- *              Copyright (C) 2000-2019 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/cc.d, backend/_cc.d)
@@ -146,8 +146,8 @@ else version (SCPP)
 
 enum IDMAX = 900;              // identifier max (excluding terminating 0)
 enum IDOHD = 4+1+int.sizeof*3; // max amount of overhead to ID added by
-enum STRMAX = 65000;           // max length of string (determined by
-                               // max ph size)
+enum STRMAX = 65_000;           // max length of string (determined by
+                                // max ph size)
 
 //enum SC;
 struct Thunk
@@ -820,8 +820,12 @@ struct func_t
 
     char *Fredirect;            // redirect function name to this name in object
 
-    // Array of catch types for EH_DWARF Types Table generation
-    Barray!(Symbol*) typesTable;
+version (SPP) { } else
+{
+    version (MARS)
+        // Array of catch types for EH_DWARF Types Table generation
+        Barray!(Symbol*) typesTable;
+}
 
     union
     {
@@ -1433,13 +1437,17 @@ struct Symbol
     }
     regm_t      Sregsaved;      // mask of registers not affected by this func
 
-    version (MARS)
-    {
-        uint lnoscopestart;     // life time of var
-        uint lnoscopeend;       // the line after the scope
-    }
+    uint lnoscopestart;         // life time of var
+    uint lnoscopeend;           // the line after the scope
 
-    char[1] Sident;             // identifier string (dynamic array)
+    /**
+     * Identifier for this symbol
+     *
+     * Note that this is used as a flexible array member.
+     * When allocating a Symbol, the allocation is for
+     * `sizeof(Symbol - 1 + strlen(identifier) + "\0".length)`.
+     */
+    char[1] Sident;
 
     int needThis()              // !=0 if symbol needs a 'this' pointer
     { return Symbol_needThis(&this); }
@@ -1806,6 +1814,7 @@ struct dt_t
     char dt;                            // type (DTxxxx)
     ubyte Dty;                          // pointer type
     ubyte DTn;                          // DTibytes: number of bytes
+    ubyte DTalign;                      // DTabytes: alignment (as power of 2) of pointed-to data
     union
     {
         struct                          // DTibytes
@@ -1878,4 +1887,3 @@ enum
 //        for (size_t i = 0; i < sz / sizeof(size_t); ++i)        \
 //            ((size_t *)(p))[i] = 0;                             \
 //    }
-

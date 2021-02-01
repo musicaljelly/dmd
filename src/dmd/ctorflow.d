@@ -1,10 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
- *
  * Manage flow analysis for constructors.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/ctorflow.d, _ctorflow.d)
@@ -193,29 +190,33 @@ bool mergeFieldInit(ref CSX a, const CSX b) pure nothrow
         return true;
     }
 
+    // The logic here is to prefer the branch that neither halts nor returns.
     bool ok;
     if (!bHalt && bRet)
     {
+        // Branch b returns, no merging required.
         ok = (b & CSX.this_ctor);
-        a = a;
     }
     else if (!aHalt && aRet)
     {
+        // Branch a returns, but b doesn't, b takes precedence.
         ok = (a & CSX.this_ctor);
         a = b;
     }
     else if (bHalt)
     {
+        // Branch b halts, no merging required.
         ok = (a & CSX.this_ctor);
-        a = a;
     }
     else if (aHalt)
     {
+        // Branch a halts, but b doesn't, b takes precedence.
         ok = (b & CSX.this_ctor);
         a = b;
     }
     else
     {
+        // Neither branch returns nor halts, merge flags.
         ok = !((a ^ b) & CSX.this_ctor);
         a |= b;
     }

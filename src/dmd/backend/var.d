@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1985-1998 by Symantec
- *              Copyright (C) 2000-2019 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/var.d, backend/var.d)
@@ -183,27 +183,6 @@ int level = 0;                  /* declaration level                    */
 
 param_t *paramlst = null;       /* function parameter list              */
 tym_t pointertype = TYnptr;     /* default data pointer type            */
-
-/************************
- * Bit masks
- */
-
-const uint[32] mask =
-        [1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,0x8000,
-         0x10000,0x20000,0x40000,0x80000,0x100000,0x200000,0x400000,0x800000,
-         0x1000000,0x2000000,0x4000000,0x8000000,
-         0x10000000,0x20000000,0x40000000,0x80000000];
-
-static if (0)
-{
-const uint[32] maskl =
-        [1,2,4,8,0x10,0x20,0x40,0x80,
-         0x100,0x200,0x400,0x800,0x1000,0x2000,0x4000,0x8000,
-         0x10000,0x20000,0x40000,0x80000,0x100000,0x200000,0x400000,0x800000,
-         0x1000000,0x2000000,0x4000000,0x8000000,
-         0x10000000,0x20000000,0x40000000,0x80000000];
-}
-
 
 /* From util.c */
 
@@ -409,6 +388,7 @@ extern (C) __gshared const(char)*[TYMAX] tystring =
     TYvptr     : "__handle *",
     TYimmutPtr : "__immutable *",
     TYsharePtr : "__shared *",
+    TYrestrictPtr : "__restrict *",
     TYfgPtr    : "__fg *",
     TYffunc    : "far C func",
     TYfpfunc   : "far Pascal func",
@@ -617,6 +597,7 @@ __gshared ubyte[TYMAX] dttab =
     TYvptr     : 0x40,
     TYimmutPtr : 0x20,
     TYsharePtr : 0x20,
+    TYrestrictPtr : 0x20,
     TYfgPtr    : 0x20,
     TYffunc    : 0x64,
     TYfpfunc   : 0x73,
@@ -652,7 +633,7 @@ __gshared ushort[TYMAX] dttab4 =
 
     TYlong    : 0x12,
     TYulong   : 0x22,
-    TYdchar   : 0x22,
+    TYdchar   : 0x7b, // UTF32
     TYllong   : 0x13,
     TYullong  : 0x23,
     TYcent    : 0x603,
@@ -726,6 +707,7 @@ __gshared ushort[TYMAX] dttab4 =
     TYvptr     : 0x200,
     TYimmutPtr : 0x100,
     TYsharePtr : 0x100,
+    TYrestrictPtr : 0x100,
     TYfgPtr    : 0x100,
     TYffunc    : 0x00,
     TYfpfunc   : 0x00,
@@ -835,6 +817,7 @@ __gshared byte[256] _tysize =
     TYvptr     : 4,
     TYimmutPtr : 2,
     TYsharePtr : 2,
+    TYrestrictPtr : 2,
     TYfgPtr    : 2,
     TYffunc    : -1,
     TYfpfunc   : -1,
@@ -955,6 +938,7 @@ __gshared byte[256] _tyalignsize =
     TYvptr     : 4,
     TYimmutPtr : 2,
     TYsharePtr : 2,
+    TYrestrictPtr : 2,
     TYfgPtr    : 2,
     TYffunc    : -1,
     TYfpfunc   : -1,
@@ -975,7 +959,7 @@ __gshared byte[256] _tyalignsize =
 private:
 
 enum TXptr       = [ TYnptr ];
-enum TXptr_nflat = [ TYsptr,TYcptr,TYf16ptr,TYfptr,TYhptr,TYvptr,TYimmutPtr,TYsharePtr,TYfgPtr ];
+enum TXptr_nflat = [ TYsptr,TYcptr,TYf16ptr,TYfptr,TYhptr,TYvptr,TYimmutPtr,TYsharePtr,TYrestrictPtr,TYfgPtr ];
 enum TXreal      = [ TYfloat,TYdouble,TYdouble_alias,TYldouble,
                      TYfloat4,TYdouble2,
                      TYfloat8,TYdouble4,
@@ -1015,6 +999,7 @@ enum TXshort      = [ TYbool,TYchar,TYschar,TYuchar,TYshort,
 enum TXaggregate  = [ TYstruct,TYarray ];
 enum TXxmmreg     = [
                      TYfloat,TYdouble,TYifloat,TYidouble,
+                     //TYcfloat,TYcdouble,
                      TYfloat4,TYdouble2,
                      TYschar16,TYuchar16,TYshort8,TYushort8,
                      TYlong4,TYulong4,TYllong2,TYullong2,
@@ -1036,4 +1021,3 @@ enum TXsimd       = [
                      TYlong16,TYulong16,TYllong8,TYullong8,
                      TYfloat16,TYdouble8,
                     ];
-

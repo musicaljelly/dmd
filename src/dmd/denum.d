@@ -1,10 +1,9 @@
 /**
- * Handle enums.
+ * Define `enum` declarations and `enum` members.
  *
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Specification: $(LINK2 https://dlang.org/spec/enum.html, Enums)
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/denum.d, _denum.d)
@@ -194,7 +193,7 @@ extern (C++) final class EnumDeclaration : ScopeDsymbol
 
         Expression errorReturn()
         {
-            *pval = new ErrorExp();
+            *pval = ErrorExp.get();
             return *pval;
         }
 
@@ -216,7 +215,7 @@ extern (C++) final class EnumDeclaration : ScopeDsymbol
             {
                 /* Allow these special enums to not need a member list
                  */
-                return memtype.getProperty(loc, id, 0);
+                return memtype.getProperty(_scope, loc, id, 0);
             }
 
             error("is forward referenced looking for `.%s`", id.toChars());
@@ -288,7 +287,7 @@ extern (C++) final class EnumDeclaration : ScopeDsymbol
     Expression getDefaultValue(const ref Loc loc)
     {
         Expression handleErrors(){
-            defaultval = new ErrorExp();
+            defaultval = ErrorExp.get();
             return defaultval;
         }
         //printf("EnumDeclaration::getDefaultValue() %p %s\n", this, toChars());
@@ -429,7 +428,7 @@ extern (C++) final class EnumMember : VarDeclaration
     {
         dsymbolSemantic(this, sc);
         if (errors)
-            return new ErrorExp();
+            return ErrorExp.get();
         checkDisabled(loc, sc);
 
         if (depdecl && !depdecl._scope)
@@ -437,7 +436,7 @@ extern (C++) final class EnumMember : VarDeclaration
         checkDeprecated(loc, sc);
 
         if (errors)
-            return new ErrorExp();
+            return ErrorExp.get();
         Expression e = new VarExp(loc, this);
         return e.expressionSemantic(sc);
     }
@@ -472,5 +471,3 @@ bool isSpecialEnumIdent(const Identifier ident) @nogc nothrow
             ident == Id.__c_long_double ||
             ident == Id.__c_wchar_t;
 }
-
-

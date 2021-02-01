@@ -1,8 +1,7 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Performs the semantic3 stage, which deals with function bodies.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/semantic3.d, _semantic3.d)
@@ -50,6 +49,7 @@ import dmd.hdrgen;
 import dmd.mtype;
 import dmd.nogc;
 import dmd.nspace;
+import dmd.ob;
 import dmd.objc;
 import dmd.opover;
 import dmd.parse;
@@ -62,7 +62,6 @@ import dmd.statementsem;
 import dmd.staticassert;
 import dmd.tokens;
 import dmd.utf;
-import dmd.utils;
 import dmd.semantic2;
 import dmd.statement;
 import dmd.target;
@@ -314,9 +313,7 @@ private extern(C++) final class Semantic3Visitor : Visitor
             sc2.sw = null;
             sc2.fes = funcdecl.fes;
             sc2.linkage = LINK.d;
-            sc2.stc &= ~(STC.auto_ | STC.scope_ | STC.static_ | STC.extern_ | STC.abstract_ | STC.deprecated_ | STC.override_ |
-                         STC.TYPECTOR | STC.final_ | STC.tls | STC.gshared | STC.ref_ | STC.return_ | STC.property |
-                         STC.nothrow_ | STC.pure_ | STC.safe | STC.trusted | STC.system);
+            sc2.stc &= STCFlowThruFunction;
             sc2.protection = Prot(Prot.Kind.public_);
             sc2.explicitProtection = 0;
             sc2.aligndecl = null;
@@ -364,12 +361,8 @@ private extern(C++) final class Semantic3Visitor : Visitor
                 }
             }
 
-            // Declare 'this'
-            auto ad = funcdecl.isThis();
-            auto hiddenParams = funcdecl.declareThis(sc2, ad);
-            funcdecl.vthis = hiddenParams.vthis;
-            funcdecl.isThis2 = hiddenParams.isThis2;
-            funcdecl.selectorParameter = hiddenParams.selectorParameter;
+            funcdecl.declareThis(sc2);
+
             //printf("[%s] ad = %p vthis = %p\n", loc.toChars(), ad, vthis);
             //if (vthis) printf("\tvthis.type = %s\n", vthis.type.toChars());
 
@@ -408,7 +401,7 @@ private extern(C++) final class Semantic3Visitor : Visitor
                 if (f.linkage == LINK.d || f.parameterList.length)
                 {
                     // Declare _argptr
-                    Type t = Type.tvalist;
+                    Type t = target.va_listType(funcdecl.loc, sc);
                     // Init is handled in FuncDeclaration_toObjFile
                     funcdecl.v_argptr = new VarDeclaration(funcdecl.loc, t, Id._argptr, new VoidInitializer(funcdecl.loc));
                     funcdecl.v_argptr.storage_class |= STC.temp;
@@ -421,17 +414,15 @@ private extern(C++) final class Semantic3Visitor : Visitor
             /* Declare all the function parameters as variables
              * and install them in parameters[]
              */
-            size_t nparams = f.parameterList.length;
-            if (nparams)
+            if (const nparams = f.parameterList.length)
             {
                 /* parameters[] has all the tuples removed, as the back end
                  * doesn't know about tuples
                  */
                 funcdecl.parameters = new VarDeclarations();
                 funcdecl.parameters.reserve(nparams);
-                for (size_t i = 0; i < nparams; i++)
+                foreach (i, fparam; f.parameterList)
                 {
-                    Parameter fparam = f.parameterList[i];
                     Identifier id = fparam.ident;
                     StorageClass stc = 0;
                     if (!id)
@@ -458,9 +449,11 @@ private extern(C++) final class Semantic3Visitor : Visitor
                             stc |= STC.scope_;
                         }
                     }
-                    if (funcdecl.flags & FUNCFLAG.inferScope && !(fparam.storageClass & STC.scope_))
+
+                    if ((funcdecl.flags & FUNCFLAG.inferScope) && !(fparam.storageClass & STC.scope_))
                         stc |= STC.maybescope;
-                    stc |= fparam.storageClass & (STC.in_ | STC.out_ | STC.ref_ | STC.return_ | STC.scope_ | STC.lazy_ | STC.final_ | STC.TYPECTOR | STC.nodtor);
+
+                    stc |= fparam.storageClass & (STC.IOR | STC.return_ | STC.scope_ | STC.lazy_ | STC.final_ | STC.TYPECTOR | STC.nodtor);
                     v.storage_class = stc;
                     v.dsymbolSemantic(sc2);
                     if (!sc2.insert(v))
@@ -480,43 +473,40 @@ private extern(C++) final class Semantic3Visitor : Visitor
             // Declare the tuple symbols and put them in the symbol table,
             // but not in parameters[].
             if (f.parameterList.parameters)
+            foreach (fparam; *f.parameterList.parameters)
             {
-                for (size_t i = 0; i < f.parameterList.parameters.dim; i++)
+                if (!fparam.ident)
+                    continue; // never used, so ignore
+                // expand any tuples
+                if (fparam.type.ty != Ttuple)
+                    continue;
+
+                TypeTuple t = cast(TypeTuple)fparam.type;
+                size_t dim = Parameter.dim(t.arguments);
+                auto exps = new Objects(dim);
+                foreach (j; 0 .. dim)
                 {
-                    Parameter fparam = (*f.parameterList.parameters)[i];
-                    if (!fparam.ident)
-                        continue; // never used, so ignore
-                    if (fparam.type.ty == Ttuple)
-                    {
-                        TypeTuple t = cast(TypeTuple)fparam.type;
-                        size_t dim = Parameter.dim(t.arguments);
-                        auto exps = new Objects(dim);
-                        for (size_t j = 0; j < dim; j++)
-                        {
-                            Parameter narg = Parameter.getNth(t.arguments, j);
-                            assert(narg.ident);
-                            VarDeclaration v = sc2.search(Loc.initial, narg.ident, null).isVarDeclaration();
-                            assert(v);
-                            Expression e = new VarExp(v.loc, v);
-                            (*exps)[j] = e;
-                        }
-                        assert(fparam.ident);
-                        auto v = new TupleDeclaration(funcdecl.loc, fparam.ident, exps);
-                        //printf("declaring tuple %s\n", v.toChars());
-                        v.isexp = true;
-                        if (!sc2.insert(v))
-                            funcdecl.error("parameter `%s.%s` is already defined", funcdecl.toChars(), v.toChars());
-                        funcdecl.localsymtab.insert(v);
-                        v.parent = funcdecl;
-                    }
+                    Parameter narg = Parameter.getNth(t.arguments, j);
+                    assert(narg.ident);
+                    VarDeclaration v = sc2.search(Loc.initial, narg.ident, null).isVarDeclaration();
+                    assert(v);
+                    (*exps)[j] = new VarExp(v.loc, v);
                 }
+                assert(fparam.ident);
+                auto v = new TupleDeclaration(funcdecl.loc, fparam.ident, exps);
+                //printf("declaring tuple %s\n", v.toChars());
+                v.isexp = true;
+                if (!sc2.insert(v))
+                    funcdecl.error("parameter `%s.%s` is already defined", funcdecl.toChars(), v.toChars());
+                funcdecl.localsymtab.insert(v);
+                v.parent = funcdecl;
             }
 
             // Precondition invariant
             Statement fpreinv = null;
             if (funcdecl.addPreInvariant())
             {
-                Expression e = addInvariant(funcdecl.loc, sc, ad, funcdecl.vthis);
+                Expression e = addInvariant(funcdecl.isThis(), funcdecl.vthis);
                 if (e)
                     fpreinv = new ExpStatement(Loc.initial, e);
             }
@@ -525,7 +515,7 @@ private extern(C++) final class Semantic3Visitor : Visitor
             Statement fpostinv = null;
             if (funcdecl.addPostInvariant())
             {
-                Expression e = addInvariant(funcdecl.loc, sc, ad, funcdecl.vthis);
+                Expression e = addInvariant(funcdecl.isThis(), funcdecl.vthis);
                 if (e)
                     fpostinv = new ExpStatement(Loc.initial, e);
             }
@@ -547,7 +537,7 @@ private extern(C++) final class Semantic3Visitor : Visitor
 
                 if ((needEnsure && global.params.useOut == CHECKENABLE.on) || fpostinv)
                 {
-                    funcdecl.returnLabel = new LabelDsymbol(Id.returnLabel);
+                    funcdecl.returnLabel = funcdecl.searchLabel(Id.returnLabel);
                 }
 
                 // scope of out contract (need for vresult.semantic)
@@ -576,9 +566,6 @@ private extern(C++) final class Semantic3Visitor : Visitor
                         v.ctorinit = 0;
                     }
                 }
-
-                if (!funcdecl.inferRetType && !target.isReturnOnStack(f, funcdecl.needThis()))
-                    funcdecl.nrvo_can = 0;
 
                 bool inferRef = (f.isref && (funcdecl.storage_class & STC.auto_));
 
@@ -631,7 +618,9 @@ private extern(C++) final class Semantic3Visitor : Visitor
                     if (funcdecl.storage_class & STC.auto_)
                         funcdecl.storage_class &= ~STC.auto_;
                 }
-                if (!target.isReturnOnStack(f, funcdecl.needThis()))
+
+                // handle NRVO
+                if (!target.isReturnOnStack(f, funcdecl.needThis()) || funcdecl.checkNrvo())
                     funcdecl.nrvo_can = 0;
 
                 if (funcdecl.fbody.isErrorStatement())
@@ -795,7 +784,7 @@ private extern(C++) final class Semantic3Visitor : Visitor
                             /* Add an assert(0, msg); where the missing return
                              * should be.
                              */
-                            e = new AssertExp(funcdecl.endloc, IntegerExp.literal!0, new StringExp(funcdecl.loc, cast(char*)"missing return expression"));
+                            e = new AssertExp(funcdecl.endloc, IntegerExp.literal!0, new StringExp(funcdecl.loc, "missing return expression"));
                         }
                         else
                             e = new HaltExp(funcdecl.endloc);
@@ -888,7 +877,7 @@ private extern(C++) final class Semantic3Visitor : Visitor
 
                         const hasCopyCtor = exp.type.ty == Tstruct && (cast(TypeStruct)exp.type).sym.hasCopyCtor;
                         // if a copy constructor is present, the return type conversion will be handled by it
-                        if (!hasCopyCtor)
+                        if (!(hasCopyCtor && exp.isLvalue()))
                             exp = exp.implicitCastTo(sc2, tret);
 
                         if (f.isref)
@@ -1293,14 +1282,13 @@ private extern(C++) final class Semantic3Visitor : Visitor
         // Infer STC.scope_
         if (funcdecl.parameters && !funcdecl.errors)
         {
-            size_t nfparams = f.parameterList.length;
-            assert(nfparams == funcdecl.parameters.dim);
-            foreach (u, v; *funcdecl.parameters)
+            assert(f.parameterList.length == funcdecl.parameters.dim);
+            foreach (u, p; f.parameterList)
             {
+                auto v = (*funcdecl.parameters)[u];
                 if (v.storage_class & STC.maybescope)
                 {
                     //printf("Inferring scope for %s\n", v.toChars());
-                    Parameter p = f.parameterList[u];
                     notMaybeScope(v);
                     v.storage_class |= STC.scope_ | STC.scopeinferred;
                     p.storageClass |= STC.scope_ | STC.scopeinferred;
@@ -1313,7 +1301,7 @@ private extern(C++) final class Semantic3Visitor : Visitor
         {
             notMaybeScope(funcdecl.vthis);
             funcdecl.vthis.storage_class |= STC.scope_ | STC.scopeinferred;
-            f.isscope = true;
+            f.isScopeQual = true;
             f.isscopeinferred = true;
         }
 
@@ -1331,6 +1319,13 @@ private extern(C++) final class Semantic3Visitor : Visitor
             sc.linkage = funcdecl.linkage; // https://issues.dlang.org/show_bug.cgi?id=8496
             funcdecl.type = f.typeSemantic(funcdecl.loc, sc);
             sc = sc.pop();
+        }
+
+        // Do live analysis
+        if (global.params.useDIP1021 && funcdecl.fbody && funcdecl.type.ty != Terror &&
+            funcdecl.type.isTypeFunction().islive)
+        {
+            oblive(funcdecl);
         }
 
         /* If this function had instantiated with gagging, error reproduction will be
@@ -1353,13 +1348,15 @@ private extern(C++) final class Semantic3Visitor : Visitor
 
         /* If any of the fields of the aggregate have a destructor, add
          *   scope (failure) { this.fieldDtor(); }
-         * as the first statement. It is not necessary to add it after
+         * as the first statement of the constructor (unless the constructor
+         * doesn't define a body - @disable, extern)
+         *.It is not necessary to add it after
          * each initialization of a field, because destruction of .init constructed
          * structs should be benign.
          * https://issues.dlang.org/show_bug.cgi?id=14246
          */
         AggregateDeclaration ad = ctor.isMemberDecl();
-        if (ad && ad.fieldDtor && global.params.dtorFields)
+        if (ctor.fbody && ad && ad.fieldDtor && global.params.dtorFields && !ctor.type.toTypeFunction.isnothrow)
         {
             /* Generate:
              *   this.fieldDtor()

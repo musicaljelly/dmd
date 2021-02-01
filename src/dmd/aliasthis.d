@@ -1,8 +1,9 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Implements the `alias this` symbol.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Specification: $(LINK2 https://dlang.org/spec/class.html#alias-this, Alias This)
+ *
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/aliasthis.d, _aliasthis.d)
@@ -45,7 +46,9 @@ extern (C++) final class AliasThis : Dsymbol
     override Dsymbol syntaxCopy(Dsymbol s)
     {
         assert(!s);
-        return new AliasThis(loc, ident);
+        auto at = new AliasThis(loc, ident);
+        at.comment = comment;
+        return at;
     }
 
     override const(char)* kind() const

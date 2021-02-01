@@ -2,7 +2,7 @@
  * Compiler implementation of the
  * $(LINK2 http://www.dlang.org, D programming language).
  *
- * Copyright:   Copyright (C) 2000-2019 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 2000-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/backconfig.d, backend/backconfig.d)
@@ -82,9 +82,8 @@ static if (TARGET_WINDOS)
         config.avx = avx;
         config.ehmethod = useExceptions ? EHmethod.EH_DM : EHmethod.EH_NONE;
 
-        // Not sure we really need these two lines, try removing them later
-        config.flags |= CFGnoebp;
-        config.flags |= CFGalwaysframe;
+        config.flags |= CFGnoebp;       // test suite fails without this
+        //config.flags |= CFGalwaysframe;
         config.flags |= CFGromable; // put switch tables in code segment
         config.objfmt = OBJ_MSCOFF;
     }
@@ -154,7 +153,8 @@ static if (TARGET_OSX)
     {
         config.flags3 |= CFG3pic;
         if (model == 64)
-            config.flags |= CFGalwaysframe; // PIC needs a frame for TLS fixups
+            config.flags |= CFGalwaysframe; // autotester fails without this
+                                            // https://issues.dlang.org/show_bug.cgi?id=21042
     }
     if (symdebug)
         config.flags |= CFGalwaysframe;
@@ -452,12 +452,17 @@ else
 }
     _tyalignsize[TYsptr] = LONGSIZE;
     _tyalignsize[TYcptr] = LONGSIZE;
+    _tyalignsize[TYfptr] = LONGSIZE;     // NOTE: There are codgen test that check
+    _tyalignsize[TYvptr] = LONGSIZE;     // _tysize[x] == _tysize[TYfptr] so don't set
+    _tyalignsize[TYfref] = LONGSIZE;     // _tysize[TYfptr] to _tysize[TYnptr]
 
     _tysize[TYimmutPtr] = _tysize[TYnptr];
     _tysize[TYsharePtr] = _tysize[TYnptr];
+    _tysize[TYrestrictPtr] = _tysize[TYnptr];
     _tysize[TYfgPtr] = _tysize[TYnptr];
     _tyalignsize[TYimmutPtr] = _tyalignsize[TYnptr];
     _tyalignsize[TYsharePtr] = _tyalignsize[TYnptr];
+    _tyalignsize[TYrestrictPtr] = _tyalignsize[TYnptr];
     _tyalignsize[TYfgPtr] = _tyalignsize[TYnptr];
 }
 
@@ -545,9 +550,11 @@ else
 
     _tysize[TYimmutPtr] = _tysize[TYnptr];
     _tysize[TYsharePtr] = _tysize[TYnptr];
+    _tysize[TYrestrictPtr] = _tysize[TYnptr];
     _tysize[TYfgPtr] = _tysize[TYnptr];
     _tyalignsize[TYimmutPtr] = _tyalignsize[TYnptr];
     _tyalignsize[TYsharePtr] = _tyalignsize[TYnptr];
+    _tyalignsize[TYrestrictPtr] = _tyalignsize[TYnptr];
     _tyalignsize[TYfgPtr] = _tyalignsize[TYnptr];
 }
 

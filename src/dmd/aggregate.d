@@ -1,8 +1,10 @@
 /**
- * Compiler implementation of the
- * $(LINK2 http://www.dlang.org, D programming language).
+ * Defines a `Dsymbol` representing an aggregate, which is a `struct`, `union` or `class`.
  *
- * Copyright:   Copyright (C) 1999-2019 by The D Language Foundation, All Rights Reserved
+ * Specification: $(LINK2 https://dlang.org/spec/struct.html, Structs, Unions),
+ *                $(LINK2 https://dlang.org/spec/class.html, Class).
+ *
+ * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/aggregate.d, _aggregate.d)
@@ -16,6 +18,7 @@ import core.stdc.stdio;
 import core.checkedint;
 
 import dmd.aliasthis;
+import dmd.apply;
 import dmd.arraytypes;
 import dmd.gluelayer : Symbol;
 import dmd.declaration;
@@ -37,18 +40,18 @@ import dmd.visitor;
 
 enum Sizeok : int
 {
-    none,           // size of aggregate is not yet able to compute
-    fwd,            // size of aggregate is ready to compute
-    inProcess,      // in the midst of computing the size
-    done,           // size of aggregate is set correctly
+    none,           /// size of aggregate is not yet able to compute
+    fwd,            /// size of aggregate is ready to compute
+    inProcess,      /// in the midst of computing the size
+    done,           /// size of aggregate is set correctly
 }
 
 enum Baseok : int
 {
-    none,             // base classes not computed yet
-    start,            // in process of resolving base classes
-    done,             // all base classes are resolved
-    semanticdone,     // all base classes semantic done
+    none,             /// base classes not computed yet
+    start,            /// in process of resolving base classes
+    done,             /// all base classes are resolved
+    semanticdone,     /// all base classes semantic done
 }
 
 /**
@@ -68,57 +71,63 @@ enum ClassKind : int
 }
 
 /***********************************************************
+ * Abstract aggregate as a common ancestor for Class- and StructDeclaration.
  */
 extern (C++) abstract class AggregateDeclaration : ScopeDsymbol
 {
-    Type type;
-    StorageClass storage_class;
-    Prot protection;
-    uint structsize;        // size of struct
-    uint alignsize;         // size of struct for alignment purposes
-    VarDeclarations fields; // VarDeclaration fields
-    Sizeok sizeok = Sizeok.none;  // set when structsize contains valid data
-    Dsymbol deferred;       // any deferred semantic2() or semantic3() symbol
-    bool isdeprecated;      // true if deprecated
+    Type type;                  ///
+    StorageClass storage_class; ///
+    uint structsize;            /// size of struct
+    uint alignsize;             /// size of struct for alignment purposes
+    VarDeclarations fields;     /// VarDeclaration fields
+    Dsymbol deferred;           /// any deferred semantic2() or semantic3() symbol
 
     /// specifies whether this is a D, C++, Objective-C or anonymous struct/class/interface
     ClassKind classKind;
+    /// Specify whether to mangle the aggregate as a `class` or a `struct`
+    /// This information is used by the MSVC mangler
+    /// Only valid for class and struct. TODO: Merge with ClassKind ?
+    CPPMANGLE cppmangle;
 
-    /* !=null if is nested
+    /**
+     * !=null if is nested
      * pointing to the dsymbol that directly enclosing it.
      * 1. The function that enclosing it (nested struct and class)
      * 2. The class that enclosing it (nested class only)
      * 3. If enclosing aggregate is template, its enclosing dsymbol.
+     *
      * See AggregateDeclaraton::makeNested for the details.
      */
     Dsymbol enclosing;
 
-    VarDeclaration vthis;   // 'this' parameter if this aggregate is nested
-    VarDeclaration vthis2;  // 'this' parameter if this aggregate is a template and is nested
+    VarDeclaration vthis;   /// 'this' parameter if this aggregate is nested
+    VarDeclaration vthis2;  /// 'this' parameter if this aggregate is a template and is nested
 
     // Special member functions
-    FuncDeclarations invs;          // Array of invariants
-    FuncDeclaration inv;            // invariant
-    NewDeclaration aggNew;          // allocator
-    DeleteDeclaration aggDelete;    // deallocator
+    FuncDeclarations invs;  /// Array of invariants
+    FuncDeclaration inv;    /// Merged invariant calling all members of invs
+    NewDeclaration aggNew;  /// allocator
 
-    // CtorDeclaration or TemplateDeclaration
+    /// CtorDeclaration or TemplateDeclaration
     Dsymbol ctor;
 
-    // default constructor - should have no arguments, because
-    // it would be stored in TypeInfo_Class.defaultConstructor
+    /// default constructor - should have no arguments, because
+    /// it would be stored in TypeInfo_Class.defaultConstructor
     CtorDeclaration defaultCtor;
 
-    AliasThis aliasthis;    // forward unresolved lookups to aliasthis
-    bool noDefaultCtor;     // no default construction
+    AliasThis aliasthis;    /// forward unresolved lookups to aliasthis
 
-    DtorDeclarations dtors; // Array of destructors
-    DtorDeclaration dtor;   // aggregate destructor
-    DtorDeclaration primaryDtor; // non-deleting C++ destructor, same as dtor for D
-    DtorDeclaration tidtor; // aggregate destructor used in TypeInfo (must have extern(D) ABI)
-    FuncDeclaration fieldDtor;   // aggregate destructor for just the fields
+    DtorDeclarations dtors;     /// Array of destructors
+    DtorDeclaration dtor;       /// aggregate destructor calling dtors and member constructors
+    DtorDeclaration primaryDtor;/// non-deleting C++ destructor, same as dtor for D
+    DtorDeclaration tidtor;     /// aggregate destructor used in TypeInfo (must have extern(D) ABI)
+    FuncDeclaration fieldDtor;  /// aggregate destructor for just the fields
 
-    Expression getRTInfo;   // pointer to GC info generated by object.RTInfo(this)
+    Expression getRTInfo;   /// pointer to GC info generated by object.RTInfo(this)
+
+    Prot protection;                /// visibility
+    bool noDefaultCtor;             /// no default construction
+    Sizeok sizeok = Sizeok.none;    /// set when structsize contains valid data
 
     final extern (D) this(const ref Loc loc, Identifier id)
     {
@@ -133,7 +142,7 @@ extern (C++) abstract class AggregateDeclaration : ScopeDsymbol
     Scope* newScope(Scope* sc)
     {
         auto sc2 = sc.push(this);
-        sc2.stc &= STC.safeGroup;
+        sc2.stc &= STCFlowThruAggregate;
         sc2.parent = this;
         sc2.inunion = isUnionDeclaration();
         sc2.protection = Prot(Prot.Kind.public_);
@@ -176,15 +185,13 @@ extern (C++) abstract class AggregateDeclaration : ScopeDsymbol
         // determineFields can be called recursively from one of the fields's v.semantic
         fields.setDim(0);
 
-        extern (C++) static int func(Dsymbol s, void* param)
+        static int func(Dsymbol s, AggregateDeclaration ad)
         {
             auto v = s.isVarDeclaration();
             if (!v)
                 return 0;
             if (v.storage_class & STC.manifest)
                 return 0;
-
-            auto ad = cast(AggregateDeclaration)param;
 
             if (v.semanticRun < PASS.semanticdone)
                 v.dsymbolSemantic(null);
@@ -223,7 +230,7 @@ extern (C++) abstract class AggregateDeclaration : ScopeDsymbol
             for (size_t i = 0; i < members.dim; i++)
             {
                 auto s = (*members)[i];
-                if (s.apply(&func, cast(void*)this))
+                if (s.apply(&func, this))
                 {
                     if (sizeok != Sizeok.none)
                     {
@@ -636,7 +643,13 @@ extern (C++) abstract class AggregateDeclaration : ScopeDsymbol
     // is aggregate deprecated?
     override final bool isDeprecated() const
     {
-        return isdeprecated;
+        return !!(this.storage_class & STC.deprecated_);
+    }
+
+    /// Flag this aggregate as deprecated
+    final void setDeprecated()
+    {
+        this.storage_class |= STC.deprecated_;
     }
 
     /****************************************
@@ -821,8 +834,8 @@ extern (C++) abstract class AggregateDeclaration : ScopeDsymbol
     }
 
     // Back end
-    Symbol* stag; // tag symbol for debug data
-    Symbol* sinit;
+    Symbol* stag;   /// tag symbol for debug data
+    Symbol* sinit;  /// initializer symbol
 
     override final inout(AggregateDeclaration) isAggregateDeclaration() inout
     {
