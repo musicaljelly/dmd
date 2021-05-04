@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1985-1998 by Symantec
- *              Copyright (C) 2000-2020 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/var.d, backend/var.d)
@@ -22,6 +22,7 @@ import dmd.backend.dlist;
 import dmd.backend.goh;
 import dmd.backend.obj;
 import dmd.backend.oper;
+import dmd.backend.symtab;
 import dmd.backend.ty;
 import dmd.backend.type;
 
@@ -247,10 +248,7 @@ symtab_t globsym;               /* global symbol table                  */
 Pstate pstate;                  // parser state
 Cstate cstate;                  // compiler state
 
-uint
-         maxblks = 0,   /* array max for all block stuff                */
-                        /* dfoblks <= numblks <= maxblks                */
-         numcse;        /* number of common subexpressions              */
+uint numcse;        // number of common subexpressions
 
 GlobalOptimizer go;
 
@@ -834,16 +832,8 @@ __gshared byte[256] _tysize =
     TYvtshape  : -1,
 ];
 
-// Alignment of long doubles varies by target
-static if (TARGET_OSX)
-    enum LDOUBLE_ALIGN = 16;
-else static if (TARGET_LINUX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_DRAGONFLYBSD || TARGET_SOLARIS)
-    enum LDOUBLE_ALIGN = 4;
-else static if (TARGET_WINDOS)
-    enum LDOUBLE_ALIGN = 2;
-else
-    static assert(0, "fix this");
-
+// set alignment after we know the target
+enum SET_ALIGN = -1;
 
 /// Size of a type to use for alignment
 __gshared byte[256] _tyalignsize =
@@ -872,15 +862,15 @@ __gshared byte[256] _tyalignsize =
     TYfloat   : FLOATSIZE,
     TYdouble  : DOUBLESIZE,
     TYdouble_alias : 8,
-    TYldouble : LDOUBLE_ALIGN,
+    TYldouble : SET_ALIGN,
 
     TYifloat   : FLOATSIZE,
     TYidouble  : DOUBLESIZE,
-    TYildouble : LDOUBLE_ALIGN,
+    TYildouble : SET_ALIGN,
 
     TYcfloat   : 2*FLOATSIZE,
     TYcdouble  : 2*DOUBLESIZE,
-    TYcldouble : LDOUBLE_ALIGN,
+    TYcldouble : SET_ALIGN,
 
     TYfloat4  : 16,
     TYdouble2 : 16,

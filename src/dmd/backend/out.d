@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1984-1998 by Symantec
- *              Copyright (C) 2000-2020 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/out.d, backend/out.d)
@@ -35,8 +35,11 @@ import dmd.backend.obj;
 import dmd.backend.oper;
 import dmd.backend.outbuf;
 import dmd.backend.rtlsym;
+import dmd.backend.symtab;
 import dmd.backend.ty;
 import dmd.backend.type;
+
+import dmd.backend.barray;
 
 version (SCPP)
 {
@@ -277,7 +280,12 @@ version (SCPP)
                     searchfixlist(s);
                     if (config.fulltypes &&
                         !(s.Sclass == SCstatic && funcsym_p)) // not local static
-                        cv_outsym(s);
+                    {
+                        if (config.objfmt == OBJ_ELF || config.objfmt == OBJ_MACH)
+                            dwarf_outsym(s);
+                        else
+                            cv_outsym(s);
+                    }
 version (SCPP)
 {
                     out_extdef(s);
@@ -337,6 +345,10 @@ version (SCPP)
 
             case mTYthread:
                 s.Sfl = FLtlsdata;
+                break;
+
+            case mTYweakLinkage:
+                s.Sfl = FLdata;        // initialized data
                 break;
 
             default:
@@ -409,7 +421,12 @@ version (SCPP)
     assert(s.Sseg != UNKNOWN);
     if (config.fulltypes &&
         !(s.Sclass == SCstatic && funcsym_p)) // not local static
-        cv_outsym(s);
+    {
+        if (config.objfmt == OBJ_ELF || config.objfmt == OBJ_MACH)
+            dwarf_outsym(s);
+        else
+            cv_outsym(s);
+    }
     searchfixlist(s);
 
     /* Go back through list, now that we know its size, and send out    */
@@ -456,7 +473,7 @@ void dt_writeToObj(Obj objmod, dt_t *dt, int seg, ref targ_size_t offset)
                     objmod.reftocodeseg(seg,offset,dt.DTabytes);
                 else
                 {
-static if (TARGET_LINUX || TARGET_OSX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_DRAGONFLYBSD || TARGET_SOLARIS)
+if (config.exe & EX_posix)
 {
                     objmod.reftodatseg(seg,offset,dt.DTabytes,dt.DTseg,flags);
 }
@@ -598,7 +615,12 @@ version (SCPP)
                 objmod.common_block(s, 0, n, 1);
         }
         if (config.fulltypes)
-            cv_outsym(s);
+        {
+            if (config.objfmt == OBJ_ELF || config.objfmt == OBJ_MACH)
+                dwarf_outsym(s);
+            else
+                cv_outsym(s);
+        }
     }
 }
 
@@ -968,8 +990,8 @@ void out_regcand(symtab_t *psymtab)
 {
     //printf("out_regcand()\n");
     const bool ifunc = (tybasic(funcsym_p.ty()) == TYifunc);
-    for (SYMIDX si = 0; si < psymtab.top; si++)
-    {   Symbol *s = psymtab.tab[si];
+    for (SYMIDX si = 0; si < psymtab.length; si++)
+    {   Symbol *s = (*psymtab)[si];
 
         symbol_debug(s);
         //assert(sytab[s.Sclass] & SCSS);      // only stack variables
@@ -990,17 +1012,17 @@ void out_regcand(symtab_t *psymtab)
 
         // Any assembler blocks make everything ambiguous
         if (b.BC == BCasm)
-            for (SYMIDX si = 0; si < psymtab.top; si++)
-                psymtab.tab[si].Sflags &= ~(SFLunambig | GTregcand);
+            for (SYMIDX si = 0; si < psymtab.length; si++)
+                (*psymtab)[si].Sflags &= ~(SFLunambig | GTregcand);
     }
 
     // If we took the address of one parameter, assume we took the
     // address of all non-register parameters.
     if (addressOfParam)                      // if took address of a parameter
     {
-        for (SYMIDX si = 0; si < psymtab.top; si++)
-            if (psymtab.tab[si].Sclass == SCparameter || psymtab.tab[si].Sclass == SCshadowreg)
-                psymtab.tab[si].Sflags &= ~(SFLunambig | GTregcand);
+        for (SYMIDX si = 0; si < psymtab.length; si++)
+            if ((*psymtab)[si].Sclass == SCparameter || (*psymtab)[si].Sclass == SCshadowreg)
+                (*psymtab)[si].Sflags &= ~(SFLunambig | GTregcand);
     }
 
 }
@@ -1159,17 +1181,12 @@ version (SCPP)
 
     /* Copy local symbol table onto main one, making sure       */
     /* that the symbol numbers are adjusted accordingly */
-    //printf("f.Flocsym.top = %d\n",f.Flocsym.top);
-    uint nsymbols = f.Flocsym.top;
-    if (nsymbols > globsym.symmax)
-    {   /* Reallocate globsym.tab[]     */
-        globsym.symmax = nsymbols;
-        globsym.tab = symtab_realloc(globsym.tab, globsym.symmax);
-    }
+    //printf("f.Flocsym.length = %d\n",f.Flocsym.length);
     debug debugy && printf("appending symbols to symtab...\n");
-    assert(globsym.top == 0);
-    memcpy(&globsym.tab[0],&f.Flocsym.tab[0],nsymbols * (Symbol *).sizeof);
-    globsym.top = nsymbols;
+    const nsymbols = f.Flocsym.length;
+    globsym.setLength(nsymbols);
+    foreach (si; 0 .. nsymbols)
+        globsym[si] = f.Flocsym[si];
 
     assert(startblock == null);
     if (f.Fflags & Finline)            // if keep function around
@@ -1225,15 +1242,15 @@ version (SCPP)
 }
 
     // TX86 computes parameter offsets in stackoffsets()
-    //printf("globsym.top = %d\n", globsym.top);
+    //printf("globsym.length = %d\n", globsym.length);
 
 version (SCPP)
 {
     FuncParamRegs fpr = FuncParamRegs_create(tyf);
 }
 
-    for (SYMIDX si = 0; si < globsym.top; si++)
-    {   Symbol *s = globsym.tab[si];
+    for (SYMIDX si = 0; si < globsym.length; si++)
+    {   Symbol *s = globsym[si];
 
         symbol_debug(s);
         //printf("symbol %d '%s'\n",si,s.Sident.ptr);
@@ -1308,10 +1325,8 @@ else
 
     bool addressOfParam = false;  // see if any parameters get their address taken
     bool anyasm = false;
-    numblks = 0;
     for (block *b = startblock; b; b = b.Bnext)
     {
-        numblks++;                              // redo count
         memset(&b._BLU,0,block.sizeof - block._BLU.offsetof);
         if (b.Belem)
         {   outelem(b.Belem, addressOfParam);
@@ -1340,22 +1355,22 @@ version (MARS)
     }
     PARSER = 0;
     if (eecontext.EEelem)
-    {   uint marksi = globsym.top;
-
+    {
+        const marksi = globsym.length;
         eecontext.EEin++;
         outelem(eecontext.EEelem, addressOfParam);
         eecontext.EEelem = doptelem(eecontext.EEelem,true);
         eecontext.EEin--;
         eecontext_convs(marksi);
     }
-    maxblks = 3 * numblks;              // allow for increase in # of blocks
+
     // If we took the address of one parameter, assume we took the
     // address of all non-register parameters.
     if (addressOfParam | anyasm)        // if took address of a parameter
     {
-        for (SYMIDX si = 0; si < globsym.top; si++)
-            if (anyasm || globsym.tab[si].Sclass == SCparameter)
-                globsym.tab[si].Sflags &= ~(SFLunambig | GTregcand);
+        for (SYMIDX si = 0; si < globsym.length; si++)
+            if (anyasm || globsym[si].Sclass == SCparameter)
+                globsym[si].Sflags &= ~(SFLunambig | GTregcand);
     }
 
     block_pred();                       // compute predecessors to blocks
@@ -1414,23 +1429,14 @@ version (SCPP)
             objmod.comdat(sfunc);
             cseg = sfunc.Sseg;
         }
-        else
-            if (config.flags & CFGsegs) // if user set switch for this
-            {
-version (SCPP)
-{
+        else if (config.flags & CFGsegs) // if user set switch for this
+        {
+            version (SCPP)
                 objmod.codeseg(cpp_mangle(funcsym_p),1);
-}
-else static if (TARGET_WINDOS)
-{
-                objmod.codeseg(cast(char*)cpp_mangle(funcsym_p),1);
-}
-else
-{
-                objmod.codeseg(funcsym_p.Sident.ptr, 1);
-}
+            else
+                objmod.codeseg(&funcsym_p.Sident[0], 1);
                                         // generate new code segment
-            }
+        }
         cod3_align(cseg);               // align start of function
 version (HTOD) { } else
 {
@@ -1552,16 +1558,19 @@ version (Win32)
         objmod.export_symbol(sfunc,cast(uint)Para.offset);      // export function definition
 
     if (config.fulltypes && config.fulltypes != CV8)
-        cv_func(sfunc);                 // debug info for function
+    {
+        if (config.objfmt == OBJ_OMF || config.objfmt == OBJ_MSCOFF)
+            cv_func(sfunc);                 // debug info for function
+    }
 
 version (MARS)
 {
     /* This is to make uplevel references to SCfastpar variables
      * from nested functions work.
      */
-    for (SYMIDX si = 0; si < globsym.top; si++)
+    for (SYMIDX si = 0; si < globsym.length; si++)
     {
-        Symbol *s = globsym.tab[si];
+        Symbol *s = globsym[si];
 
         switch (s.Sclass)
         {   case SCfastpar:
@@ -1612,9 +1621,9 @@ Ldone:
 version (SCPP)
 {
     // Free any added symbols
-    freesymtab(globsym.tab,nsymbols,globsym.top);
+    freesymtab(globsym[].ptr,nsymbols,globsym.length);
 }
-    globsym.top = 0;
+    globsym.setLength(0);
 
     //printf("done with writefunc()\n");
     //dfo.dtor();       // save allocation for next time

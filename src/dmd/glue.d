@@ -1,7 +1,7 @@
 /**
  * Generate the object file for function declarations and critical sections.
  *
- * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/glue.d, _glue.d)
@@ -32,6 +32,7 @@ import dmd.backend.obj;
 import dmd.backend.oper;
 import dmd.backend.outbuf;
 import dmd.backend.rtlsym;
+import dmd.backend.symtab;
 import dmd.backend.ty;
 import dmd.backend.type;
 
@@ -135,7 +136,7 @@ void obj_write_deferred(Library library)
         if (!m)
         {
             // it doesn't make sense to make up a module if we don't know where to put the symbol
-            //  so output it into it's own object file without ModuleInfo
+            //  so output it into its own object file without ModuleInfo
             objmod.initfile(idbuf.peekChars(), null, mname);
             toObjFile(s, false);
             objmod.termfile();
@@ -458,14 +459,14 @@ void genObjFile(Module m, bool multiobj)
         elem *ecov  = el_pair(TYdarray, el_long(TYsize_t, m.numlines), el_ptr(m.cov));
         elem *ebcov = el_pair(TYdarray, el_long(TYsize_t, m.numlines), el_ptr(bcov));
 
-        if (config.exe == EX_WIN64)
+        if (global.params.targetOS == TargetOS.Windows && global.params.is64bit)
         {
             ecov  = addressElem(ecov,  Type.tvoid.arrayOf(), false);
             ebcov = addressElem(ebcov, Type.tvoid.arrayOf(), false);
         }
 
         elem *efilename = toEfilename(m);
-        if (config.exe == EX_WIN64)
+        if (global.params.targetOS == TargetOS.Windows && global.params.is64bit)
             efilename = addressElem(efilename, Type.tstring, true);
 
         elem *e = el_params(
@@ -654,7 +655,7 @@ void FuncDeclaration_toObjFile(FuncDeclaration fd, bool multiobj)
         // Same as config.ehmethod==EH_NONE, but only for this function
         f.Fflags3 |= Feh_none;
 
-    s.Sclass = global.params.isOSX ? SCcomdat : SCglobal;
+    s.Sclass = global.params.targetOS == TargetOS.OSX ? SCcomdat : SCglobal;
     for (Dsymbol p = fd.parent; p; p = p.parent)
     {
         if (p.isTemplateInstance())
@@ -662,7 +663,7 @@ void FuncDeclaration_toObjFile(FuncDeclaration fd, bool multiobj)
             // functions without D or C++ name mangling mixed in at global scope
             // shouldn't have multiple definitions
             if (p.isTemplateMixin() && (fd.linkage == LINK.c || fd.linkage == LINK.windows ||
-                fd.linkage == LINK.pascal || fd.linkage == LINK.objc))
+                fd.linkage == LINK.objc))
             {
                 const q = p.toParent();
                 if (q && q.isModule())
@@ -874,7 +875,7 @@ void FuncDeclaration_toObjFile(FuncDeclaration fd, bool multiobj)
         {
             if (fpr.alloc(sp.Stype, sp.Stype.Tty, &sp.Spreg, &sp.Spreg2))
             {
-                sp.Sclass = (config.exe == EX_WIN64) ? SCshadowreg : SCfastpar;
+                sp.Sclass = (global.params.targetOS == TargetOS.Windows && global.params.is64bit) ? SCshadowreg : SCfastpar;
                 sp.Sfl = (sp.Sclass == SCshadowreg) ? FLpara : FLfast;
             }
         }
@@ -904,7 +905,7 @@ void FuncDeclaration_toObjFile(FuncDeclaration fd, bool multiobj)
     {
         // Declare va_argsave
         if (global.params.is64bit &&
-            !global.params.isWindows)
+            global.params.targetOS & TargetOS.Posix)
         {
             type *t = type_struct_class("__va_argsave_t", 16, 8 * 6 + 8 * 16 + 8 * 3, null, null, false, false, true, false);
             // The backend will pick this up by name
@@ -1128,7 +1129,7 @@ private void specialFunctions(Obj objmod, FuncDeclaration fd)
         {
             objmod.external_def("main");
         }
-        else if (config.exe == EX_WIN32)
+        else if (global.params.targetOS == TargetOS.Windows && !global.params.is64bit)
         {
             objmod.external_def("_main");
             objmod.external_def("__acrtused_con");
@@ -1152,14 +1153,14 @@ private void specialFunctions(Obj objmod, FuncDeclaration fd)
                 obj_includelib(global.params.mscrtlib);
             objmod.includelib("OLDNAMES");
         }
-        else if (config.exe == EX_WIN32)
+        else if (global.params.targetOS == TargetOS.Windows && !global.params.is64bit)
         {
             objmod.external_def("__acrtused_con");        // bring in C startup code
             objmod.includelib("snn.lib");          // bring in C runtime library
         }
         s.Sclass = SCglobal;
     }
-    else if (global.params.isWindows && fd.isWinMain() && onlyOneMain(fd.loc))
+    else if (global.params.targetOS == TargetOS.Windows && fd.isWinMain() && onlyOneMain(fd.loc))
     {
         if (global.params.mscoff)
         {
@@ -1178,7 +1179,7 @@ private void specialFunctions(Obj objmod, FuncDeclaration fd)
     }
 
     // Pull in RTL startup code
-    else if (global.params.isWindows && fd.isDllMain() && onlyOneMain(fd.loc))
+    else if (global.params.targetOS == TargetOS.Windows && fd.isDllMain() && onlyOneMain(fd.loc))
     {
         if (global.params.mscoff)
         {
@@ -1208,7 +1209,7 @@ private bool onlyOneMain(Loc loc)
         if (global.params.addMain)
             msg = ", -main switch added another `main()`";
         const(char)* otherMainNames = "";
-        if (config.exe == EX_WIN32 || config.exe == EX_WIN64)
+        if (global.params.targetOS == TargetOS.Windows)
             otherMainNames = ", `WinMain`, or `DllMain`";
         error(loc, "only one `main`%s allowed%s. Previously found `main` at %s",
             otherMainNames, msg, lastLoc.toChars());
@@ -1252,7 +1253,7 @@ tym_t totym(Type tx)
         case Tchar:     t = TYchar;     break;
         case Twchar:    t = TYwchar_t;  break;
         case Tdchar:
-            t = (global.params.symdebug == 1 || !global.params.isWindows) ? TYdchar : TYulong;
+            t = (global.params.symdebug == 1 || global.params.targetOS & TargetOS.Posix) ? TYdchar : TYulong;
             break;
 
         case Taarray:   t = TYaarray;   break;
@@ -1262,6 +1263,7 @@ tym_t totym(Type tx)
         case Tdelegate: t = TYdelegate; break;
         case Tarray:    t = TYdarray;   break;
         case Tsarray:   t = TYstruct;   break;
+        case Tnoreturn: t = TYvoid;     break;
 
         case Tstruct:
             t = TYstruct;
@@ -1277,6 +1279,12 @@ tym_t totym(Type tx)
                 t = tb.ty == Tuns32 ? TYulong : TYullong;
             else if (id == Id.__c_long_double)
                 t = TYdouble;
+            else if (id == Id.__c_complex_float)
+                t = TYcfloat;
+            else if (id == Id.__c_complex_double)
+                t = TYcdouble;
+            else if (id == Id.__c_complex_real)
+                t = TYcldouble;
             else
                 t = totym(tb);
             break;
@@ -1329,15 +1337,11 @@ tym_t totym(Type tx)
                     t = (tf.parameterList.varargs == VarArg.variadic) ? TYnfunc : TYnsfunc;
                     break;
 
-                case LINK.pascal:
-                    t = (tf.parameterList.varargs == VarArg.variadic) ? TYnfunc : TYnpfunc;
-                    break;
-
                 case LINK.c:
                 case LINK.cpp:
                 case LINK.objc:
                     t = TYnfunc;
-                    if (global.params.isWindows)
+                    if (global.params.targetOS == TargetOS.Windows)
                     {
                     }
                     else if (!global.params.is64bit && retStyle(tf, false) == RET.stack)

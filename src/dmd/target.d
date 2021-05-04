@@ -15,7 +15,7 @@
  * - $(LINK2 https://github.com/ldc-developers/ldc, LDC repository)
  * - $(LINK2 https://github.com/D-Programming-GDC/gcc, GDC repository)
  *
- * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/target.d, _target.d)
@@ -113,11 +113,15 @@ extern (C++) struct Target
 
     private Type tvalist; // cached lazy result of va_listType()
 
+    private const(Param)* params;  // cached reference to global.params
+
     /**
      * Initialize the Target
      */
     extern (C++) void _init(ref const Param params)
     {
+        this.params = &params;
+
         FloatProperties.initialize();
         DoubleProperties.initialize();
         RealProperties.initialize();
@@ -140,19 +144,19 @@ extern (C++) struct Target
             ptrsize = 8;
             classinfosize = 0x98; // 152
         }
-        if (params.isLinux || params.isFreeBSD || params.isOpenBSD || params.isDragonFlyBSD || params.isSolaris)
+        if (params.targetOS & (TargetOS.linux | TargetOS.FreeBSD | TargetOS.OpenBSD | TargetOS.DragonFlyBSD | TargetOS.Solaris))
         {
             realsize = 12;
             realpad = 2;
             realalignsize = 4;
         }
-        else if (params.isOSX)
+        else if (params.targetOS == TargetOS.OSX)
         {
             realsize = 16;
             realpad = 6;
             realalignsize = 16;
         }
-        else if (params.isWindows)
+        else if (params.targetOS == TargetOS.Windows)
         {
             realsize = 10;
             realpad = 0;
@@ -169,7 +173,7 @@ extern (C++) struct Target
             assert(0);
         if (params.is64bit)
         {
-            if (params.isLinux || params.isFreeBSD || params.isDragonFlyBSD || params.isSolaris)
+            if (params.targetOS & (TargetOS.linux | TargetOS.FreeBSD | TargetOS.DragonFlyBSD | TargetOS.Solaris))
             {
                 realsize = 16;
                 realpad = 6;
@@ -215,8 +219,7 @@ extern (C++) struct Target
         case Tcomplex80:
             return target.realalignsize;
         case Tcomplex32:
-            if (global.params.isLinux || global.params.isOSX || global.params.isFreeBSD || global.params.isOpenBSD ||
-                global.params.isDragonFlyBSD || global.params.isSolaris)
+            if (params.targetOS & TargetOS.Posix)
                 return 4;
             break;
         case Tint64:
@@ -224,9 +227,8 @@ extern (C++) struct Target
         case Tfloat64:
         case Timaginary64:
         case Tcomplex64:
-            if (global.params.isLinux || global.params.isOSX || global.params.isFreeBSD || global.params.isOpenBSD ||
-                global.params.isDragonFlyBSD || global.params.isSolaris)
-                return global.params.is64bit ? 8 : 4;
+            if (params.targetOS & TargetOS.Posix)
+                return params.is64bit ? 8 : 4;
             break;
         default:
             break;
@@ -245,20 +247,10 @@ extern (C++) struct Target
     {
         const size = type.alignsize();
 
-        if ((global.params.is64bit || global.params.isOSX) && (size == 16 || size == 32))
+        if ((params.is64bit || params.targetOS == TargetOS.OSX) && (size == 16 || size == 32))
             return size;
 
         return (8 < size) ? 8 : size;
-    }
-
-    /**
-     * Size of the target OS critical section.
-     * Returns:
-     *      size in bytes
-     */
-    extern (C++) uint critsecsize()
-    {
-        return c.criticalSectionSize;
     }
 
     /**
@@ -274,14 +266,13 @@ extern (C++) struct Target
         if (tvalist)
             return tvalist;
 
-        if (global.params.isWindows)
+        if (params.targetOS == TargetOS.Windows)
         {
             tvalist = Type.tchar.pointerTo();
         }
-        else if (global.params.isLinux        || global.params.isFreeBSD || global.params.isOpenBSD ||
-                 global.params.isDragonFlyBSD || global.params.isSolaris || global.params.isOSX)
+        else if (params.targetOS & TargetOS.Posix)
         {
-            if (global.params.is64bit)
+            if (params.is64bit)
             {
                 tvalist = new TypeIdentifier(Loc.initial, Identifier.idPool("__va_list_tag")).pointerTo();
                 tvalist = typeSemantic(tvalist, loc, sc);
@@ -341,7 +332,7 @@ extern (C++) struct Target
             case Tint32:
             case Tuns32:
             case Tfloat32:
-                if (global.params.cpu < CPU.sse)
+                if (params.cpu < CPU.sse)
                     return 3; // no SSE vector support
                 break;
 
@@ -353,14 +344,14 @@ extern (C++) struct Target
             case Tint64:
             case Tuns64:
             case Tfloat64:
-                if (global.params.cpu < CPU.sse2)
+                if (params.cpu < CPU.sse2)
                     return 3; // no SSE2 vector support
                 break;
             }
         }
         else if (sz == 32)
         {
-            if (global.params.cpu < CPU.avx)
+            if (params.cpu < CPU.avx)
                 return 3; // no AVX vector support
         }
         else
@@ -404,22 +395,22 @@ extern (C++) struct Target
             if (vecsize == 16)
             {
                 // float[4] negate needs SSE support ({V}SUBPS)
-                if (elemty == Tfloat32 && global.params.cpu >= CPU.sse)
+                if (elemty == Tfloat32 && params.cpu >= CPU.sse)
                     supported = true;
                 // double[2] negate needs SSE2 support ({V}SUBPD)
-                else if (elemty == Tfloat64 && global.params.cpu >= CPU.sse2)
+                else if (elemty == Tfloat64 && params.cpu >= CPU.sse2)
                     supported = true;
                 // (u)byte[16]/short[8]/int[4]/long[2] negate needs SSE2 support ({V}PSUB[BWDQ])
-                else if (tvec.isintegral() && global.params.cpu >= CPU.sse2)
+                else if (tvec.isintegral() && params.cpu >= CPU.sse2)
                     supported = true;
             }
             else if (vecsize == 32)
             {
                 // float[8]/double[4] negate needs AVX support (VSUBP[SD])
-                if (tvec.isfloating() && global.params.cpu >= CPU.avx)
+                if (tvec.isfloating() && params.cpu >= CPU.avx)
                     supported = true;
                 // (u)byte[32]/short[16]/int[8]/long[4] negate needs AVX2 support (VPSUB[BWDQ])
-                else if (tvec.isintegral() && global.params.cpu >= CPU.avx2)
+                else if (tvec.isintegral() && params.cpu >= CPU.avx2)
                     supported = true;
             }
             break;
@@ -436,22 +427,22 @@ extern (C++) struct Target
             if (vecsize == 16)
             {
                 // float[4] add/sub needs SSE support ({V}ADDPS, {V}SUBPS)
-                if (elemty == Tfloat32 && global.params.cpu >= CPU.sse)
+                if (elemty == Tfloat32 && params.cpu >= CPU.sse)
                     supported = true;
                 // double[2] add/sub needs SSE2 support ({V}ADDPD, {V}SUBPD)
-                else if (elemty == Tfloat64 && global.params.cpu >= CPU.sse2)
+                else if (elemty == Tfloat64 && params.cpu >= CPU.sse2)
                     supported = true;
                 // (u)byte[16]/short[8]/int[4]/long[2] add/sub needs SSE2 support ({V}PADD[BWDQ], {V}PSUB[BWDQ])
-                else if (tvec.isintegral() && global.params.cpu >= CPU.sse2)
+                else if (tvec.isintegral() && params.cpu >= CPU.sse2)
                     supported = true;
             }
             else if (vecsize == 32)
             {
                 // float[8]/double[4] add/sub needs AVX support (VADDP[SD], VSUBP[SD])
-                if (tvec.isfloating() && global.params.cpu >= CPU.avx)
+                if (tvec.isfloating() && params.cpu >= CPU.avx)
                     supported = true;
                 // (u)byte[32]/short[16]/int[8]/long[4] add/sub needs AVX2 support (VPADD[BWDQ], VPSUB[BWDQ])
-                else if (tvec.isintegral() && global.params.cpu >= CPU.avx2)
+                else if (tvec.isintegral() && params.cpu >= CPU.avx2)
                     supported = true;
             }
             break;
@@ -460,28 +451,28 @@ extern (C++) struct Target
             if (vecsize == 16)
             {
                 // float[4] multiply needs SSE support ({V}MULPS)
-                if (elemty == Tfloat32 && global.params.cpu >= CPU.sse)
+                if (elemty == Tfloat32 && params.cpu >= CPU.sse)
                     supported = true;
                 // double[2] multiply needs SSE2 support ({V}MULPD)
-                else if (elemty == Tfloat64 && global.params.cpu >= CPU.sse2)
+                else if (elemty == Tfloat64 && params.cpu >= CPU.sse2)
                     supported = true;
                 // (u)short[8] multiply needs SSE2 support ({V}PMULLW)
-                else if ((elemty == Tint16 || elemty == Tuns16) && global.params.cpu >= CPU.sse2)
+                else if ((elemty == Tint16 || elemty == Tuns16) && params.cpu >= CPU.sse2)
                     supported = true;
                 // (u)int[4] multiply needs SSE4.1 support ({V}PMULLD)
-                else if ((elemty == Tint32 || elemty == Tuns32) && global.params.cpu >= CPU.sse4_1)
+                else if ((elemty == Tint32 || elemty == Tuns32) && params.cpu >= CPU.sse4_1)
                     supported = true;
             }
             else if (vecsize == 32)
             {
                 // float[8]/double[4] multiply needs AVX support (VMULP[SD])
-                if (tvec.isfloating() && global.params.cpu >= CPU.avx)
+                if (tvec.isfloating() && params.cpu >= CPU.avx)
                     supported = true;
                 // (u)short[16] multiply needs AVX2 support (VPMULLW)
-                else if ((elemty == Tint16 || elemty == Tuns16) && global.params.cpu >= CPU.avx2)
+                else if ((elemty == Tint16 || elemty == Tuns16) && params.cpu >= CPU.avx2)
                     supported = true;
                 // (u)int[8] multiply needs AVX2 support (VPMULLD)
-                else if ((elemty == Tint32 || elemty == Tuns32) && global.params.cpu >= CPU.avx2)
+                else if ((elemty == Tint32 || elemty == Tuns32) && params.cpu >= CPU.avx2)
                     supported = true;
             }
             break;
@@ -490,16 +481,16 @@ extern (C++) struct Target
             if (vecsize == 16)
             {
                 // float[4] divide needs SSE support ({V}DIVPS)
-                if (elemty == Tfloat32 && global.params.cpu >= CPU.sse)
+                if (elemty == Tfloat32 && params.cpu >= CPU.sse)
                     supported = true;
                 // double[2] divide needs SSE2 support ({V}DIVPD)
-                else if (elemty == Tfloat64 && global.params.cpu >= CPU.sse2)
+                else if (elemty == Tfloat64 && params.cpu >= CPU.sse2)
                     supported = true;
             }
             else if (vecsize == 32)
             {
                 // float[8]/double[4] multiply needs AVX support (VDIVP[SD])
-                if (tvec.isfloating() && global.params.cpu >= CPU.avx)
+                if (tvec.isfloating() && params.cpu >= CPU.avx)
                     supported = true;
             }
             break;
@@ -510,10 +501,10 @@ extern (C++) struct Target
 
         case TOK.and, TOK.andAssign, TOK.or, TOK.orAssign, TOK.xor, TOK.xorAssign:
             // (u)byte[16]/short[8]/int[4]/long[2] bitwise ops needs SSE2 support ({V}PAND, {V}POR, {V}PXOR)
-            if (vecsize == 16 && tvec.isintegral() && global.params.cpu >= CPU.sse2)
+            if (vecsize == 16 && tvec.isintegral() && params.cpu >= CPU.sse2)
                 supported = true;
             // (u)byte[32]/short[16]/int[8]/long[4] bitwise ops needs AVX2 support (VPAND, VPOR, VPXOR)
-            else if (vecsize == 32 && tvec.isintegral() && global.params.cpu >= CPU.avx2)
+            else if (vecsize == 32 && tvec.isintegral() && params.cpu >= CPU.avx2)
                 supported = true;
             break;
 
@@ -523,10 +514,10 @@ extern (C++) struct Target
 
         case TOK.tilde:
             // (u)byte[16]/short[8]/int[4]/long[2] logical exclusive needs SSE2 support ({V}PXOR)
-            if (vecsize == 16 && tvec.isintegral() && global.params.cpu >= CPU.sse2)
+            if (vecsize == 16 && tvec.isintegral() && params.cpu >= CPU.sse2)
                 supported = true;
             // (u)byte[32]/short[16]/int[8]/long[4] logical exclusive needs AVX2 support (VPXOR)
-            else if (vecsize == 32 && tvec.isintegral() && global.params.cpu >= CPU.avx2)
+            else if (vecsize == 32 && tvec.isintegral() && params.cpu >= CPU.avx2)
                 supported = true;
             break;
 
@@ -549,7 +540,7 @@ extern (C++) struct Target
      */
     extern (C++) LINK systemLinkage()
     {
-        return global.params.isWindows ? LINK.windows : LINK.c;
+        return params.targetOS == TargetOS.Windows ? LINK.windows : LINK.c;
     }
 
     /**
@@ -563,7 +554,7 @@ extern (C++) struct Target
      */
     extern (C++) TypeTuple toArgTypes(Type t)
     {
-        if (global.params.is64bit)
+        if (params.is64bit)
         {
             // no argTypes for Win64 yet
             return isPOSIX ? toArgTypes_sysv_x64(t) : null;
@@ -588,12 +579,26 @@ extern (C++) struct Target
             return false;                 // returns a pointer
         }
 
-        Type tn = tf.next.toBasetype();
+        Type tn = tf.next;
+        if (auto te = tn.isTypeEnum())
+        {
+            if (te.sym.isSpecial())
+            {
+                // Special enums with target-specific return style
+                if (te.sym.ident == Id.__c_complex_float)
+                    tn = Type.tcomplex32.castMod(tn.mod);
+                else if (te.sym.ident == Id.__c_complex_double)
+                    tn = Type.tcomplex64.castMod(tn.mod);
+                else if (te.sym.ident == Id.__c_complex_real)
+                    tn = Type.tcomplex80.castMod(tn.mod);
+            }
+        }
+        tn = tn.toBasetype();
         //printf("tn = %s\n", tn.toChars());
         d_uns64 sz = tn.size();
         Type tns = tn;
 
-        if (global.params.isWindows && global.params.is64bit)
+        if (params.targetOS == TargetOS.Windows && params.is64bit)
         {
             // http://msdn.microsoft.com/en-us/library/7572ztz4.aspx
             if (tns.ty == Tcomplex32)
@@ -616,7 +621,7 @@ extern (C++) struct Target
                 return false;
             return true;
         }
-        else if (global.params.isWindows && global.params.mscoff)
+        else if (params.targetOS == TargetOS.Windows && params.mscoff)
         {
             Type tb = tns.baseElemOf();
             if (tb.ty == Tstruct)
@@ -625,7 +630,7 @@ extern (C++) struct Target
                     return true;
             }
         }
-        else if (global.params.is64bit && isPOSIX)
+        else if (params.is64bit && isPOSIX)
         {
             TypeTuple tt = .toArgTypes_sysv_x64(tn);
             if (!tt)
@@ -641,7 +646,7 @@ extern (C++) struct Target
             if (tns.ty != Tstruct)
             {
     L2:
-                if (global.params.isLinux && tf.linkage != LINK.d && !global.params.is64bit)
+                if (params.targetOS == TargetOS.linux && tf.linkage != LINK.d && !params.is64bit)
                 {
                                                     // 32 bit C/C++ structs always on stack
                 }
@@ -668,12 +673,12 @@ extern (C++) struct Target
         if (tns.ty == Tstruct)
         {
             StructDeclaration sd = (cast(TypeStruct)tns).sym;
-            if (global.params.isLinux && tf.linkage != LINK.d && !global.params.is64bit)
+            if (params.targetOS == TargetOS.linux && tf.linkage != LINK.d && !params.is64bit)
             {
                 //printf("  2 true\n");
                 return true;            // 32 bit C/C++ structs always on stack
             }
-            if (global.params.isWindows && tf.linkage == LINK.cpp && !global.params.is64bit &&
+            if (params.targetOS == TargetOS.Windows && tf.linkage == LINK.cpp && !params.is64bit &&
                      sd.isPOD() && sd.ctor)
             {
                 // win32 returns otherwise POD structs with ctors via memory
@@ -686,7 +691,7 @@ extern (C++) struct Target
                     goto L2;
                 goto Lagain;
             }
-            else if (global.params.is64bit && sd.numArgTypes() == 0)
+            else if (params.is64bit && sd.numArgTypes() == 0)
                 return true;
             else if (sd.isPOD())
             {
@@ -700,7 +705,7 @@ extern (C++) struct Target
                         return false;     // return small structs in regs
                                             // (not 3 byte structs!)
                     case 16:
-                        if (!global.params.isWindows && global.params.is64bit)
+                        if (params.targetOS & TargetOS.Posix && params.is64bit)
                            return false;
                         break;
 
@@ -711,10 +716,8 @@ extern (C++) struct Target
             //printf("  3 true\n");
             return true;
         }
-        else if ((global.params.isLinux || global.params.isOSX ||
-                  global.params.isFreeBSD || global.params.isSolaris ||
-                  global.params.isDragonFlyBSD) &&
-                 tf.linkage == LINK.c &&
+        else if (params.targetOS & TargetOS.Posix &&
+                 (tf.linkage == LINK.c || tf.linkage == LINK.cpp) &&
                  tns.iscomplex())
         {
             if (tns.ty == Tcomplex32)
@@ -722,9 +725,9 @@ extern (C++) struct Target
             else
                 return true;
         }
-        else if (global.params.isWindows &&
-                 !global.params.is64bit &&
-                 (tf.linkage == LINK.cpp || tf.linkage == LINK.pascal) &&
+        else if (params.targetOS == TargetOS.Windows &&
+                 !params.is64bit &&
+                 tf.linkage == LINK.cpp &&
                  tf.isfloating())
         {
             /* See DMC++ function exp2_retmethod()
@@ -751,8 +754,8 @@ extern (C++) struct Target
      */
     extern (C++) ulong parameterSize(const ref Loc loc, Type t)
     {
-        if (!global.params.is64bit &&
-            (global.params.isFreeBSD || global.params.isOSX))
+        if (!params.is64bit &&
+            (params.targetOS & (TargetOS.FreeBSD | TargetOS.OSX)))
         {
             /* These platforms use clang, which regards a struct
              * with size 0 as being of size 0 on the parameter stack,
@@ -767,63 +770,64 @@ extern (C++) struct Target
             }
         }
         const sz = t.size(loc);
-        return global.params.is64bit ? (sz + 7) & ~7 : (sz + 3) & ~3;
+        return params.is64bit ? (sz + 7) & ~7 : (sz + 3) & ~3;
     }
 
     /**
-     * Determine which `in` parameters needs to be passed by `ref`
-     *
-     * Called from `TypeFunction` semantic with the full function type.
-     * This routine must iterate over parameters, and may set `STC.ref_`
-     * for any parameter which already have `STC.in_`.
-     * This hook must never set `STC.ref_` if the parameter is not `STC.in_`,
-     * nor should it ever change anything else.
-     *
-     * This hook will not be called when `-preview=in` wasn't passed to the
-     * frontend, hence it needs not care about `global.params.previewIn`.
-     *
+     * Decides whether an `in` parameter of the specified POD type is to be
+     * passed by reference or by value. To be used with `-preview=in` only!
      * Params:
-     *   tf    = Type of the function to inspect. The type will have its
-     *           parameter types semantically resolved, however other attributes
-     *           (return type, `@safe` / `nothrow`, etc...) must not be used.
+     *  t = type of the `in` parameter, must be a POD
+     * Returns:
+     *  `true` if the `in` parameter is to be passed by reference
      */
-    extern(C++) void applyInRefParams (TypeFunction tf)
+    extern (C++) bool preferPassByRef(Type t)
     {
-        foreach (_idx, p; tf.parameterList)
+        const size = t.size();
+        if (global.params.is64bit)
         {
-            // Ignore non-`in` or already-`ref` parameters
-            if ((p.storageClass & (STC.in_ | STC.ref_)) != STC.in_)
-                continue;
-
-            assert(p.type !is null);
-            // If it has a copy constructor / destructor / postblit,
-            // it is always by ref
-            if (p.type.needsDestruction() || p.type.needsCopyOrPostblit())
-                p.storageClass |= STC.ref_;
-            // If the type can't be copied, always by `ref`
-            else if (!p.type.isCopyable())
-                p.storageClass |= STC.ref_;
-            // The Win64 ABI requires x87 real to be passed by ref
-            else if (global.params.isWindows && global.params.is64bit &&
-                     p.type.ty == Tfloat80)
-                p.storageClass |= STC.ref_;
-
-            // If it's a dynamic array, use the value type as it
-            // allows covariance between `in char[]` and `scope const(char)[]`
-            // The same reasoning applies to pointers and classes,
-            // but that is handled by the `(sz > 8)` below.
-            else if (p.type.ty == Tarray)
-                continue;
-            // Pass delegates by value to allow covariance
-            // Function pointers are a single pointers and handled below.
-            else if (p.type.ty == Tdelegate)
-                continue;
-            else
+            if (global.params.targetOS == TargetOS.Windows)
             {
-                const sz = p.type.size();
-                if (global.params.is64bit ? (sz > 16) : (sz > 8))
-                    p.storageClass |= STC.ref_;
+                // Win64 special case: by-value for slices and delegates due to
+                // high number of usages in druntime/Phobos (compiled without
+                // -preview=in but supposed to link against -preview=in code)
+                const ty = t.toBasetype().ty;
+                if (ty == Tarray || ty == Tdelegate)
+                    return false;
+
+                // If size is larger than 8 or not a power-of-2, the Win64 ABI
+                // would require a hidden reference anyway.
+                return size > 8
+                    || (size > 0 && (size & (size - 1)) != 0);
             }
+            else // SysV x86_64 ABI
+            {
+                // Prefer a ref if the POD cannot be passed in registers, i.e.,
+                // would be passed on the stack, *and* the size is > 16.
+                if (size <= 16)
+                    return false;
+
+                TypeTuple getArgTypes()
+                {
+                    import dmd.aggregate : Sizeok;
+                    if (auto ts = t.toBasetype().isTypeStruct())
+                    {
+                        auto sd = ts.sym;
+                        assert(sd.sizeok == Sizeok.done);
+                        return sd.argTypes;
+                    }
+                    return toArgTypes(t);
+                }
+
+                TypeTuple argTypes = getArgTypes();
+                assert(argTypes !is null, "size == 0 should already be handled");
+                return argTypes.arguments.length == 0; // cannot be passed in registers
+            }
+        }
+        else // 32-bit x86 ABI
+        {
+            // Prefer a ref if the size is > 2 machine words.
+            return size > 8;
         }
     }
 
@@ -854,28 +858,42 @@ extern (C++) struct Target
         switch (name.toDString) with (TargetInfoKeys)
         {
             case objectFormat.stringof:
-                if (global.params.isWindows)
-                    return stringExp(global.params.mscoff ? "coff" : "omf");
-                else if (global.params.isOSX)
+                if (params.targetOS == TargetOS.Windows)
+                    return stringExp(params.mscoff ? "coff" : "omf");
+                else if (params.targetOS == TargetOS.OSX)
                     return stringExp("macho");
                 else
                     return stringExp("elf");
             case floatAbi.stringof:
                 return stringExp("hard");
             case cppRuntimeLibrary.stringof:
-                if (global.params.isWindows)
+                if (params.targetOS == TargetOS.Windows)
                 {
-                    if (global.params.mscoff)
-                        return stringExp(global.params.mscrtlib);
+                    if (params.mscoff)
+                        return stringExp(params.mscrtlib);
                     return stringExp("snn");
                 }
                 return stringExp("");
             case cppStd.stringof:
-                return new IntegerExp(global.params.cplusplus);
+                return new IntegerExp(params.cplusplus);
 
             default:
                 return null;
         }
+    }
+
+    /**
+     * Params:
+     *  tf = type of function being called
+     * Returns: `true` if the callee invokes destructors for arguments.
+     */
+    extern (C++) bool isCalleeDestroyingArgs(TypeFunction tf)
+    {
+        // On windows, the callee destroys arguments always regardless of function linkage,
+        // and regardless of whether the caller or callee cleans the stack.
+        return params.targetOS == TargetOS.Windows ||
+               // C++ on non-Windows platforms has the caller destroying the arguments
+               tf.linkage != LINK.cpp;
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -889,7 +907,7 @@ extern (C++) struct Target
      */
     extern (D) bool isXmmSupported()
     {
-        return global.params.is64bit || global.params.isOSX;
+        return global.params.is64bit || global.params.targetOS == TargetOS.OSX;
     }
 
     /**
@@ -897,15 +915,29 @@ extern (C++) struct Target
      *  true if generating code for POSIX
      */
     extern (D) @property bool isPOSIX() scope const nothrow @nogc
-    out(result) { assert(result || global.params.isWindows); }
+    out(result) { assert(result || params.targetOS == TargetOS.Windows); }
     do
     {
-        return global.params.isLinux
-            || global.params.isOSX
-            || global.params.isFreeBSD
-            || global.params.isOpenBSD
-            || global.params.isDragonFlyBSD
-            || global.params.isSolaris;
+        return (params.targetOS & TargetOS.Posix) != 0;
+    }
+
+    /**
+     * Returns:
+     *  FreeBSD major version string being targeted.
+     */
+    extern (D) @property string FreeBSDMajor() scope const nothrow @nogc
+    in { assert(params.targetOS == TargetOS.FreeBSD); }
+    do
+    {
+        // FIXME: Need better a way to statically set the major FreeBSD version?
+             version (TARGET_FREEBSD12) return "12";
+        else version (TARGET_FREEBSD11) return "11";
+        else version (TARGET_FREEBSD10) return "10";
+        else version (FreeBSD_12)       return "12";
+        else version (FreeBSD_11)       return "11";
+        else version (FreeBSD_10)       return "10";
+        // FIXME: Need a way to dynamically set the major FreeBSD version?
+        else /* default supported */    return "11";
     }
 }
 
@@ -917,74 +949,28 @@ struct TargetC
 {
     uint longsize;            /// size of a C `long` or `unsigned long` type
     uint long_doublesize;     /// size of a C `long double`
-    uint criticalSectionSize; /// size of os critical section
 
     extern (D) void initialize(ref const Param params, ref const Target target)
     {
-        if (params.isLinux || params.isFreeBSD || params.isOpenBSD || params.isDragonFlyBSD || params.isSolaris)
+        if (params.targetOS & (TargetOS.linux | TargetOS.FreeBSD | TargetOS.OpenBSD | TargetOS.DragonFlyBSD | TargetOS.Solaris))
             longsize = 4;
-        else if (params.isOSX)
+        else if (params.targetOS == TargetOS.OSX)
             longsize = 4;
-        else if (params.isWindows)
+        else if (params.targetOS == TargetOS.Windows)
             longsize = 4;
         else
             assert(0);
         if (params.is64bit)
         {
-            if (params.isLinux || params.isFreeBSD || params.isDragonFlyBSD || params.isSolaris)
+            if (params.targetOS & (TargetOS.linux | TargetOS.FreeBSD | TargetOS.DragonFlyBSD | TargetOS.Solaris))
                 longsize = 8;
-            else if (params.isOSX)
+            else if (params.targetOS == TargetOS.OSX)
                 longsize = 8;
         }
-        if (params.is64bit && params.isWindows)
+        if (params.is64bit && params.targetOS == TargetOS.Windows)
             long_doublesize = 8;
         else
             long_doublesize = target.realsize;
-
-        criticalSectionSize = getCriticalSectionSize(params);
-    }
-
-    private static uint getCriticalSectionSize(ref const Param params) pure
-    {
-        if (params.isWindows)
-        {
-            // sizeof(CRITICAL_SECTION) for Windows.
-            return params.isLP64 ? 40 : 24;
-        }
-        else if (params.isLinux)
-        {
-            // sizeof(pthread_mutex_t) for Linux.
-            if (params.is64bit)
-                return params.isLP64 ? 40 : 32;
-            else
-                return params.isLP64 ? 40 : 24;
-        }
-        else if (params.isFreeBSD)
-        {
-            // sizeof(pthread_mutex_t) for FreeBSD.
-            return params.isLP64 ? 8 : 4;
-        }
-        else if (params.isOpenBSD)
-        {
-            // sizeof(pthread_mutex_t) for OpenBSD.
-            return params.isLP64 ? 8 : 4;
-        }
-        else if (params.isDragonFlyBSD)
-        {
-            // sizeof(pthread_mutex_t) for DragonFlyBSD.
-            return params.isLP64 ? 8 : 4;
-        }
-        else if (params.isOSX)
-        {
-            // sizeof(pthread_mutex_t) for OSX.
-            return params.isLP64 ? 64 : 44;
-        }
-        else if (params.isSolaris)
-        {
-            // sizeof(pthread_mutex_t) for Solaris.
-            return 24;
-        }
-        assert(0);
     }
 }
 
@@ -1000,16 +986,15 @@ struct TargetCPP
 
     extern (D) void initialize(ref const Param params, ref const Target target)
     {
-        if (params.isLinux || params.isFreeBSD || params.isOpenBSD || params.isDragonFlyBSD || params.isSolaris)
+        if (params.targetOS & (TargetOS.linux | TargetOS.FreeBSD | TargetOS.OpenBSD | TargetOS.DragonFlyBSD | TargetOS.Solaris))
             twoDtorInVtable = true;
-        else if (params.isOSX)
+        else if (params.targetOS == TargetOS.OSX)
             twoDtorInVtable = true;
-        else if (params.isWindows)
+        else if (params.targetOS == TargetOS.Windows)
             reverseOverloads = true;
         else
             assert(0);
-        exceptions = params.isLinux || params.isFreeBSD ||
-            params.isDragonFlyBSD || params.isOSX;
+        exceptions = (params.targetOS & TargetOS.Posix) != 0;
     }
 
     /**
@@ -1044,6 +1029,20 @@ struct TargetCPP
             return cppTypeInfoMangleMSVC(cd);
         else
             static assert(0, "fix this");
+    }
+
+    /**
+     * Get mangle name of a this-adjusting thunk to the given function
+     * declaration for C++ ABI.
+     * Params:
+     *      fd = function with C++ linkage
+     *      offset = call offset to the vptr
+     * Returns:
+     *      string mangling of C++ thunk, or null if unhandled
+     */
+    extern (C++) const(char)* thunkMangle(FuncDeclaration fd, int offset)
+    {
+        return null;
     }
 
     /**
@@ -1106,7 +1105,7 @@ struct TargetObjC
 
     extern (D) void initialize(ref const Param params, ref const Target target)
     {
-        if (params.isOSX && params.is64bit)
+        if (params.targetOS == TargetOS.OSX && params.is64bit)
             supported = true;
     }
 }

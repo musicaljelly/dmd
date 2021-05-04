@@ -6,7 +6,7 @@
  * i.e. rewriting trees to less expensive trees.
  *
  * Copyright:   Copyright (C) 1985-1998 by Symantec
- *              Copyright (C) 2000-2020 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/cgelem.d, backend/cgelem.d)
@@ -37,6 +37,7 @@ import dmd.backend.goh;
 import dmd.backend.el;
 import dmd.backend.outbuf;
 import dmd.backend.rtlsym;
+import dmd.backend.symtab;
 import dmd.backend.ty;
 import dmd.backend.type;
 
@@ -419,7 +420,7 @@ private elem *fixconvop(elem *e)
         OPu64_d,        // OPld_u64
     ];
 
-    //print("fixconvop before\n");
+    //printf("fixconvop before\n");
     //elem_print(e);
     assert(invconvtab.length == CNVOPMAX - CNVOPMIN + 1);
     assert(e);
@@ -427,16 +428,25 @@ private elem *fixconvop(elem *e)
     const cop = e.EV.E1.Eoper;             /* the conversion operator      */
     assert(cop <= CNVOPMAX);
 
-    if (e.EV.E1.EV.E1.Eoper == OPcomma)
-    {   /* conv(a,b) op= e2
-         *   =>
-         * a, (conv(b) op= e2)
+    elem *econv = e.EV.E1;
+    while (OTconv(econv.Eoper))
+    {
+        if (econv.EV.E1.Eoper != OPcomma)
+        {
+            econv = econv.EV.E1;
+            continue;
+        }
+        /* conv(a,b) op= e2     or     conv(conv(a,b)) op= e2
+         *   =>                 many:    =>
+         * a, (conv(b) op= e2)         a, (conv(conv(b)) op= e2)
          */
-        elem *ecomma = e.EV.E1.EV.E1;
-        e.EV.E1.EV.E1 = ecomma.EV.E2;
-        e.EV.E1.EV.E1.Ety = ecomma.Ety;
+        elem *ecomma = econv.EV.E1;
+        econv.EV.E1 = ecomma.EV.E2;
+        econv.EV.E1.Ety = ecomma.Ety;
         ecomma.EV.E2 = e;
         ecomma.Ety = e.Ety;
+        //printf("fixconvop comma\n");
+        //elem_print(ecomma);
         return optelem(ecomma, GOALvalue);
     }
 
@@ -467,7 +477,7 @@ private elem *fixconvop(elem *e)
              cop == OPu8_16 || cop == OPs8_16))
     {   if (e.Eoper != OPshlass && e.Eoper != OPshrass && e.Eoper != OPashrass)
             e.EV.E2 = el_una(icop,tym,e2);
-        //print("after1\n");
+        //printf("after1\n");
         //elem_print(e);
         return e;
     }
@@ -537,7 +547,7 @@ private elem *fixconvop(elem *e)
 
         ed = ed.EV.E1;
     }
-    //print("after2\n");
+    //printf("after2\n");
     //elem_print(e);
 
     e.Ety = tym;
@@ -561,7 +571,7 @@ private elem *fixconvop(elem *e)
         el_free(e1.EV.E1);
         e1.EV.E1 = el_copytree(T);
     }
-    //print("after3\n");
+    //printf("after3\n");
     //elem_print(e);
     return e;
 }
@@ -990,7 +1000,8 @@ L1:
         return e;
     }
     // Replace (e + e) with (e * 2)
-    else if (el_match(e1,e2) && !el_sideeffect(e1) && !tyfloating(e1.Ety))
+    else if (el_match(e1,e2) && !el_sideeffect(e1) && !tyfloating(e1.Ety) &&
+        !tyvector(e1.Ety))      // not all CPUs support XMM multiply
     {
         e.Eoper = OPmul;
         el_free(e2);
@@ -4875,7 +4886,7 @@ private elem * el64_32(elem *e, goal_t goal)
         break;
 
     case OPmul:
-        static if (TARGET_OSX) // https://issues.dlang.org/show_bug.cgi?id=21047
+        if (config.exe & (EX_OSX | EX_OSX64)) // https://issues.dlang.org/show_bug.cgi?id=21047
             break;
         else
             goto case;
@@ -5334,9 +5345,9 @@ private elem * elvalist(elem *e, goal_t goal)
         // Find last named parameter
         Symbol *lastNamed = null;
         Symbol *arguments_typeinfo = null;
-        for (SYMIDX si = 0; si < globsym.top; si++)
+        for (SYMIDX si = 0; si < globsym.length; si++)
         {
-            Symbol *s = globsym.tab[si];
+            Symbol *s = globsym[si];
 
             if (s.Sclass == SCparameter || s.Sclass == SCregpar)
                 lastNamed = s;
@@ -5361,7 +5372,7 @@ private elem * elvalist(elem *e, goal_t goal)
         return e;
     }
 
-static if (TARGET_WINDOS)
+if (config.exe & EX_windos)
 {
     assert(config.exe == EX_WIN64); // va_start is not an intrinsic on 32-bit
 
@@ -5371,9 +5382,9 @@ static if (TARGET_WINDOS)
 
     // Find last named parameter
     Symbol *lastNamed = null;
-    for (SYMIDX si = 0; si < globsym.top; si++)
+    for (SYMIDX si = 0; si < globsym.length; si++)
     {
-        Symbol *s = globsym.tab[si];
+        Symbol *s = globsym[si];
 
         if (s.Sclass == SCfastpar || s.Sclass == SCshadowreg)
             lastNamed = s;
@@ -5392,7 +5403,7 @@ static if (TARGET_WINDOS)
 
 }
 
-static if (TARGET_LINUX || TARGET_OSX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_DRAGONFLYBSD || TARGET_SOLARIS)
+if (config.exe & EX_posix)
 {
     assert(I64); // va_start is not an intrinsic on 32-bit
     // (OPva_start &va)
@@ -5401,9 +5412,9 @@ static if (TARGET_LINUX || TARGET_OSX || TARGET_FREEBSD || TARGET_OPENBSD || TAR
 
     // Find __va_argsave
     Symbol *va_argsave = null;
-    for (SYMIDX si = 0; si < globsym.top; si++)
+    for (SYMIDX si = 0; si < globsym.length; si++)
     {
-        Symbol *s = globsym.tab[si];
+        Symbol *s = globsym[si];
         if (s.Sident[0] == '_' && strcmp(s.Sident.ptr, "__va_argsave") == 0)
         {
             va_argsave = s;

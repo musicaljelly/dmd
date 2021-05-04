@@ -5,7 +5,7 @@
  * utilities needed for arguments parsing, path manipulation, etc...
  * This file is not shared with other compilers which use the DMD front-end.
  *
- * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/mars.d, _mars.d)
@@ -123,6 +123,24 @@ Where:
   @<cmdfile>       read arguments from cmdfile
 %.*s", cast(int)inifileCanon.length, inifileCanon.ptr, cast(int)help.length, &help[0]);
 }
+
+/// DMD-specific parameters.
+struct DMDparams
+{
+    bool alwaysframe;       // always emit standard stack frame
+    ubyte dwarf;            // DWARF version
+    bool map;               // generate linker .map file
+
+    // Hidden debug switches
+    bool debugb;
+    bool debugc;
+    bool debugf;
+    bool debugr;
+    bool debugx;
+    bool debugy;
+}
+
+shared DMDparams dmdParams = dmdParams.init;
 
 /**
  * DMD's real entry point
@@ -365,9 +383,6 @@ private int tryMain(size_t argc, const(char)** argv, ref Param params)
 
     setTarget(params);
 
-    // Predefined version identifiers
-    addDefaultVersionIdentifiers(params);
-
     setDefaultLibrary();
 
     // Initialization
@@ -387,6 +402,9 @@ private int tryMain(size_t argc, const(char)** argv, ref Param params)
     }
     import dmd.root.ctfloat : CTFloat;
     CTFloat.initialize();
+
+    // Predefined version identifiers
+    addDefaultVersionIdentifiers(params);
 
     if (params.verbose)
     {
@@ -461,8 +479,8 @@ private int tryMain(size_t argc, const(char)** argv, ref Param params)
         if (!Module.rootModule)
             Module.rootModule = m;
         m.importedFrom = m; // m.isRoot() == true
-        if (!params.oneobj || modi == 0 || m.isDocFile)
-            m.deleteObjFile();
+//        if (!params.oneobj || modi == 0 || m.isDocFile)
+//            m.deleteObjFile();
 
         m.parse();
         if (m.isHdrFile)
@@ -643,6 +661,7 @@ private int tryMain(size_t argc, const(char)** argv, ref Param params)
         foreach (p; libmodules)
             library.addObject(p.toDString(), null);
     }
+
     // Generate output files
     if (params.doJsonGeneration)
     {
@@ -748,10 +767,70 @@ private int tryMain(size_t argc, const(char)** argv, ref Param params)
             }
         }
     }
+
+    // Output the makefile dependencies
+    if (params.emitMakeDeps)
+        emitMakeDeps(params, library);
+
     if (global.errors || global.warnings)
         removeHdrFilesAndFail(params, modules);
 
     return status;
+}
+
+/// Emit the makefile dependencies for the -makedeps switch
+version (NoMain) {} else
+{
+    void emitMakeDeps(ref Param params, Library library)
+    {
+        assert(params.emitMakeDeps);
+
+        OutBuffer buf;
+
+        // start by resolving and writing the target (which is sometimes resolved during link phase)
+        if (params.link && params.exefile)
+        {
+            buf.writeEscapedMakePath(&params.exefile[0]);
+        }
+        else if (params.lib && library)
+        {
+            buf.writeEscapedMakePath(library.getFilename());
+        }
+        else if (params.objname)
+        {
+            buf.writeEscapedMakePath(&params.objname[0]);
+        }
+        else if (params.objfiles.length)
+        {
+            buf.writeEscapedMakePath(params.objfiles[0]);
+            foreach (of; params.objfiles[1 .. $])
+            {
+                buf.writestring(" ");
+                buf.writeEscapedMakePath(of);
+            }
+        }
+        else
+        {
+            assert(false, "cannot resolve makedeps target");
+        }
+
+        buf.writestring(":");
+
+        // then output every dependency
+        foreach (dep; params.makeDeps)
+        {
+            buf.writestringln(" \\");
+            buf.writestring("  ");
+            buf.writeEscapedMakePath(dep);
+        }
+        buf.writenl();
+
+        const data = buf[];
+        if (params.makeDepsFile)
+            writeFile(Loc.initial, params.makeDepsFile, data);
+        else
+            printf("%.*s", cast(int) data.length, data.ptr);
+    }
 }
 
 private FileBuffer readFromStdin()
@@ -902,23 +981,20 @@ else
      */
     extern (C) int main(int argc, char** argv)
     {
-        static if (isGCAvailable)
+        bool lowmem = false;
+        foreach (i; 1 .. argc)
         {
-            bool lowmem = false;
-            foreach (i; 1 .. argc)
+            if (strcmp(argv[i], "-lowmem") == 0)
             {
-                if (strcmp(argv[i], "-lowmem") == 0)
-                {
-                    lowmem = true;
-                    break;
-                }
+                lowmem = true;
+                break;
             }
-            if (!lowmem)
-            {
-                __gshared string[] disable_options = [ "gcopt=disable:1" ];
-                rt_options = disable_options;
-                mem.disableGC();
-            }
+        }
+        if (!lowmem)
+        {
+            __gshared string[] disable_options = [ "gcopt=disable:1" ];
+            rt_options = disable_options;
+            mem.disableGC();
         }
 
         // initialize druntime and call _Dmain() below
@@ -940,9 +1016,6 @@ else
         }
 
         import core.runtime;
-        import core.memory;
-        static if (!isGCAvailable)
-            GC.disable();
 
         version(D_Coverage)
         {
@@ -1167,19 +1240,19 @@ private void setDefaultLibrary()
 void setTarget(ref Param params)
 {
     static if (TARGET.Windows)
-        params.isWindows = true;
+        params.targetOS = TargetOS.Windows;
     else static if (TARGET.Linux)
-        params.isLinux = true;
+        params.targetOS = TargetOS.linux;
     else static if (TARGET.OSX)
-        params.isOSX = true;
+        params.targetOS = TargetOS.OSX;
     else static if (TARGET.FreeBSD)
-        params.isFreeBSD = true;
+        params.targetOS = TargetOS.FreeBSD;
     else static if (TARGET.OpenBSD)
-        params.isOpenBSD = true;
+        params.targetOS = TargetOS.OpenBSD;
     else static if (TARGET.Solaris)
-        params.isSolaris = true;
+        params.targetOS = TargetOS.Solaris;
     else static if (TARGET.DragonFlyBSD)
-        params.isDragonFlyBSD = true;
+        params.targetOS = TargetOS.DragonFlyBSD;
     else
         static assert(0, "unknown TARGET");
 }
@@ -1199,7 +1272,7 @@ void setTarget(ref Param params)
 void addDefaultVersionIdentifiers(const ref Param params)
 {
     VersionCondition.addPredefinedGlobalIdent("DigitalMars");
-    if (params.isWindows)
+    if (params.targetOS == TargetOS.Windows)
     {
         VersionCondition.addPredefinedGlobalIdent("Windows");
         if (global.params.mscoff)
@@ -1213,7 +1286,7 @@ void addDefaultVersionIdentifiers(const ref Param params)
             VersionCondition.addPredefinedGlobalIdent("CppRuntime_DigitalMars");
         }
     }
-    else if (params.isLinux)
+    else if (params.targetOS == TargetOS.linux)
     {
         VersionCondition.addPredefinedGlobalIdent("Posix");
         VersionCondition.addPredefinedGlobalIdent("linux");
@@ -1229,7 +1302,7 @@ void addDefaultVersionIdentifiers(const ref Param params)
             VersionCondition.addPredefinedGlobalIdent("CRuntime_Glibc");
         VersionCondition.addPredefinedGlobalIdent("CppRuntime_Gcc");
     }
-    else if (params.isOSX)
+    else if (params.targetOS == TargetOS.OSX)
     {
         VersionCondition.addPredefinedGlobalIdent("Posix");
         VersionCondition.addPredefinedGlobalIdent("OSX");
@@ -1237,28 +1310,29 @@ void addDefaultVersionIdentifiers(const ref Param params)
         // For legacy compatibility
         VersionCondition.addPredefinedGlobalIdent("darwin");
     }
-    else if (params.isFreeBSD)
+    else if (params.targetOS == TargetOS.FreeBSD)
     {
         VersionCondition.addPredefinedGlobalIdent("Posix");
         VersionCondition.addPredefinedGlobalIdent("FreeBSD");
+        VersionCondition.addPredefinedGlobalIdent("FreeBSD_" ~ target.FreeBSDMajor);
         VersionCondition.addPredefinedGlobalIdent("ELFv1");
         VersionCondition.addPredefinedGlobalIdent("CppRuntime_Clang");
     }
-    else if (params.isOpenBSD)
+    else if (params.targetOS == TargetOS.OpenBSD)
     {
         VersionCondition.addPredefinedGlobalIdent("Posix");
         VersionCondition.addPredefinedGlobalIdent("OpenBSD");
         VersionCondition.addPredefinedGlobalIdent("ELFv1");
         VersionCondition.addPredefinedGlobalIdent("CppRuntime_Gcc");
     }
-    else if (params.isDragonFlyBSD)
+    else if (params.targetOS == TargetOS.DragonFlyBSD)
     {
         VersionCondition.addPredefinedGlobalIdent("Posix");
         VersionCondition.addPredefinedGlobalIdent("DragonFlyBSD");
         VersionCondition.addPredefinedGlobalIdent("ELFv1");
         VersionCondition.addPredefinedGlobalIdent("CppRuntime_Gcc");
     }
-    else if (params.isSolaris)
+    else if (params.targetOS == TargetOS.Solaris)
     {
         VersionCondition.addPredefinedGlobalIdent("Posix");
         VersionCondition.addPredefinedGlobalIdent("Solaris");
@@ -1286,7 +1360,7 @@ void addDefaultVersionIdentifiers(const ref Param params)
     {
         VersionCondition.addPredefinedGlobalIdent("D_InlineAsm_X86_64");
         VersionCondition.addPredefinedGlobalIdent("X86_64");
-        if (params.isWindows)
+        if (params.targetOS & TargetOS.Windows)
         {
             VersionCondition.addPredefinedGlobalIdent("Win64");
         }
@@ -1296,7 +1370,7 @@ void addDefaultVersionIdentifiers(const ref Param params)
         VersionCondition.addPredefinedGlobalIdent("D_InlineAsm"); //legacy
         VersionCondition.addPredefinedGlobalIdent("D_InlineAsm_X86");
         VersionCondition.addPredefinedGlobalIdent("X86");
-        if (params.isWindows)
+        if (params.targetOS == TargetOS.Windows)
         {
             VersionCondition.addPredefinedGlobalIdent("Win32");
         }
@@ -1548,7 +1622,7 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
                     if (t.deprecated_)
                         continue;
 
-                    buf ~= `params.`~t.paramName~` = true;`;
+                    buf ~= `setFlagFor!name(params.`~t.paramName~`);`;
                 }
                 buf ~= "return true;\n";
 
@@ -1557,7 +1631,7 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
                     buf ~= `case "`~t.name~`":`;
                     if (t.deprecated_)
                         buf ~= "deprecation(Loc.initial, \"`-"~name~"="~t.name~"` no longer has any effect.\"); ";
-                    buf ~= `params.`~t.paramName~` = true; return true;`;
+                    buf ~= `setFlagFor!name(params.`~t.paramName~`); return true;`;
                 }
                 return buf;
             }
@@ -1764,7 +1838,7 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
             }
         }
         else if (arg == "-map") // https://dlang.org/dmd.html#switch-map
-            params.map = true;
+            dmdParams.map = true;
         else if (arg == "-multiobj")
             params.multiobj = true;
         else if (startsWith(p + 1, "mixin="))
@@ -1776,6 +1850,31 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
         }
         else if (arg == "-g") // https://dlang.org/dmd.html#switch-g
             params.symdebug = 1;
+        else if (startsWith(p + 1, "gdwarf")) // https://dlang.org/dmd.html#switch-gdwarf
+        {
+            static if (TARGET.Windows)
+            {
+                goto Lerror;
+            }
+            else
+            {
+                if (dmdParams.dwarf)
+                {
+                    error("`-gdwarf=<version>` can only be provided once");
+                    break;
+                }
+                params.symdebug = 1;
+
+                enum len = "-gdwarf=".length;
+                // Parse:
+                //      -gdwarf=version
+                if (arg.length < len || !dmdParams.dwarf.parseDigits(arg[len .. $], 5) || dmdParams.dwarf < 3)
+                {
+                    error("`-gdwarf=<version>` requires a valid version [3|4|5]", p);
+                    return false;
+                }
+            }
+        }
         else if (arg == "-gf")
         {
             if (!params.symdebug)
@@ -1783,20 +1882,12 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
             params.symdebugref = true;
         }
         else if (arg == "-gs")  // https://dlang.org/dmd.html#switch-gs
-            params.alwaysframe = true;
+            dmdParams.alwaysframe = true;
         else if (arg == "-gx")  // https://dlang.org/dmd.html#switch-gx
             params.stackstomp = true;
         else if (arg == "-lowmem") // https://dlang.org/dmd.html#switch-lowmem
         {
-            static if (isGCAvailable)
-            {
-                // ignore, already handled in C main
-            }
-            else
-            {
-                error("switch '%s' requires DMD to be built with '-version=GC'", arg.ptr);
-                continue;
-            }
+            // ignore, already handled in C main
         }
         else if (arg.length > 6 && arg[0..6] == "--DRT-")
         {
@@ -1985,6 +2076,9 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
             case "c++17":
                 params.cplusplus = CppStdRevision.cpp17;
                 break;
+            case "c++20":
+                params.cplusplus = CppStdRevision.cpp20;
+                break;
             default:
                 error("Switch `%s` is invalid", p);
                 params.externStdUsage = true;
@@ -2016,7 +2110,7 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
                             params.vfield = true;
                             break;
                         case 14_246:
-                            params.dtorFields = true;
+                            params.dtorFields = FeatureState.enabled;
                             break;
                         case 14_488:
                             params.vcomplex = true;
@@ -2036,7 +2130,7 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
                     switch (ident.toDString())
                     {
                         case "dtorfields":
-                            params.dtorFields = true;
+                            params.dtorFields = FeatureState.enabled;
                             break;
                         case "intpromote":
                             params.fix16997 = true;
@@ -2076,7 +2170,7 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
             // copy previously standalone flags from -transition
             // -preview=dip1000 implies -preview=dip25 too
             if (params.vsafe)
-                params.useDIP25 = true;
+                params.useDIP25 = FeatureState.enabled;
         }
         else if (startsWith(p + 1, "revert") ) // https://dlang.org/dmd.html#switch-revert
         {
@@ -2092,9 +2186,6 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
                 params.revertUsage = true;
                 return false;
             }
-
-            if (params.noDIP25)
-                params.useDIP25 = false;
         }
         else if (arg == "-w")   // https://dlang.org/dmd.html#switch-w
             params.warnings = DiagnosticReporting.error;
@@ -2295,10 +2386,10 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
             }
         }
         else if (arg == "-dip25")       // https://dlang.org/dmd.html#switch-dip25
-            params.useDIP25 = true;
+            params.useDIP25 =  FeatureState.enabled;
         else if (arg == "-dip1000")
         {
-            params.useDIP25 = true;
+            params.useDIP25 = FeatureState.enabled;
             params.vsafe = true;
         }
         else if (arg == "-dip1008")
@@ -2422,11 +2513,11 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
                 goto Lerror;
         }
         else if (arg == "--b")
-            params.debugb = true;
+            dmdParams.debugb = true;
         else if (arg == "--c")
-            params.debugc = true;
+            dmdParams.debugc = true;
         else if (arg == "--f")
-            params.debugf = true;
+            dmdParams.debugf = true;
         else if (arg == "--help" ||
                  arg == "-h")
         {
@@ -2434,16 +2525,16 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
             return false;
         }
         else if (arg == "--r")
-            params.debugr = true;
+            dmdParams.debugr = true;
         else if (arg == "--version")
         {
             params.logo = true;
             return false;
         }
         else if (arg == "--x")
-            params.debugx = true;
+            dmdParams.debugx = true;
         else if (arg == "--y")
-            params.debugy = true;
+            dmdParams.debugy = true;
         else if (p[1] == 'L')                        // https://dlang.org/dmd.html#switch-L
         {
             params.linkswitches.push(p + 2 + (p[2] == '='));
@@ -2476,6 +2567,29 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
                 goto Lerror;
             }
             params.moduleDeps = new OutBuffer();
+        }
+        else if (startsWith(p + 1, "makedeps"))          // https://dlang.org/dmd.html#switch-makedeps
+        {
+            if (params.emitMakeDeps)
+            {
+                error("-makedeps[=file] can only be provided once!");
+                break;
+            }
+            if (p[9] == '=')
+            {
+                if (p[10] == '\0')
+                {
+                    error("expected filename after -makedeps=");
+                    break;
+                }
+                params.makeDepsFile = (p + 10).toDString;
+            }
+            else if (p[9] != '\0')
+            {
+                goto Lerror;
+            }
+            // Else output to stdout.
+            params.emitMakeDeps = true;
         }
         else if (arg == "-main")             // https://dlang.org/dmd.html#switch-main
         {
@@ -2669,9 +2783,18 @@ private void reconcileCommands(ref Param params, size_t numSrcFiles)
             //fatal();
         }
     }
+}
 
-    if (params.noDIP25)
-        params.useDIP25 = false;
+/// Sets the boolean for a flag with the given name
+private static void setFlagFor(string name)(ref bool b)
+{
+    b = name != "revert";
+}
+
+/// Sets the FeatureState for a flag with the given name
+private static void setFlagFor(string name)(ref FeatureState s)
+{
+    s = name != "revert" ? FeatureState.enabled : FeatureState.disabled;
 }
 
 /**

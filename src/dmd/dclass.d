@@ -3,7 +3,7 @@
  *
  * Specification: $(LINK2 https://dlang.org/spec/class.html, Classes)
  *
- * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/dclass.d, _dclass.d)
@@ -34,7 +34,7 @@ import dmd.root.rmem;
 import dmd.target;
 import dmd.visitor;
 
-enum Abstract : int
+enum Abstract : ubyte
 {
     fwdref = 0,      // whether an abstract class is not yet computed
     yes,             // is abstract class
@@ -129,7 +129,7 @@ extern (C++) struct BaseClass
     }
 }
 
-enum ClassFlags : int
+enum ClassFlags : uint
 {
     none          = 0x0,
     isCOMclass    = 0x1,
@@ -380,7 +380,15 @@ extern (C++) class ClassDeclaration : AggregateDeclaration
         return new ClassDeclaration(loc, id, baseclasses, members, inObject);
     }
 
-    override Dsymbol syntaxCopy(Dsymbol s)
+    override const(char)* toPrettyChars(bool qualifyTypes = false)
+    {
+        if (objc.isMeta)
+            return .objc.toPrettyChars(this, qualifyTypes);
+
+        return super.toPrettyChars(qualifyTypes);
+    }
+
+    override ClassDeclaration syntaxCopy(Dsymbol s)
     {
         //printf("ClassDeclaration.syntaxCopy('%s')\n", toChars());
         ClassDeclaration cd =
@@ -397,7 +405,8 @@ extern (C++) class ClassDeclaration : AggregateDeclaration
             (*cd.baseclasses)[i] = b2;
         }
 
-        return ScopeDsymbol.syntaxCopy(cd);
+        ScopeDsymbol.syntaxCopy(cd);
+        return cd;
     }
 
     override Scope* newScope(Scope* sc)
@@ -519,7 +528,7 @@ extern (C++) class ClassDeclaration : AggregateDeclaration
                             continue;
                         else if (s == this) // happens if s is nested in this and derives from this
                             s = null;
-                        else if (!(flags & IgnoreSymbolVisibility) && !(s.prot().kind == Prot.Kind.protected_) && !symbolIsVisible(this, s))
+                        else if (!(flags & IgnoreSymbolVisibility) && !(s.visible().kind == Visibility.Kind.protected_) && !symbolIsVisible(this, s))
                             s = null;
                         else
                             break;
@@ -566,9 +575,11 @@ extern (C++) class ClassDeclaration : AggregateDeclaration
 
             alignsize = baseClass.alignsize;
             structsize = baseClass.structsize;
-            if (classKind == ClassKind.cpp && global.params.isWindows)
+            if (classKind == ClassKind.cpp && global.params.targetOS == TargetOS.Windows)
                 structsize = (structsize + alignsize - 1) & ~(alignsize - 1);
         }
+        else if (classKind == ClassKind.objc)
+            structsize = 0; // no hidden member for an Objective-C class
         else if (isInterfaceDeclaration())
         {
             if (interfaces.length == 0)
@@ -997,12 +1008,13 @@ extern (C++) final class InterfaceDeclaration : ClassDeclaration
         }
     }
 
-    override Dsymbol syntaxCopy(Dsymbol s)
+    override InterfaceDeclaration syntaxCopy(Dsymbol s)
     {
         InterfaceDeclaration id =
             s ? cast(InterfaceDeclaration)s
               : new InterfaceDeclaration(loc, ident, null);
-        return ClassDeclaration.syntaxCopy(id);
+        ClassDeclaration.syntaxCopy(id);
+        return id;
     }
 
 

@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1984-1995 by Symantec
- *              Copyright (C) 2000-2020 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/dcgcv.d, backend/dcgcv.d)
@@ -12,13 +12,10 @@
 
 module dmd.backend.dcgcv;
 
-version (Windows)
-{
 version (SCPP)
     version = COMPILE;
 version (MARS)
     version = COMPILE;
-}
 
 version (COMPILE)
 {
@@ -40,6 +37,7 @@ import dmd.backend.global;
 import dmd.backend.mem;
 import dmd.backend.obj;
 import dmd.backend.outbuf;
+import dmd.backend.symtab;
 import dmd.backend.ty;
 import dmd.backend.type;
 
@@ -76,7 +74,7 @@ extern (C) void TOOFFSET(void* p, targ_size_t value)
 
 extern __gshared char* ftdbname;
 
-// Convert from SFL protections to CV4 protections
+// Convert from SFL visibilities to CV4 protections
 uint SFLtoATTR(uint sfl) { return 4 - ((sfl & SFLpmask) >> 5); }
 
 __gshared
@@ -2772,9 +2770,8 @@ private void cv_outlist()
  * Write out symbol table for current function.
  */
 
-private void cv4_func(Funcsym *s)
+private void cv4_func(Funcsym *s, ref symtab_t symtab)
 {
-    SYMIDX si;
     int endarg;
 
     cv4_outsym(s);              // put out function symbol
@@ -2830,17 +2827,14 @@ version (MARS)
         }
     }
 
-    varStats_writeSymbolTable(&globsym, &cv4_outsym, &cv4.endArgs, &cv4.beginBlock, &cv4.endBlock);
+    varStats_writeSymbolTable(symtab, &cv4_outsym, &cv4.endArgs, &cv4.beginBlock, &cv4.endBlock);
 }
 else
 {
-    symtab_t* symtab = &globsym;
-
     // Put out local symbols
     endarg = 0;
-    for (si = 0; si < symtab.top; si++)
-    {   //printf("globsym.tab[%d] = %p\n",si,globsym.tab[si]);
-        Symbol *sa = symtab.tab[si];
+    foreach (sa; symtab[])
+    {   //printf("symtab[%d] = %p\n",si,symtab[si]);
         cv4_outsym(sa);
     }
 }
@@ -3113,8 +3107,6 @@ else
  * Write out symbol table for current function.
  */
 
-static if (TARGET_WINDOS)
-{
 void cv_func(Funcsym *s)
 {
 version (SCPP)
@@ -3139,21 +3131,18 @@ else
         case CV4:
         case CVSYM:
         case CVTDB:
-            cv4_func(s);
+            cv4_func(s, globsym);
             break;
 
         default:
             assert(0);
     }
 }
-}
 
 /******************************************
  * Write out symbol table for current function.
  */
 
-static if (TARGET_WINDOS)
-{
 void cv_outsym(Symbol *s)
 {
     //printf("cv_outsym('%s')\n",s.Sident.ptr);
@@ -3181,7 +3170,6 @@ version (MARS)
         default:
             assert(0);
     }
-}
 }
 
 /******************************************

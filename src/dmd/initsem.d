@@ -1,7 +1,7 @@
 /**
  * Semantic analysis of initializers.
  *
- * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/initsem.d, _initsem.d)
@@ -104,14 +104,16 @@ extern(C++) Initializer initializerSemantic(Initializer init, Scope* sc, Type t,
 
     Initializer visitStruct(StructInitializer i)
     {
-        //printf("StructInitializer::semantic(t = %s) %s\n", t.toChars(), toChars());
+        //printf("StructInitializer::semantic(t = %s) %s\n", t.toChars(), i.toChars());
         t = t.toBasetype();
         if (t.ty == Tsarray && t.nextOf().toBasetype().ty == Tstruct)
             t = t.nextOf().toBasetype();
         if (t.ty == Tstruct)
         {
             StructDeclaration sd = (cast(TypeStruct)t).sym;
-            if (sd.hasNonDisabledCtor())
+            // check if the sd has a regular ctor (user defined non-copy ctor)
+            // that is not disabled.
+            if (sd.hasRegularCtor(true))
             {
                 error(i.loc, "%s `%s` has constructors, cannot use `{ initializers }`, use `%s( initializers )` instead", sd.kind(), sd.toChars(), sd.toChars());
                 return new ErrorInitializer();
@@ -144,6 +146,8 @@ extern(C++) Initializer initializerSemantic(Initializer init, Scope* sc, Type t,
                             error(initLoc, "`%s` is not a member of `%s`", id.toChars(), sd.toChars());
                         return new ErrorInitializer();
                     }
+                    s.checkDeprecated(i.loc, sc);
+
                     s = s.toAlias();
                     // Find out which field index it is
                     for (fieldi = 0; 1; fieldi++)
@@ -378,6 +382,11 @@ extern(C++) Initializer initializerSemantic(Initializer init, Scope* sc, Type t,
             return new ErrorInitializer();
         }
         uint olderrors = global.errors;
+        /* Save the expression before ctfe
+         * Otherwise the error message would contain for example "&[0][0]" instead of "new int"
+         * Regression: https://issues.dlang.org/show_bug.cgi?id=21687
+         */
+        Expression currExp = i.exp;
         if (needInterpret)
         {
             // If the result will be implicitly cast, move the cast into CTFE
@@ -417,7 +426,7 @@ extern(C++) Initializer initializerSemantic(Initializer init, Scope* sc, Type t,
         // Make sure all pointers are constants
         if (needInterpret && hasNonConstPointers(i.exp))
         {
-            i.exp.error("cannot use non-constant CTFE pointer in an initializer `%s`", i.exp.toChars());
+            i.exp.error("cannot use non-constant CTFE pointer in an initializer `%s`", currExp.toChars());
             return new ErrorInitializer();
         }
         Type tb = t.toBasetype();

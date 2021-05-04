@@ -2,7 +2,7 @@
  * Compiler implementation of the
  * $(LINK2 http://www.dlang.org, D programming language).
  *
- * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/dwarfdbginf.d, backend/dwarfdbginf.d)
@@ -45,7 +45,9 @@ import dmd.backend.cdef;
 
 version(Windows)
 {
+    nothrow
     extern (C) char* getcwd(char* buffer, size_t maxlen);
+    nothrow
     extern (C) int* _errno();   // not the multi-threaded version
 }
 else
@@ -53,11 +55,10 @@ else
     import core.sys.posix.unistd : getcwd;
 }
 
-static if (ELFOBJ || MACHOBJ)
+static if (1)
 {
     import dmd.backend.aarray;
     import dmd.backend.barray;
-    import dmd.backend.cdef;
     import dmd.backend.code;
     import dmd.backend.code_x86;
     import dmd.backend.dwarf;
@@ -69,14 +70,12 @@ static if (ELFOBJ || MACHOBJ)
     import dmd.backend.obj;
     import dmd.backend.oper;
     import dmd.backend.outbuf;
+    import dmd.backend.symtab;
     import dmd.backend.ty;
     import dmd.backend.type;
 
-    static if (ELFOBJ)
-        import dmd.backend.melf;
-
-    static if (MACHOBJ)
-        import dmd.backend.mach;
+    import dmd.backend.melf;
+    import dmd.backend.mach;
 
     extern (C++):
 
@@ -86,13 +85,11 @@ static if (ELFOBJ || MACHOBJ)
 
     __gshared
     {
-        static if (MACHOBJ)
-        {
+        //static if (MACHOBJ)
             int except_table_seg = UNKNOWN; // __gcc_except_tab segment
             int except_table_num = 0;       // sequence number for GCC_except_table%d symbols
             int eh_frame_seg = UNKNOWN;     // __eh_frame segment
             Symbol *eh_frame_sym = null;    // past end of __eh_frame
-        }
 
         uint CIE_offset_unwind;     // CIE offset for unwind data
         uint CIE_offset_no_unwind;  // CIE offset for no unwind data
@@ -225,9 +222,9 @@ static if (ELFOBJ || MACHOBJ)
     void dwarf_addrel(int seg, targ_size_t offset, int targseg, targ_size_t val = 0)
     {
         static if (ELFOBJ)
-            Obj.addrel(seg, offset, I64 ? R_X86_64_32 : R_386_32, MAP_SEG2SYMIDX(targseg), val);
+            Obj.addrel(seg, offset, I64 ? R_X86_64_32 : R_386_32, cast(int)MAP_SEG2SYMIDX(targseg), val);
         else static if (MACHOBJ)
-            Obj.addrel(seg, offset, null, targseg, RELaddr, cast(uint)val);
+            Obj.addrel(seg, offset, cast(Symbol*) null, targseg, RELaddr, cast(int)val);
         else
             assert(0);
     }
@@ -235,7 +232,7 @@ static if (ELFOBJ || MACHOBJ)
     void dwarf_addrel64(int seg, targ_size_t offset, int targseg, targ_size_t val)
     {
         static if (ELFOBJ)
-            Obj.addrel(seg, offset, R_X86_64_64, MAP_SEG2SYMIDX(targseg), val);
+            Obj.addrel(seg, offset, R_X86_64_64, cast(int)MAP_SEG2SYMIDX(targseg), val);
         else static if (MACHOBJ)
             Obj.addrel(seg, offset, null, targseg, RELaddr, cast(uint)val);
         else
@@ -534,11 +531,24 @@ static if (ELFOBJ || MACHOBJ)
             Section debug_str      = { name: ".debug_str" };
             Section debug_line     = { name: ".debug_line" };
         }
+        else
+        {
+            Section debug_pubnames;
+            Section debug_aranges;
+            Section debug_ranges;
+            Section debug_loc;
+            Section debug_abbrev;
+            Section debug_info;
+            Section debug_str;
+            Section debug_line;
+        }
 
         static if (MACHOBJ)
             const char* debug_frame_name = "__debug_frame";
         else static if (ELFOBJ)
             const char* debug_frame_name = ".debug_frame";
+        else
+            const char* debug_frame_name = null;
 
         /* DWARF 7.5.3: "Each declaration begins with an unsigned LEB128 number
          * representing the abbreviation code itself."
@@ -554,61 +564,44 @@ static if (ELFOBJ || MACHOBJ)
         AApair *functype_table;  // not sure why this cannot be combined with type_table
         Outbuffer *functypebuf;
 
-        struct DebugInfoHeader
-        {
-          align (1):
-            uint total_length;
-            ushort version_;
-            uint abbrev_offset;
-            ubyte address_size;
-        }
-
-        // https://issues.dlang.org/show_bug.cgi?id=16563
-        static assert(DebugInfoHeader.alignof == 1 && DebugInfoHeader.sizeof == 11);
-
-        DebugInfoHeader debuginfo_init =
-        {       0,      // total_length
-                3,      // version_
-                0,      // abbrev_offset
-                4       // address_size
-        };
-
-        DebugInfoHeader debuginfo;
-
         // .debug_line
         size_t linebuf_filetab_end;
 
         struct DebugLineHeader
         {
           align (1):
-            uint total_length;
-            ushort version_;
-            uint prologue_length;
-            ubyte minimum_instruction_length;
-            ubyte default_is_stmt;
-            byte line_base;
-            ubyte line_range;
-            ubyte opcode_base;
-            ubyte[9] standard_opcode_lengths;
+            uint total_length                = 0;
+            ushort version_                  = 2;
+            uint prologue_length             = 0;
+            ubyte minimum_instruction_length = 1;
+            ubyte default_is_stmt            = true;
+            byte line_base                   = -5;
+            ubyte line_range                 = 14;
+            ubyte opcode_base                = 10;
+            ubyte[9] standard_opcode_lengths = [ 0,1,1,1,1,0,0,0,1 ];
         }
         static assert(DebugLineHeader.sizeof == 24);
-
-        DebugLineHeader debugline_init =
-        {       0,      // total_length
-                2,      // version_
-                0,      // prologue_length
-                1,      // minimum_instruction_length
-                true,   // default_is_stmt
-                -5,     // line_base
-                14,     // line_range
-                10,     // opcode_base
-                [ 0,1,1,1,1,0,0,0,1 ]
-        };
 
         DebugLineHeader debugline;
 
         public uint[TYMAX] typidx_tab;
     }
+
+    /*****************************************
+     * Replace the bytes in `buf` from the `offset` by `data`.
+     *
+     * Params:
+     *      buf = buffer where `data` will be written
+     *      offset = offset of the bytes in `buf` to replace
+     *      data = bytes to write
+     */
+    extern(D) void rewrite(T)(Outbuffer* buf, size_t offset, T data)
+    {
+        *(cast(T*)&buf.buf[offset]) = data;
+    }
+
+    alias rewrite32 = rewrite!uint;
+    alias rewrite64 = rewrite!ulong;
 
     /*****************************************
      * Append .debug_frame header to buf.
@@ -737,13 +730,22 @@ static if (ELFOBJ || MACHOBJ)
                     const ubyte address_pointer_encoding =
                             DW_EH_PE_pcrel | DW_EH_PE_ptr;
             }
+            else
+            {
+                    const ubyte personality_pointer_encoding = 0;
+                    const ubyte LSDA_pointer_encoding = 0;
+                    const ubyte address_pointer_encoding = 0;
+            }
             buf.writeByten(7);                                  // Augmentation Length
             buf.writeByten(personality_pointer_encoding);       // P: personality routine address encoding
             /* MACHOBJ 64: pcrel 1 length 2 extern 1 RELOC_GOT
              *         32: [4] address x0013 pcrel 0 length 2 value xfc type 4 RELOC_LOCAL_SECTDIFF
              *             [5] address x0000 pcrel 0 length 2 value xc7 type 1 RELOC_PAIR
              */
-            dwarf_reftoident(dfseg, buf.length(), personality, 0);
+            if (config.objfmt == OBJ_ELF)
+                elf_dwarf_reftoident(dfseg, buf.length(), personality, 0);
+            else
+                mach_dwarf_reftoident(dfseg, buf.length(), personality, 0);
             buf.writeByten(LSDA_pointer_encoding);              // L: address encoding for LSDA in FDE
             buf.writeByten(address_pointer_encoding);           // R: encoding of addresses in FDE
         }
@@ -931,6 +933,8 @@ static if (ELFOBJ || MACHOBJ)
             const uint fdelen = 4 + 4
                 + (I64 ? 8 + 8 : 4 + 4)                         // PC_Begin + PC_Range
                 + (ehunwind ? (I64 ? 9 : 5) : 1) + cast(uint)cfa_buf.length();
+        else
+            const uint fdelen = 0;
 
             const uint pad = -fdelen & (I64 ? 7 : 3);      // pad to addressing unit size boundary
             const uint length = fdelen + pad - 4;
@@ -942,7 +946,7 @@ static if (ELFOBJ || MACHOBJ)
         {
             int fixup = I64 ? R_X86_64_PC32 : R_386_PC32;
             buf.write32(cast(uint)(I64 ? 0 : sfunc.Soffset));             // address of function
-            Obj.addrel(dfseg, startsize + 8, fixup, MAP_SEG2SYMIDX(sfunc.Sseg), sfunc.Soffset);
+            Obj.addrel(dfseg, startsize + 8, fixup, cast(int)MAP_SEG2SYMIDX(sfunc.Sseg), sfunc.Soffset);
             //Obj.reftoident(dfseg, startsize + 8, sfunc, 0, CFpc32 | CFoff); // PC_begin
             buf.write32(cast(uint)sfunc.Ssize);                         // PC Range
         }
@@ -955,8 +959,6 @@ static if (ELFOBJ || MACHOBJ)
             else
                 buf.write32(cast(uint)sfunc.Ssize);           // PC Range
         }
-        else
-            assert(0);
 
         if (ehunwind)
         {
@@ -967,7 +969,7 @@ static if (ELFOBJ || MACHOBJ)
                 buf.write32(I64 ? 0 : sfunc.Sfunc.LSDAoffset); // address of LSDA (".gcc_except_table")
                 if (config.flags3 & CFG3pic)
                 {
-                    Obj.addrel(dfseg, buf.length() - 4, fixup, MAP_SEG2SYMIDX(etseg), sfunc.Sfunc.LSDAoffset);
+                    Obj.addrel(dfseg, buf.length() - 4, fixup, cast(int)MAP_SEG2SYMIDX(etseg), sfunc.Sfunc.LSDAoffset);
                 }
                 else
                     dwarf_addrel(dfseg, buf.length() - 4, etseg, sfunc.Sfunc.LSDAoffset);      // and the fixup
@@ -1018,6 +1020,8 @@ static if (ELFOBJ || MACHOBJ)
                 int flags = S_ATTR_DEBUG;
             else static if (ELFOBJ)
                 int flags = SHT_PROGBITS;
+            else
+                int flags = 0;
 
             int seg = dwarf_getsegment(debug_frame_name, 1, flags);
             Outbuffer *buf = SegData[seg].SDbuf;
@@ -1031,193 +1035,197 @@ static if (ELFOBJ || MACHOBJ)
             symbol_reset(s);
         resetSyms.reset();
 
-        /* ======================================== */
-
-        debug_str.initialize();
-        //Outbuffer *debug_str_buf = debug_str.buf;
-
-        /* ======================================== */
-
-        debug_ranges.initialize();
-
-        /* ======================================== */
-
-        debug_loc.initialize();
-
-        /* ======================================== */
-
-        if (infoFileName_table)
+        /* *********************************************************************
+         *                          String Table
+         ******************************************************************** */
         {
-            AAchars.destroy(infoFileName_table);
-            infoFileName_table = null;
+            debug_str.initialize();
+            //Outbuffer *debug_str_buf = debug_str.buf;
         }
 
-        debug_line.initialize();
+        /* *********************************************************************
+         *                2.17.3 Non-Contiguous Address Ranges
+         ******************************************************************** */
+        {
+            debug_ranges.initialize();
+        }
 
-        debugline = debugline_init;
+        /* *********************************************************************
+         *                         2.6.6 Location Lists
+         ******************************************************************** */
+        {
+            debug_loc.initialize();
+        }
 
-        debug_line.buf.write(&debugline, debugline.sizeof);
-
-        // include_directories
-        version (SCPP)
-            for (size_t i = 0; i < pathlist.length(); ++i)
+        /* *********************************************************************
+         *                  6.2.4 The Line Number Program Header
+         ******************************************************************** */
+        {
+            if (infoFileName_table)
             {
-                debug_line.buf.writeString(pathlist[i]);
-                debug_line.buf.writeByte(0);
+                AAchars.destroy(infoFileName_table);
+                infoFileName_table = null;
             }
 
-        version (MARS)
-        version (none)
-            for (int i = 0; i < global.params.imppath.dim; i++)
-            {
-                debug_line.buf.writeString((*global.params.imppath)[i]);
-                debug_line.buf.writeByte(0);
-            }
+            debug_line.initialize();
 
-        debug_line.buf.writeByte(0);              // terminated with 0 byte
+            debugline = DebugLineHeader.init;
 
-        /* ======================================== */
+            debug_line.buf.write(&debugline, debugline.sizeof);
 
-        debug_abbrev.initialize();
-        abbrevcode = 1;
-
-        // Free only if starting another file. Waste of time otherwise.
-        if (abbrev_table)
-        {
-            AApair.destroy(abbrev_table);
-            abbrev_table = null;
-        }
-
-        static immutable ubyte[21] abbrevHeader =
-        [
-            1,                      // abbreviation code
-            DW_TAG_compile_unit,
-            1,
-            DW_AT_producer,  DW_FORM_string,
-            DW_AT_language,  DW_FORM_data1,
-            DW_AT_name,      DW_FORM_string,
-            DW_AT_comp_dir,  DW_FORM_string,
-            DW_AT_low_pc,    DW_FORM_addr,
-            DW_AT_entry_pc,  DW_FORM_addr,
-            DW_AT_ranges,    DW_FORM_data4,
-            DW_AT_stmt_list, DW_FORM_data4,
-            0,               0,
-        ];
-
-        debug_abbrev.buf.write(abbrevHeader.ptr,abbrevHeader.sizeof);
-
-        /* ======================================== */
-
-        debug_info.initialize();
-
-        debuginfo = debuginfo_init;
-        if (I64)
-            debuginfo.address_size = 8;
-
-        // https://issues.dlang.org/show_bug.cgi?id=16563
-        assert(debuginfo.alignof == 1);
-        debug_info.buf.write(&debuginfo, debuginfo.sizeof);
-
-        static if (ELFOBJ)
-            dwarf_addrel(debug_info.seg,6,debug_abbrev.seg);
-
-        debug_info.buf.writeuLEB128(1);                   // abbreviation code
-
-        version (MARS)
-        {
-            debug_info.buf.write("Digital Mars D ");
-            debug_info.buf.writeString(config._version);     // DW_AT_producer
-            // DW_AT_language
-            debug_info.buf.writeByte((config.fulltypes == CVDWARF_D) ? DW_LANG_D : DW_LANG_C89);
-        }
-        else version (SCPP)
-        {
-            debug_info.buf.write("Digital Mars C ");
-            debug_info.buf.writeString(global._version);      // DW_AT_producer
-            debug_info.buf.writeByte(DW_LANG_C89);            // DW_AT_language
-        }
-        else
-            static assert(0);
-
-        debug_info.buf.writeString(filename);             // DW_AT_name
-
-        static if (0)
-        {
-            // This relies on an extension to POSIX.1 not always implemented
-            char *cwd = getcwd(null, 0);
-        }
-        else
-        {
-            char *cwd;
-            size_t sz = 80;
-            while (1)
-            {
-                errno = 0;
-                cwd = cast(char *)malloc(sz + 1);
-                if (!cwd)
-                    err_nomem();
-                char *buf = getcwd(cwd, sz);
-                if (buf)
-                {   cwd[sz] = 0;        // man page doesn't say if always 0 terminated
-                    break;
-                }
-                if (errno == ERANGE)
+            // include_directories
+            version (SCPP)
+                for (size_t i = 0; i < pathlist.length(); ++i)
                 {
-                    sz *= 2;
-                    free(cwd);
-                    continue;
+                    debug_line.buf.writeString(pathlist[i]);
+                    debug_line.buf.writeByte(0);
                 }
-                cwd[0] = 0;
-                break;
-            }
+
+            version (MARS)
+            version (none)
+                for (int i = 0; i < global.params.imppath.dim; i++)
+                {
+                    debug_line.buf.writeString((*global.params.imppath)[i]);
+                    debug_line.buf.writeByte(0);
+                }
+
+            debug_line.buf.writeByte(0);              // terminated with 0 byte
         }
-        //debug_info.buf.write32(Obj.addstr(debug_str_buf, cwd)); // DW_AT_comp_dir as DW_FORM_strp, doesn't work on some systems
-        debug_info.buf.writeString(cwd);                  // DW_AT_comp_dir as DW_FORM_string
-        free(cwd);
 
-        append_addr(debug_info.buf, 0);               // DW_AT_low_pc
-        append_addr(debug_info.buf, 0);               // DW_AT_entry_pc
+        /* *********************************************************************
+         *                     7.5.3 Abbreviations Tables
+         ******************************************************************** */
+        {
+            debug_abbrev.initialize();
+            abbrevcode = 1;
 
-        static if (ELFOBJ)
-            dwarf_addrel(debug_info.seg,debug_info.buf.length(),debug_ranges.seg);
+            // Free only if starting another file. Waste of time otherwise.
+            if (abbrev_table)
+            {
+                AApair.destroy(abbrev_table);
+                abbrev_table = null;
+            }
 
-        debug_info.buf.write32(0);                        // DW_AT_ranges
+            static immutable ubyte[21] abbrevHeader =
+            [
+                1,                      // abbreviation code
+                DW_TAG_compile_unit,
+                1,
+                DW_AT_producer,  DW_FORM_string,
+                DW_AT_language,  DW_FORM_data1,
+                DW_AT_name,      DW_FORM_string,
+                DW_AT_comp_dir,  DW_FORM_string,
+                DW_AT_low_pc,    DW_FORM_addr,
+                DW_AT_entry_pc,  DW_FORM_addr,
+                DW_AT_ranges,    DW_FORM_data4,
+                DW_AT_stmt_list, DW_FORM_data4,
+                0,               0,
+            ];
 
-        static if (ELFOBJ)
-            dwarf_addrel(debug_info.seg,debug_info.buf.length(),debug_line.seg);
+            debug_abbrev.buf.write(abbrevHeader.ptr,abbrevHeader.sizeof);
+        }
 
-        debug_info.buf.write32(0);                        // DW_AT_stmt_list
+        /* *********************************************************************
+         *             7.5.1.1 Full and Partial Compilation Unit Headers
+         ******************************************************************** */
+        {
+            debug_info.initialize();
 
-        memset(typidx_tab.ptr, 0, typidx_tab.sizeof);
 
-        /* ======================================== */
+            // Compilation Unit Header
+            {
+                debug_info.buf.write32(0);                      // unit length
+                debug_info.buf.write16(config.dwarf);           // version
+                if (config.dwarf >= 5)
+                {
+                    debug_info.buf.writeByte(DW_UT_compile);    // Unit Type
+                    debug_info.buf.writeByte(I64 ? 8 : 4);      // Address size
+                    debug_info.buf.write32(0);                  // debug abbrev offset
+                }
+                else
+                {
+                    debug_info.buf.write32(0);                  // debug abbrev offset
+                    debug_info.buf.writeByte(I64 ? 8 : 4);      // Address size
+                }
+            }
 
-        debug_pubnames.initialize();
-        int seg = debug_pubnames.seg;
+            static if (ELFOBJ)
+                dwarf_addrel(debug_info.seg,6,debug_abbrev.seg);
 
-        debug_pubnames.buf.write32(0);             // unit_length
-        debug_pubnames.buf.write16(2);           // version_
+            debug_info.buf.writeuLEB128(1);                   // abbreviation code
 
-        static if (ELFOBJ)
-            dwarf_addrel(seg,debug_pubnames.buf.length(),debug_info.seg);
+            version (MARS)
+            {
+                debug_info.buf.write("Digital Mars D ");
+                debug_info.buf.writeString(config._version);     // DW_AT_producer
+                // DW_AT_language
+                debug_info.buf.writeByte((config.fulltypes == CVDWARF_D) ? DW_LANG_D : DW_LANG_C89);
+            }
+            else version (SCPP)
+            {
+                debug_info.buf.write("Digital Mars C ");
+                debug_info.buf.writeString(global._version);      // DW_AT_producer
+                debug_info.buf.writeByte(DW_LANG_C89);            // DW_AT_language
+            }
+            else
+                static assert(0);
 
-        debug_pubnames.buf.write32(0);             // debug_info_offset
-        debug_pubnames.buf.write32(0);             // debug_info_length
+            debug_info.buf.writeString(filename);             // DW_AT_name
 
-        /* ======================================== */
+            char* cwd = getcwd(null, 0);
+            debug_info.buf.writeString(cwd);                  // DW_AT_comp_dir as DW_FORM_string
+            free(cwd);
 
-        debug_aranges.initialize();
+            append_addr(debug_info.buf, 0);               // DW_AT_low_pc
+            append_addr(debug_info.buf, 0);               // DW_AT_entry_pc
 
-        debug_aranges.buf.write32(0);              // unit_length
-        debug_aranges.buf.write16(2);            // version_
+            static if (ELFOBJ)
+                dwarf_addrel(debug_info.seg,debug_info.buf.length(),debug_ranges.seg);
 
-        static if (ELFOBJ)
-            dwarf_addrel(debug_aranges.seg,debug_aranges.buf.length(),debug_info.seg);
+            debug_info.buf.write32(0);                        // DW_AT_ranges
 
-        debug_aranges.buf.write32(0);              // debug_info_offset
-        debug_aranges.buf.writeByte(I64 ? 8 : 4);  // address_size
-        debug_aranges.buf.writeByte(0);            // segment_size
-        debug_aranges.buf.write32(0);              // pad to 16
+            static if (ELFOBJ)
+                dwarf_addrel(debug_info.seg,debug_info.buf.length(),debug_line.seg);
+
+            debug_info.buf.write32(0);                        // DW_AT_stmt_list
+
+            memset(typidx_tab.ptr, 0, typidx_tab.sizeof);
+        }
+
+        /* *********************************************************************
+         *                        6.1.1 Lookup by Name
+         ******************************************************************** */
+        {
+            debug_pubnames.initialize();
+            int seg = debug_pubnames.seg;
+
+            debug_pubnames.buf.write32(0);             // unit_length
+            debug_pubnames.buf.write16(2);           // version_
+
+            static if (ELFOBJ)
+                dwarf_addrel(seg,debug_pubnames.buf.length(),debug_info.seg);
+
+            debug_pubnames.buf.write32(0);             // debug_info_offset
+            debug_pubnames.buf.write32(0);             // debug_info_length
+        }
+
+        /* *********************************************************************
+         *                      6.1.2 Lookup by Address
+         ******************************************************************** */
+        {
+            debug_aranges.initialize();
+
+            debug_aranges.buf.write32(0);              // unit_length
+            debug_aranges.buf.write16(2);            // version_
+
+            static if (ELFOBJ)
+                dwarf_addrel(debug_aranges.seg,debug_aranges.buf.length(),debug_info.seg);
+
+            debug_aranges.buf.write32(0);              // debug_info_offset
+            debug_aranges.buf.writeByte(I64 ? 8 : 4);  // address_size
+            debug_aranges.buf.writeByte(0);            // segment_size
+            debug_aranges.buf.write32(0);              // pad to 16
+        }
     }
 
 
@@ -1266,11 +1274,9 @@ static if (ELFOBJ || MACHOBJ)
         {
             static immutable ubyte[6] abbrevModule =
             [
-                DW_TAG_module,
-                //1,                // one children
-                0,                  // no children
-                DW_AT_name,         DW_FORM_string, // module name
-                0,                  0,
+                DW_TAG_module, DW_CHILDREN_no,
+                DW_AT_name,    DW_FORM_string, // module name
+                0,             0,
             ];
             abbrevcode++;
             debug_abbrev.buf.writeuLEB128(abbrevcode);
@@ -1445,13 +1451,12 @@ static if (ELFOBJ || MACHOBJ)
 
         /* ================================================= */
 
-        debug_info.buf.writeByte(0);      // ending abbreviation code
+        // debug_info
+        {
+            debug_info.buf.writeByte(0);    // ending abbreviation code
+            rewrite32(debug_info.buf, 0, cast(uint) debug_info.buf.length() - 4); // rewrites the unit length
+        }
 
-        debuginfo.total_length = cast(uint)debug_info.buf.length() - 4;
-
-        // https://issues.dlang.org/show_bug.cgi?id=16563
-        assert(debuginfo.alignof == 1);
-        memcpy(debug_info.buf.buf, &debuginfo, debuginfo.sizeof);
 
         /* ================================================= */
 
@@ -1553,6 +1558,8 @@ static if (ELFOBJ || MACHOBJ)
                 int flags = S_ATTR_DEBUG;
             else static if (ELFOBJ)
                 int flags = SHT_PROGBITS;
+            else
+                int flags = 0;
 
             IDXSEC dfseg = dwarf_getsegment(debug_frame_name, 1, flags);
             writeDebugFrameFDE(dfseg, sfunc);
@@ -1575,9 +1582,9 @@ static if (ELFOBJ || MACHOBJ)
         uint formalcode = 0;
         uint autocode = 0;
 
-        for (SYMIDX si = 0; si < globsym.top; si++)
+        for (SYMIDX si = 0; si < globsym.length; si++)
         {
-            Symbol *sa = globsym.tab[si];
+            Symbol *sa = globsym[si];
 
             version (MARS)
                 if (sa.Sflags & SFLnodebug) continue;
@@ -1630,7 +1637,7 @@ static if (ELFOBJ || MACHOBJ)
         }
         abuf.writeByte(DW_AT_name);      abuf.writeByte(DW_FORM_string);
 
-        static if (DWARF_VERSION >= 4)
+        if (config.dwarf >= 4)
             abuf.writeuLEB128(DW_AT_linkage_name);
         else
             abuf.writeuLEB128(DW_AT_MIPS_linkage_name);
@@ -1649,7 +1656,7 @@ static if (ELFOBJ || MACHOBJ)
         if (sfunc.Sfunc.Fflags3 & Fpure)
         {
             abuf.writeByte(DW_AT_pure);
-            static if (DWARF_VERSION >= 4)
+            if (config.dwarf >= 4)
                 abuf.writeByte(DW_FORM_flag_present);
             else
                 abuf.writeByte(DW_FORM_flag);
@@ -1685,11 +1692,8 @@ static if (ELFOBJ || MACHOBJ)
         if (sfunc.Sclass == SCglobal)
             debug_info.buf.writeByte(1);              // DW_AT_external
 
-        static if (DWARF_VERSION < 4)
-        {
-            if (sfunc.Sfunc.Fflags3 & Fpure)
-                debug_info.buf.writeByte(true);         // DW_AT_pure
-        }
+        if (config.dwarf < 4 && sfunc.Sfunc.Fflags3 & Fpure)
+            debug_info.buf.writeByte(true);           // DW_AT_pure
 
         // DW_AT_low_pc and DW_AT_high_pc
         dwarf_appreladdr(debug_info.seg, debug_info.buf, seg, funcoffset);
@@ -1704,9 +1708,9 @@ static if (ELFOBJ || MACHOBJ)
 
         if (haveparameters)
         {
-            for (SYMIDX si = 0; si < globsym.top; si++)
+            for (SYMIDX si = 0; si < globsym.length; si++)
             {
-                Symbol *sa = globsym.tab[si];
+                Symbol *sa = globsym[si];
 
                 version (MARS)
                     if (sa.Sflags & SFLnodebug)
@@ -1865,9 +1869,9 @@ static if (ELFOBJ || MACHOBJ)
      * Write out symbol table for current function.
      */
 
-    void cv_outsym(Symbol *s)
+    void dwarf_outsym(Symbol *s)
     {
-        //printf("cv_outsym('%s')\n",s.Sident.ptr);
+        //printf("dwarf_outsym('%s')\n",s.Sident.ptr);
         //symbol_print(s);
 
         symbol_debug(s);
@@ -1894,7 +1898,7 @@ static if (ELFOBJ || MACHOBJ)
                 typidx = dwarf_typidx(t);
 
                 abuf.writeByte(DW_TAG_variable);
-                abuf.writeByte(0);                  // no children
+                abuf.writeByte(DW_CHILDREN_no);
                 abuf.writeByte(DW_AT_name);         abuf.writeByte(DW_FORM_string);
                 abuf.writeByte(DW_AT_type);         abuf.writeByte(DW_FORM_ref4);
                 abuf.writeByte(DW_AT_external);     abuf.writeByte(DW_FORM_flag);
@@ -1954,17 +1958,11 @@ static if (ELFOBJ || MACHOBJ)
     /******************************************
      * Write out any deferred symbols.
      */
+    static if (0)
     void cv_outlist()
     {
     }
 
-
-    /******************************************
-     * Write out symbol table for current function.
-     */
-    void cv_func(Funcsym *s)
-    {
-    }
 
     /* =================== Cached Types in debug_info ================= */
 
@@ -1994,8 +1992,7 @@ static if (ELFOBJ || MACHOBJ)
 
         static immutable ubyte[10] abbrevTypeBasic =
         [
-            DW_TAG_base_type,
-            0,                      // no children
+            DW_TAG_base_type,       DW_CHILDREN_no,
             DW_AT_name,             DW_FORM_string,
             DW_AT_byte_size,        DW_FORM_data1,
             DW_AT_encoding,         DW_FORM_data1,
@@ -2003,8 +2000,7 @@ static if (ELFOBJ || MACHOBJ)
         ];
         static immutable ubyte[12] abbrevWchar =
         [
-            DW_TAG_typedef,
-            0,                      // no children
+            DW_TAG_typedef,         DW_CHILDREN_no,
             DW_AT_name,             DW_FORM_string,
             DW_AT_type,             DW_FORM_ref4,
             DW_AT_decl_file,        DW_FORM_data1,
@@ -2013,61 +2009,52 @@ static if (ELFOBJ || MACHOBJ)
         ];
         static immutable ubyte[6] abbrevTypePointer =
         [
-            DW_TAG_pointer_type,
-            0,                      // no children
+            DW_TAG_pointer_type,    DW_CHILDREN_no,
             DW_AT_type,             DW_FORM_ref4,
             0,                      0,
         ];
         static immutable ubyte[4] abbrevTypePointerVoid =
         [
-            DW_TAG_pointer_type,
-            0,                      // no children
+            DW_TAG_pointer_type,    DW_CHILDREN_no,
             0,                      0,
         ];
         static immutable ubyte[6] abbrevTypeRef =
         [
-            DW_TAG_reference_type,
-            0,                      // no children
+            DW_TAG_reference_type,  DW_CHILDREN_no,
             DW_AT_type,             DW_FORM_ref4,
             0,                      0,
         ];
         static immutable ubyte[6] abbrevTypeConst =
         [
-            DW_TAG_const_type,
-            0,                      // no children
+            DW_TAG_const_type,      DW_CHILDREN_no,
             DW_AT_type,             DW_FORM_ref4,
             0,                      0,
         ];
         static immutable ubyte[4] abbrevTypeConstVoid =
         [
-            DW_TAG_const_type,
-            0,                      // no children
+            DW_TAG_const_type,      DW_CHILDREN_no,
             0,                      0,
         ];
         static immutable ubyte[6] abbrevTypeVolatile =
         [
-            DW_TAG_volatile_type,
-            0,                      // no children
+            DW_TAG_volatile_type,   DW_CHILDREN_no,
             DW_AT_type,             DW_FORM_ref4,
             0,                      0,
         ];
         static immutable ubyte[4] abbrevTypeVolatileVoid =
         [
-            DW_TAG_volatile_type,
-            0,                      // no children
+            DW_TAG_volatile_type,   DW_CHILDREN_no,
             0,                      0,
         ];
         static immutable ubyte[6] abbrevTypeShared =
         [
-            DW_TAG_shared_type,
-            0,                      // no children
+            DW_TAG_shared_type,     DW_CHILDREN_no,
             DW_AT_type,             DW_FORM_ref4,
             0,                      0,
         ];
         static immutable ubyte[4] abbrevTypeSharedVoid =
         [
-            DW_TAG_shared_type,
-            0,                      // no children
+            DW_TAG_shared_type,     DW_CHILDREN_no,
             0,                      0,
         ];
 
@@ -2137,8 +2124,7 @@ static if (ELFOBJ || MACHOBJ)
 
         static immutable ubyte[8] abbrevTypeStruct =
         [
-            DW_TAG_structure_type,
-            1,                      // children
+            DW_TAG_structure_type,  DW_CHILDREN_yes,
             DW_AT_name,             DW_FORM_string,
             DW_AT_byte_size,        DW_FORM_data1,
             0,                      0,
@@ -2146,8 +2132,7 @@ static if (ELFOBJ || MACHOBJ)
 
         static immutable ubyte[10] abbrevTypeMember =
         [
-            DW_TAG_member,
-            0,                      // no children
+            DW_TAG_member,          DW_CHILDREN_no,
             DW_AT_name,             DW_FORM_string,
             DW_AT_type,             DW_FORM_ref4,
             DW_AT_data_member_location, DW_FORM_block1,
@@ -2193,8 +2178,16 @@ static if (ELFOBJ || MACHOBJ)
                     idx = cast(uint)debug_info.buf.length();
                     debug_info.buf.writeuLEB128(code);        // abbreviation code
                     debug_info.buf.write("_Array_".ptr, 7);       // DW_AT_name
-                    if (tybasic(t.Tnext.Tty))
-                        debug_info.buf.writeString(tystring[tybasic(t.Tnext.Tty)]);
+                    // Handles multi-dimensional array
+                    auto lastdim = t.Tnext;
+                    while (lastdim.Tty == TYucent && lastdim.Tnext)
+                    {
+                        debug_info.buf.write("Array_".ptr, 6);
+                        lastdim = lastdim.Tnext;
+                    }
+
+                    if (tybasic(lastdim.Tty))
+                        debug_info.buf.writeString(tystring[tybasic(lastdim.Tty)]);
                     else
                         debug_info.buf.writeByte(0);
                     debug_info.buf.writeByte(tysize(t.Tty)); // DW_AT_byte_size
@@ -2338,7 +2331,7 @@ static if (ELFOBJ || MACHOBJ)
             case TYint:         p = "int";           goto Lsigned;
             case TYuint:        p = "uint";          goto Lsigned;
             case TYlong:        p = "long";          goto Lsigned;
-            case TYulong:       p = "uint long";        goto Lsigned;
+            case TYulong:       p = "ulong";         goto Lsigned;
             case TYdchar:       p = "dchar";                goto Lsigned;
             case TYfloat:       p = "float";        ate = DW_ATE_float;     goto Lsigned;
             case TYdouble_alias:
@@ -2412,10 +2405,7 @@ static if (ELFOBJ || MACHOBJ)
                  */
                 Outbuffer abuf;             // for abbrev
                 abuf.writeByte(DW_TAG_subroutine_type);
-                if (params)
-                    abuf.writeByte(1);      // children
-                else
-                    abuf.writeByte(0);      // no children
+                abuf.writeByte(params ? DW_CHILDREN_yes : DW_CHILDREN_no);
                 abuf.writeByte(DW_AT_prototyped);
                 abuf.writeByte(DW_FORM_flag);
                 if (nextidx != 0)           // Don't write DW_AT_type for void
@@ -2469,29 +2459,25 @@ static if (ELFOBJ || MACHOBJ)
             {
                 static immutable ubyte[6] abbrevTypeArray =
                 [
-                    DW_TAG_array_type,
-                    1,                      // child (the subrange type)
+                    DW_TAG_array_type,      DW_CHILDREN_yes,    // child (the subrange type)
                     DW_AT_type,             DW_FORM_ref4,
                     0,                      0,
                 ];
                 static immutable ubyte[4] abbrevTypeArrayVoid =
                 [
-                    DW_TAG_array_type,
-                    1,                      // child (the subrange type)
+                    DW_TAG_array_type,      DW_CHILDREN_yes,    // child (the subrange type)
                     0,                      0,
                 ];
                 static immutable ubyte[8] abbrevTypeSubrange =
                 [
-                    DW_TAG_subrange_type,
-                    0,                      // no children
+                    DW_TAG_subrange_type,   DW_CHILDREN_no,
                     DW_AT_type,             DW_FORM_ref4,
                     DW_AT_upper_bound,      DW_FORM_data4,
                     0,                      0,
                 ];
                 static immutable ubyte[6] abbrevTypeSubrange2 =
                 [
-                    DW_TAG_subrange_type,
-                    0,                      // no children
+                    DW_TAG_subrange_type,   DW_CHILDREN_no,
                     DW_AT_type,             DW_FORM_ref4,
                     0,                      0,
                 ];
@@ -2552,8 +2538,7 @@ static if (ELFOBJ || MACHOBJ)
             {
                 static immutable ubyte[9] abbrevTypeArray2 =
                 [
-                    DW_TAG_array_type,
-                    1,                      // child (the subrange type)
+                    DW_TAG_array_type,      DW_CHILDREN_yes,    // child (the subrange type)
                     (DW_AT_GNU_vector & 0x7F) | 0x80, DW_AT_GNU_vector >> 7,
                     DW_FORM_flag,
                     DW_AT_type,             DW_FORM_ref4,
@@ -2561,10 +2546,9 @@ static if (ELFOBJ || MACHOBJ)
                 ];
                 static immutable ubyte[6] abbrevSubRange =
                 [
-                    DW_TAG_subrange_type,
-                    0,                                // no children
-                    DW_AT_upper_bound, DW_FORM_data1, // length of vector
-                    0,                 0,
+                    DW_TAG_subrange_type,   DW_CHILDREN_no,
+                    DW_AT_upper_bound,      DW_FORM_data1,  // length of vector
+                    0,                      0,
                 ];
 
                 uint code2 = dwarf_abbrev_code(abbrevTypeArray2.ptr, (abbrevTypeArray2).sizeof);
@@ -2611,16 +2595,14 @@ static if (ELFOBJ || MACHOBJ)
 
                 __gshared ubyte[8] abbrevTypeStruct0 =
                 [
-                    DW_TAG_structure_type,
-                    0,                      // no children
+                    DW_TAG_structure_type,  DW_CHILDREN_no,
                     DW_AT_name,             DW_FORM_string,
                     DW_AT_byte_size,        DW_FORM_data1,
                     0,                      0,
                 ];
                 __gshared ubyte[8] abbrevTypeStruct1 =
                 [
-                    DW_TAG_structure_type,
-                    0,                      // no children
+                    DW_TAG_structure_type,  DW_CHILDREN_no,
                     DW_AT_name,             DW_FORM_string,
                     DW_AT_declaration,      DW_FORM_flag,
                     0,                      0,
@@ -2660,7 +2642,7 @@ static if (ELFOBJ || MACHOBJ)
                 if (nfields == 0)
                 {
                     abbrevTypeStruct0[0] = dwarf_classify_struct(st.Sflags);
-                    abbrevTypeStruct0[1] = 0;               // no children
+                    abbrevTypeStruct0[1] = DW_CHILDREN_no;
                     abbrevTypeStruct0[5] = DW_FORM_data1;   // DW_AT_byte_size
                     code = dwarf_abbrev_code(abbrevTypeStruct0.ptr, (abbrevTypeStruct0).sizeof);
                     idx = cast(uint)debug_info.buf.length();
@@ -2672,7 +2654,7 @@ static if (ELFOBJ || MACHOBJ)
                 {
                     Outbuffer abuf;         // for abbrev
                     abuf.writeByte(dwarf_classify_struct(st.Sflags));
-                    abuf.writeByte(1);              // children
+                    abuf.writeByte(DW_CHILDREN_yes);
                     abuf.writeByte(DW_AT_name);     abuf.writeByte(DW_FORM_string);
                     abuf.writeByte(DW_AT_byte_size);
 
@@ -2690,7 +2672,7 @@ static if (ELFOBJ || MACHOBJ)
                     uint membercode;
                     abuf.reset();
                     abuf.writeByte(DW_TAG_member);
-                    abuf.writeByte(0);              // no children
+                    abuf.writeByte(DW_CHILDREN_no);
                     abuf.writeByte(DW_AT_name);
                     abuf.writeByte(DW_FORM_string);
                     abuf.writeByte(DW_AT_type);
@@ -2750,16 +2732,14 @@ static if (ELFOBJ || MACHOBJ)
             {
                 static immutable ubyte[8] abbrevTypeEnum =
                 [
-                    DW_TAG_enumeration_type,
-                    1,                      // child (the subrange type)
+                    DW_TAG_enumeration_type,DW_CHILDREN_yes,    // child (the subrange type)
                     DW_AT_name,             DW_FORM_string,
                     DW_AT_byte_size,        DW_FORM_data1,
                     0,                      0,
                 ];
                 static immutable ubyte[8] abbrevTypeEnumMember =
                 [
-                    DW_TAG_enumerator,
-                    0,                      // no children
+                    DW_TAG_enumerator,      DW_CHILDREN_no,
                     DW_AT_name,             DW_FORM_string,
                     DW_AT_const_value,      DW_FORM_data1,
                     0,                      0,
@@ -2778,11 +2758,10 @@ static if (ELFOBJ || MACHOBJ)
                 {
                     static immutable ubyte[8] abbrevTypeEnumForward =
                     [
-                        DW_TAG_enumeration_type,
-                        0,                  // no children
-                        DW_AT_name,         DW_FORM_string,
-                        DW_AT_declaration,  DW_FORM_flag,
-                        0,                  0,
+                        DW_TAG_enumeration_type,    DW_CHILDREN_no,
+                        DW_AT_name,                 DW_FORM_string,
+                        DW_AT_declaration,          DW_FORM_flag,
+                        0,                          0,
                     ];
                     code = dwarf_abbrev_code(abbrevTypeEnumForward.ptr, abbrevTypeEnumForward.sizeof);
                     idx = cast(uint)debug_info.buf.length();
@@ -2799,7 +2778,7 @@ static if (ELFOBJ || MACHOBJ)
                 uint membercode;
                 abuf.reset();
                 abuf.writeByte(DW_TAG_enumerator);
-                abuf.writeByte(0);
+                abuf.writeByte(DW_CHILDREN_no);
                 abuf.writeByte(DW_AT_name);
                 abuf.writeByte(DW_FORM_string);
                 abuf.writeByte(DW_AT_const_value);

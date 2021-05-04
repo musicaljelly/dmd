@@ -22,9 +22,8 @@ extern(C++) class ImportVisitor2(AST) : ParseTimeTransitiveVisitor!AST
 
         printf("import ");
 
-        if (imp.packages && imp.packages.dim)
-            foreach (const pid; *imp.packages)
-                printf("%s.", pid.toChars());
+        foreach (const pid; imp.packages)
+            printf("%s.", pid.toChars());
 
         printf("%s", imp.id.toChars());
 
@@ -98,7 +97,7 @@ void main()
 
         Id.initialize();
         global._init();
-        global.params.isLinux = true;
+        global.params.targetOS = TargetOS.linux;
         global.params.is64bit = (size_t.sizeof == 8);
         global.params.useUnitTests = true;
         ASTBase.Type._init();

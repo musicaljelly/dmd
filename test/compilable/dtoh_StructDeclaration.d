@@ -7,9 +7,37 @@ TEST_OUTPUT:
 
 #pragma once
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <math.h>
 
+#ifdef CUSTOM_D_ARRAY_TYPE
+#define _d_dynamicArray CUSTOM_D_ARRAY_TYPE
+#else
+/// Represents a D [] array
+template<typename T>
+struct _d_dynamicArray
+{
+    size_t length;
+    T *ptr;
+
+    _d_dynamicArray() : length(0), ptr(NULL) { }
+
+    _d_dynamicArray(size_t length_in, T *ptr_in)
+        : length(length_in), ptr(ptr_in) { }
+
+    T& operator[](const size_t idx) {
+        assert(idx < length);
+        return ptr[idx];
+    }
+
+    const T& operator[](const size_t idx) const {
+        assert(idx < length);
+        return ptr[idx];
+    }
+};
+#endif
 
 struct S;
 struct Inner;
@@ -19,12 +47,20 @@ struct S
     int8_t a;
     int32_t b;
     int64_t c;
+    _d_dynamicArray< int32_t > arr;
     S() :
         a(),
         b(),
-        c()
+        c(),
+        arr()
     {
     }
+    S(int8_t a, int32_t b = 0, int64_t c = 0LL, _d_dynamicArray< int32_t > arr = {}) :
+        a(a),
+        b(b),
+        c(c),
+        arr(arr)
+        {}
 };
 
 struct S2
@@ -32,7 +68,9 @@ struct S2
     int32_t a;
     int32_t b;
     int64_t c;
+    S d;
     S2(int32_t a);
+    S2(char ) = delete;
     S2() :
         a(42),
         b(),
@@ -68,6 +106,12 @@ struct S4
         d()
     {
     }
+    S4(int32_t a, int64_t b = 0LL, int32_t c = 0, int8_t d = 0) :
+        a(a),
+        b(b),
+        c(c),
+        d(d)
+        {}
 };
 
 #pragma pack(push, 1)
@@ -85,6 +129,18 @@ struct Aligned
     }
 };
 #pragma pack(pop)
+
+struct Null
+{
+    void* field;
+    Null() :
+        field(nullptr)
+    {
+    }
+    Null(void* field) :
+        field(field)
+        {}
+};
 
 struct A
 {
@@ -109,6 +165,9 @@ struct A
             x()
         {
         }
+        Inner(int32_t x) :
+            x(x)
+            {}
     };
 
     typedef Inner I;
@@ -119,6 +178,16 @@ struct A
         s()
     {
     }
+    A(int32_t a, S s = S(0, 0, 0LL, {})) :
+        a(a),
+        s(s)
+        {}
+};
+
+union U
+{
+    int32_t i;
+    char c;
 };
 ---
 */
@@ -127,11 +196,6 @@ struct A
 StructDeclaration has the following issues:
   * align different than 1 does nothing; we should support align(n), where `n` in [1, 2, 4, 8, 16]
   * align(n): inside struct definition doesn’t add alignment, but breaks generation of default ctors
-  * default ctors should be generated only if struct has no ctors
-  * if a struct has ctors defined, only default ctor (S() { … }) should be generated to init members to default values, and the defined ctors must be declared
-  * if a struct has ctors defined, the declared ctors must have the name of the struct, not __ctor, as `__ctor` might not be portable
-  * if a struct has a `member = void`, dtoh code segfaults
-  * a struct should only define ctors if it’s extern (C++)
 */
 
 extern (C++) struct S
@@ -139,6 +203,7 @@ extern (C++) struct S
     byte a;
     int b;
     long c;
+    int[] arr;
 }
 
 extern (C++) struct S2
@@ -146,8 +211,11 @@ extern (C++) struct S2
     int a = 42;
     int b;
     long c;
+    S d = void;
 
     this(int a) {}
+    extern(D) this(int, int, long) {}
+    @disable this(char);
 }
 
 extern (C) struct S3
@@ -175,6 +243,11 @@ extern (C++) align(1) struct Aligned
     long c;
 
     this(int a) {}
+}
+
+extern (C++) struct Null
+{
+    void* field = null;
 }
 
 extern (C++) struct A
@@ -207,4 +280,10 @@ extern (C++) struct A
 
     extern(C++) class C;
 
+}
+
+extern(C++) union U
+{
+    int i;
+    char c;
 }

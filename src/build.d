@@ -22,9 +22,12 @@ import std.parallelism : TaskPool, totalCPUs;
 const thisBuildScript = __FILE_FULL_PATH__.buildNormalizedPath;
 const srcDir = thisBuildScript.dirName;
 const dmdRepo = srcDir.dirName;
+const testDir = dmdRepo.buildPath("test");
+
 shared bool verbose; // output verbose logging
 shared bool force; // always build everything (ignores timestamp checking)
 shared bool dryRun; /// dont execute targets, just print command to be executed
+__gshared int jobs; // Number of jobs to run in parallel
 
 __gshared string[string] env;
 __gshared string[][string] flags;
@@ -38,6 +41,7 @@ immutable rootRules = [
     &runDmdUnittest,
     &clean,
     &checkwhitespace,
+    &runTests,
     &buildFrontendHeaders,
     &runCxxHeadersTest,
     &runCxxUnittest,
@@ -72,7 +76,7 @@ int main(string[] args)
 
 void runMain(string[] args)
 {
-    int jobs = totalCPUs;
+    jobs = totalCPUs;
     bool calledFromMake = false;
     auto res = getopt(args,
         "j|jobs", "Specifies the number of jobs (commands) to run simultaneously (default: %d)".format(totalCPUs), &jobs,
@@ -346,8 +350,8 @@ alias backend = makeRuleWithArgs!((MethodInitializer!BuildRule builder, BuildRul
         .chain(
             (
                 // Only use -betterC when it doesn't break other features
-                extraFlags.canFind("-unittest", "-cov") ||
-                flags["DFLAGS"].canFind("-unittest", "-cov")
+                extraFlags.canFind("-unittest", env["COVERAGE_FLAG"]) ||
+                flags["DFLAGS"].canFind("-unittest", env["COVERAGE_FLAG"])
             ) ? [] : ["-betterC"],
             flags["DFLAGS"], extraFlags,
 
@@ -438,6 +442,34 @@ alias dmdDefault = makeRule!((builder, rule) => builder
     .deps([dmdExe(null, null, null), dmdConf])
 );
 
+/// Run's the test suite (unittests & `run.d`)
+alias runTests = makeRule!((testBuilder, testRule)
+{
+    // Precompiles the test runner
+    alias runner = methodInit!(BuildRule, (rundBuilder, rundRule) => rundBuilder
+        .msg("(DMD) RUN.D")
+        .sources([ testDir.buildPath( "run.d") ])
+        .target(env["GENERATED"].buildPath("run".exeName))
+        .command([ env["HOST_DMD"], "-of=" ~ rundRule.target, "-i", "-I" ~ testDir] ~ rundRule.sources));
+
+    // Reference header assumes Linux64
+    auto headerCheck = env["OS"] == "linux" && env["MODEL"] == "64"
+                    ? [ runCxxHeadersTest ] : null;
+
+    testBuilder
+        .name("test")
+        .description("Run the test suite using test/run.d")
+        .msg("(RUN) TEST")
+        .deps([dmdDefault, runDmdUnittest, runner] ~ headerCheck)
+        .commandFunction({
+            // Use spawnProcess to avoid output redirection for `command`s
+            const scope cmd = [ runner.targets[0], "-j" ~ jobs.to!string ];
+            log("%-(%s %)", cmd);
+            if (spawnProcess(cmd, null, Config.init, testDir).wait())
+                abortBuild("Tests failed!");
+        });
+});
+
 /// BuildRule to run the DMD unittest executable.
 alias runDmdUnittest = makeRule!((builder, rule) {
 auto dmdUnittestExe = dmdExe("-unittest", ["-version=NoMain", "-unittest", "-main"], ["-unittest"]);
@@ -463,13 +495,14 @@ alias buildFrontendHeaders = makeRule!((builder, rule) {
         .deps([dmdDefault])
         .target(env["G"].buildPath("frontend.h"))
         .command([dmdExeFile] ~ flags["DFLAGS"] ~
-            ["-J" ~ env["RES"], "-c", "-o-", "-HCf="~rule.target] ~ dmdSources);
+            // Ignore warnings because of invalid C++ identifiers in the source code
+            ["-J" ~ env["RES"], "-c", "-o-", "-wi", "-HCf="~rule.target] ~ dmdSources);
 });
 
 alias runCxxHeadersTest = makeRule!((builder, rule) {
     builder
         .name("cxx-headers-test")
-        .description("Test the C++ frontend headers ")
+        .description("Check that the C++ interface matches `src/dmd/frontend.h`")
         .msg("(TEST) CXX-HEADERS")
         .deps([buildFrontendHeaders])
         .commandFunction(() {
@@ -488,11 +521,28 @@ alias runCxxHeadersTest = makeRule!((builder, rule) {
                 }
                 else
                 {
+                    import core.runtime : Runtime;
+
                     string message = "ERROR: Newly generated header file (" ~ cxxHeaderGeneratedPath ~
                         ") doesn't match with the reference header file (" ~
                         cxxHeaderReferencePath ~ ")\n";
                     auto diff = tryRun(["git", "diff", "--no-index", cxxHeaderReferencePath, cxxHeaderGeneratedPath], runDir).output;
-                    diff ~= "\n===============\nNOTE: You can rerun with AUTO_UPDATE=1 to automatically update the reference header file.";
+                    diff ~= "\n===============
+The file `src/dmd/frontend.h` seems to be out of sync. This is likely because
+changes were made which affect the C++ interface used by GDC and LDC.
+
+Make sure that those changes have been properly reflected in the relevant header
+files (e.g. `src/dmd/scope.h` for changes in `src/dmd/dscope.d`).
+
+To update `frontend.h` and fix this error, run the following command:
+
+`" ~ Runtime.args[0] ~ " cxx-headers-test AUTO_UPDATE=1`
+
+Note that the generated code need not be valid, as the header generator
+(`src/dmd/dtoh.d`) is still under development.
+
+To read more about `frontend.h` and its usage, see src/README.md#cxx-headers-test
+";
                     abortBuild(message, diff);
                 }
             }
@@ -507,7 +557,7 @@ alias runCxxUnittest = makeRule!((runCxxBuilder, runCxxRule) {
         .name("cxx-frontend")
         .description("Build the C++ frontend")
         .msg("(CXX) CXX-FRONTEND")
-        .sources(srcDir.buildPath("tests", "cxxfrontend.c") ~ .sources.frontendHeaders ~ .sources.rootHeaders ~ .sources.dmd.frontend ~ .sources.root)
+        .sources(srcDir.buildPath("tests", "cxxfrontend.c") ~ .sources.frontendHeaders ~ .sources.rootHeaders ~ .sources.dmd.driver ~ .sources.dmd.frontend ~ .sources.root)
         .target(env["G"].buildPath("cxxfrontend").objName)
         // No explicit if since CXX_KIND will always be either g++ or clang++
         .command([ env["CXX"], "-xc++", "-std=c++11",
@@ -519,7 +569,7 @@ alias runCxxUnittest = makeRule!((runCxxBuilder, runCxxRule) {
         .description("Build the C++ unittests")
         .msg("(DMD) CXX-UNITTEST")
         .deps([lexer(null, null), cxxFrontend])
-        .sources(sources.dmd.frontend ~ sources.root)
+        .sources(sources.dmd.driver ~ sources.dmd.frontend ~ sources.root)
         .target(env["G"].buildPath("cxx-unittest").exeName)
         .command([ env["HOST_DMD_RUN"], "-of=" ~ exeRule.target, "-vtls", "-J" ~ env["RES"],
                     "-L-lstdc++", "-version=NoMain", "-version=NoBackend"
@@ -824,7 +874,16 @@ alias install = makeRule!((builder, rule) {
             installRelativeFiles(env["INSTALL"], dmdRepo, sourceFiles);
 
         const scPath = buildPath(env["OS"], bin, conf);
-        copyAndTouch(buildPath(dmdRepo, "ini", scPath), buildPath(env["INSTALL"], scPath));
+        const iniPath = buildPath(dmdRepo, "ini");
+
+        // The sources distributed alongside an official release only include the
+        // configuration of the current OS at the root directory instead of the
+        // whole `ini` folder in the project root.
+        const confPath = iniPath.exists()
+                        ? buildPath(iniPath, scPath)
+                        : buildPath(dmdRepo, "..", scPath);
+
+        copyAndTouch(confPath, buildPath(env["INSTALL"], scPath));
 
         version (Posix)
             copyAndTouch(sourceFiles[$-1], env["INSTALL"].buildPath("dmd-boostlicense.txt"));
@@ -963,12 +1022,20 @@ void parseEnvironment()
         // default to PIC on x86_64, use PIC=1/0 to en-/disable PIC.
         // Note that shared libraries and C files are always compiled with PIC.
         bool pic;
-        version(X86_64)
+        if (model == "64")
             pic = true;
-        else version(X86)
+        else if (model == "32")
             pic = false;
-        if (env.getNumberedBool("PIC"))
-            pic = true;
+
+        const picValue = env.getDefault("PIC", "");
+        switch (picValue)
+        {
+            case "": /** Keep the default **/ break;
+            case "0": pic = false; break;
+            case "1": pic = true; break;
+            default:
+                throw abortBuild(format("Variable 'PIC' should be '0', '1' or <empty> but got '%s'", picValue));
+        }
 
         env["PIC_FLAG"]  = pic ? "-fPIC" : "";
     }
@@ -981,7 +1048,7 @@ void parseEnvironment()
     env.setDefault("GIT_HOME", "https://github.com/dlang");
     env.setDefault("SYSCONFDIR", "/etc");
     env.setDefault("TMP", tempDir);
-    env.setDefault("RES", dmdRepo.buildPath("src/dmd/res"));
+    env.setDefault("RES", srcDir.buildPath("dmd", "res"));
     env.setDefault("MAKE", "make");
 
     version (Windows)
@@ -1017,10 +1084,10 @@ void parseEnvironment()
     // Auto-bootstrapping of a specific host compiler
     if (env.getNumberedBool("AUTO_BOOTSTRAP"))
     {
-        auto hostDMDVer = env.getDefault("HOST_DMD_VER", "2.088.0");
+        auto hostDMDVer = env.getDefault("HOST_DMD_VER", "2.095.0");
         writefln("Using Bootstrap compiler: %s", hostDMDVer);
         auto hostDMDRoot = env["G"].buildPath("host_dmd-"~hostDMDVer);
-        auto hostDMDBase = hostDMDVer~"."~os;
+        auto hostDMDBase = hostDMDVer~"."~(os == "freebsd" ? os~"-"~model : os);
         auto hostDMDURL = "http://downloads.dlang.org/releases/2.x/"~hostDMDVer~"/dmd."~hostDMDBase;
         env["HOST_DMD"] = hostDMDRoot.buildPath("dmd2", os, os == "osx" ? "bin" : "bin"~model, "dmd");
         env["HOST_DMD_PATH"] = env["HOST_DMD"];
@@ -1138,9 +1205,14 @@ void processEnvironment()
     {
         dflags ~= ["-profile"];
     }
+
+    // Enable CTFE coverage for recent host compilers
+    const cov = env["HOST_DMD_VERSION"] >= "2.094.0" ? "-cov=ctfe" : "-cov";
+    env["COVERAGE_FLAG"] = cov;
+
     if (env.getNumberedBool("ENABLE_COVERAGE"))
     {
-        dflags ~= ["-cov"];
+        dflags ~= [ cov ];
     }
     const sanitizers = env.getDefault("ENABLE_SANITIZERS", "");
     if (!sanitizers.empty)
@@ -1235,7 +1307,7 @@ auto sourceFiles()
 {
     static struct DmdSources
     {
-        string[] all, frontend, glue, backendHeaders;
+        string[] all, driver, frontend, glue, backendHeaders;
     }
     static struct Sources
     {
@@ -1251,19 +1323,22 @@ auto sourceFiles()
             dmsc.d e2ir.d eh.d iasm.d iasmdmd.d iasmgcc.d glue.d objc_glue.d
             s2ir.d tocsym.d toctype.d tocvdebug.d todt.d toir.d toobj.d
         "),
+        driver: fileArray(env["D"], "dinifile.d gluelayer.d lib.d libelf.d libmach.d libmscoff.d libomf.d
+            link.d mars.d scanelf.d scanmach.d scanmscoff.d scanomf.d vsoptions.d
+        "),
         frontend: fileArray(env["D"], "
             access.d aggregate.d aliasthis.d apply.d argtypes_x86.d argtypes_sysv_x64.d argtypes_aarch64.d arrayop.d
             arraytypes.d ast_node.d astcodegen.d asttypename.d attrib.d blockexit.d builtin.d canthrow.d chkformat.d
             cli.d clone.d compiler.d complex.d cond.d constfold.d cppmangle.d cppmanglewin.d ctfeexpr.d
-            ctorflow.d dcast.d dclass.d declaration.d delegatize.d denum.d dimport.d dinifile.d
+            ctorflow.d dcast.d dclass.d declaration.d delegatize.d denum.d dimport.d
             dinterpret.d dmacro.d dmangle.d dmodule.d doc.d dscope.d dstruct.d dsymbol.d dsymbolsem.d
-            dtemplate.d dtoh.d dversion.d env.d escape.d expression.d expressionsem.d func.d gluelayer.d hdrgen.d impcnvtab.d
-            imphint.d init.d initsem.d inline.d inlinecost.d intrange.d json.d lambdacomp.d lib.d libelf.d
-            libmach.d libmscoff.d libomf.d link.d mars.d mtype.d nogc.d nspace.d ob.d objc.d opover.d optimize.d
-            parse.d parsetimevisitor.d permissivevisitor.d printast.d safe.d sapply.d scanelf.d scanmach.d
-            scanmscoff.d scanomf.d semantic2.d semantic3.d sideeffect.d statement.d statement_rewrite_walker.d
+            dtemplate.d dtoh.d dversion.d env.d escape.d expression.d expressionsem.d func.d hdrgen.d impcnvtab.d
+            imphint.d init.d initsem.d inline.d inlinecost.d intrange.d json.d lambdacomp.d
+            mtype.d nogc.d nspace.d ob.d objc.d opover.d optimize.d
+            parse.d parsetimevisitor.d permissivevisitor.d printast.d safe.d sapply.d
+            semantic2.d semantic3.d sideeffect.d statement.d statement_rewrite_walker.d
             statementsem.d staticassert.d staticcond.d stmtstate.d target.d templateparamsem.d traits.d
-            transitivevisitor.d typesem.d typinf.d utils.d visitor.d vsoptions.d foreachvar.d
+            transitivevisitor.d typesem.d typinf.d utils.d visitor.d foreachvar.d
         "),
         backendHeaders: fileArray(env["C"], "
             cc.d cdef.d cgcv.d code.d cv4.d dt.d el.d global.d
@@ -1301,11 +1376,11 @@ auto sourceFiles()
             backend.d bcomplex.d evalu8.d divcoeff.d dvec.d go.d gsroa.d glocal.d gdag.d gother.d gflow.d
             out.d
             gloop.d compress.d cgelem.d cgcs.d ee.d cod4.d cod5.d nteh.d blockopt.d mem.d cg.d cgreg.d
-            dtype.d debugprint.d fp.d symbol.d elem.d dcode.d cgsched.d cg87.d cgxmm.d cgcod.d cod1.d cod2.d
+            dtype.d debugprint.d fp.d symbol.d symtab.d elem.d dcode.d cgsched.d cg87.d cgxmm.d cgcod.d cod1.d cod2.d
             cod3.d cv8.d dcgcv.d pdata.d util2.d var.d md5.d backconfig.d ph2.d drtlsym.d dwarfeh.d ptrntab.d
             dvarstats.d dwarfdbginf.d cgen.d os.d goh.d barray.d cgcse.d elpicpie.d
-            machobj.d elfobj.d
-            " ~ ((env["OS"] == "windows") ? "cgobj.d filespec.d mscoffobj.d newman.d" : "aarray.d")
+            machobj.d elfobj.d mscoffobj.d filespec.d newman.d cgobj.d aarray.d
+            "
         ),
     };
 
@@ -1698,6 +1773,11 @@ class BuildRule
             {
                 command.run;
             }
+            else
+                // Do not automatically return true if the target has neither
+                // command nor command function (e.g. dmdDefault) to avoid
+                // unecessary rebuilds
+                return depUpdated;
         }
 
         return true;
@@ -1962,7 +2042,33 @@ auto run(T)(T args, string workDir = runDir)
     auto res = tryRun(args, workDir);
     if (res.status)
     {
-        abortBuild(res.output ? res.output : format("Last command failed with exit code %s", res.status));
+        string details;
+
+        // Rerun with GDB if e.g. a segfault occurred
+        // Limit this to executables within `generated` to not debug e.g. Git
+        version (linux)
+        if (res.status < 0 && args[0].startsWith(env["G"]))
+        {
+            // This should use --args to pass the command line parameters, but that
+            // flag is only available since 7.1.1 and hence missing on some CI machines
+            auto gdb = [
+                "gdb", "-batch", // "-q","-n",
+                args[0],
+                "-ex", "set backtrace limit 100",
+                "-ex", format("run %-(%s %)", args[1..$]),
+                "-ex", "bt",
+                "-ex", "info args",
+                "-ex", "info locals",
+            ];
+
+            // Include gdb output as details (if GDB is available)
+            try
+                details = tryRun(gdb, workDir).output;
+            catch (ProcessException e)
+                log("GDB failed: %s", e);
+        }
+
+        abortBuild(res.output ? res.output : format("Last command failed with exit code %s", res.status), details);
     }
     return res.output;
 }

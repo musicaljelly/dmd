@@ -3,7 +3,7 @@
  * $(LINK2 http://www.dlang.org, D programming language).
  *
  * Copyright:   Copyright (C) 1985-1998 by Symantec
- *              Copyright (C) 2000-2020 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/code.d, backend/_code.d)
@@ -234,7 +234,7 @@ struct seg_data
     targ_size_t          SDoffset;      // starting offset for data
     int                  SDalignment;   // power of 2
 
-    static if (TARGET_WINDOS)
+    static if (1) // for Windows
     {
         bool isfarseg;
         int segidx;                     // internal object file segment number
@@ -266,13 +266,11 @@ struct seg_data
     Barray!(linnum_data) SDlinnum_data;     // array of line number / offset data
 
   nothrow:
-    version (Windows)
-        int isCode() { return seg_data_isCode(this); }
-    version (OSX)
-        int isCode() { return seg_data_isCode(this); }
+    int isCode() { return config.objfmt == OBJ_MACH ? mach_seg_data_isCode(this) : mscoff_seg_data_isCode(this); }
 }
 
-extern int seg_data_isCode(const ref seg_data sd) @system;
+extern int mach_seg_data_isCode(const ref seg_data sd) @system;
+extern int mscoff_seg_data_isCode(const ref seg_data sd) @system;
 
 struct linnum_data
 {
@@ -368,7 +366,6 @@ extern __gshared bool anyiasm;
 extern __gshared char calledafunc;
 extern __gshared bool calledFinally;
 
-void stackoffsets(int);
 void codgen(Symbol *);
 
 debug
@@ -561,7 +558,7 @@ void searchfixlist(Symbol *s) {}
 void outfixlist();
 void code_hydrate(code **pc);
 void code_dehydrate(code **pc);
-regm_t allocretregs(tym_t ty, type *t, tym_t tyf, reg_t *reg1, reg_t *reg2);
+regm_t allocretregs(const tym_t ty, type* t, const tym_t tyf, out reg_t reg1, out reg_t reg2);
 
 extern __gshared
 {
@@ -633,8 +630,8 @@ void gensaverestore87(regm_t, ref CodeBuilder cdbsave, ref CodeBuilder cdbrestor
 //code *genfltreg(code *c,opcode_t opcode,uint reg,targ_size_t offset);
 void genfwait(ref CodeBuilder cdb);
 void comsub87(ref CodeBuilder cdb, elem *e, regm_t *pretregs);
-void fixresult87(ref CodeBuilder cdb, elem *e, regm_t retregs, regm_t *pretregs);
-void fixresult_complex87(ref CodeBuilder cdb,elem *e,regm_t retregs,regm_t *pretregs);
+void fixresult87(ref CodeBuilder cdb, elem *e, regm_t retregs, regm_t *pretregs, bool isReturnValue = false);
+void fixresult_complex87(ref CodeBuilder cdb,elem *e,regm_t retregs,regm_t *pretregs, bool isReturnValue = false);
 void orth87(ref CodeBuilder cdb, elem *e, regm_t *pretregs);
 void load87(ref CodeBuilder cdb, elem *e, uint eoffset, regm_t *pretregs, elem *eleft, int op);
 int cmporder87 (elem *e );

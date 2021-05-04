@@ -1,5 +1,5 @@
 /*
-REQUIRED_ARGS: -mcpu=native -preview=intpromote -preview=intpromote
+REQUIRED_ARGS: -mcpu=native -preview=intpromote
 PERMUTE_ARGS: -O -inline -release
 */
 
@@ -2064,6 +2064,41 @@ void test20162()
 }
 
 ////////////////////////////////////////////////////////////////////////
+// https://issues.dlang.org/show_bug.cgi?id=3713
+
+int star1(int i)
+{
+    return i ? star1(i - 1) : 0;
+}
+
+int star2(int i)
+{
+    return i == 0 ? 0 : star2(i - 1);
+}
+
+int star3(int i)
+{
+    if (i == 0)
+        return 0;
+    return i == 2 ? star3(i - 2) : star3(i - 1);
+}
+
+int star4(int i)
+{
+    return (i == 0) ? 0
+          : i != 2  ? star4(i - 1)
+          : star4(i - 2);
+}
+
+void test3713()
+{
+    assert(star1(10) == 0);
+    assert(star2(10) == 0);
+    assert(star3(10) == 0);
+    assert(star4(10) == 0);
+}
+
+////////////////////////////////////////////////////////////////////////
 
 void testsbbrex()
 {
@@ -2204,6 +2239,29 @@ void test21038()
 
 ////////////////////////////////////////////////////////////////////////
 
+// https://issues.dlang.org/show_bug.cgi?id=21325
+
+real f21325(const real x) pure @safe nothrow @nogc
+{
+    return (x != 0.0L) ? x : real.nan;
+}
+
+void test21325() @safe
+{
+    ulong x = 0uL;
+    while(true)
+    {
+        const y = f21325(x); // should set y to real.nan
+
+        assert(y != y);
+
+        if (++x)
+            return; // good
+    }
+}
+
+////////////////////////////////////////////////////////////////////////
+
 // https://issues.dlang.org/show_bug.cgi?id=19846
 
 alias Void = byte[0];
@@ -2249,6 +2307,122 @@ void test16268()
     }
 
     f(byte.max);
+}
+
+////////////////////////////////////////////////////////////////////////
+// https://issues.dlang.org/show_bug.cgi?id=11435
+
+void test11435a()
+{
+    alias T = byte;
+
+    static void fun(T c, T b, int v)
+    {
+    }
+
+    static void abc(T[] b)
+    {
+        fun(b[0], b[1], 0);
+    }
+
+    version(Windows)
+    {
+        import core.sys.windows.windows;
+        auto p = VirtualAlloc(null, 4096, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    }
+    else
+    {
+        import core.sys.posix.sys.mman;
+        auto p = mmap(null, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0L);
+    }
+    assert(p);
+    auto px = (cast(T*)(p + 4096 - 2 * T.sizeof));
+    abc(px[0..2]);
+}
+
+void test11435b()
+{
+    import core.sys.windows.windows;
+    alias T = short;
+
+    static void fun(T c, T b, int v)
+    {
+    }
+
+    static void abc(T[] b)
+    {
+        fun(b[0], b[1], 0);
+    }
+
+    version(Windows)
+    {
+        import core.sys.windows.windows;
+        auto p = VirtualAlloc(null, 4096, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    }
+    else
+    {
+        import core.sys.posix.sys.mman;
+        auto p = mmap(null, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0L);
+    }
+    assert(p);
+    auto px = (cast(T*)(p + 4096 - 2 * T.sizeof));
+    abc(px[0..2]);
+}
+
+////////////////////////////////////////////////////////////////////////
+// https://issues.dlang.org/show_bug.cgi?id=21513
+
+struct Stuff
+{
+    size_t c;         // declare after items and not crash !
+    ubyte[1] items;
+}
+
+void grow(ref Stuff stuff)
+{
+    with (stuff)
+    {
+        const oldCapacity = c;
+        items.ptr[0..oldCapacity] = items.ptr[0..0]; // use literal 0 instead of
+        items.ptr[0] = 0;                            // oldcapacity and no crash !
+    }
+}
+
+void test21513()
+{
+    Stuff stuff;
+    grow(stuff);
+}
+
+////////////////////////////////////////////////////////////////////////
+// https://issues.dlang.org/show_bug.cgi?id=21526
+
+double f21256(double a, double b) {
+    double c = a + b;
+    return c;
+}
+
+void test21256()
+{
+    union DX
+    {
+        double d;
+        ulong l;
+    }
+
+    DX a, b;
+    a.l = 0x4341c37937e08000;
+    b.l = 0x4007ffcb923a29c7;
+
+    DX r;
+    r.d = f21256(a.d, b.d);
+    //if (r.d != 0x1.1c37937e08001p+53)
+        //printf("r = %A should be 0x1.1c37937e08001p+53 %A\n", r.d, 0x1.1c37937e08001p+53);
+    //assert(r == 0x1.1c37937e08001p+53);
+
+    // cannot seem to get the two to produce the same value
+    assert(r.l == 0x4341c37937e08001 || // value using XMM
+           r.l == 0x4341c37937e08002);  // value using x87
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -2336,13 +2510,19 @@ int main()
     testbyteswap();
     testrolror();
     test20162();
+    test3713();
     testsbbrex();
     testmemcpy();
     testMulLea();
     testMulAssPair();
     test21038();
+    test21325();
     test19846();
     test16268();
+    test11435a();
+    test11435b();
+    test21513();
+    test21256();
 
     printf("Success\n");
     return 0;

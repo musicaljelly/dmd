@@ -2,52 +2,55 @@
 
 #pragma once
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <math.h>
 
+#ifdef CUSTOM_D_ARRAY_TYPE
+#define _d_dynamicArray CUSTOM_D_ARRAY_TYPE
+#else
+/// Represents a D [] array
+template<typename T>
+struct _d_dynamicArray
+{
+    size_t length;
+    T *ptr;
+
+    _d_dynamicArray() : length(0), ptr(NULL) { }
+
+    _d_dynamicArray(size_t length_in, T *ptr_in)
+        : length(length_in), ptr(ptr_in) { }
+
+    T& operator[](const size_t idx) {
+        assert(idx < length);
+        return ptr[idx];
+    }
+
+    const T& operator[](const size_t idx) const {
+        assert(idx < length);
+        return ptr[idx];
+    }
+};
+#endif
 #if !defined(_d_real)
 # define _d_real long double
 #endif
-#if !defined(BEGIN_ENUM)
-# define BEGIN_ENUM(name, upper, lower) enum class name {
-# define ENUM_KEY(type, name, value, enumName, upper, lower, abbrev) name = value,
-# define END_ENUM(name, upper, lower) };
-#endif
-#if !defined(BEGIN_ENUM_NUMERIC)
-# define BEGIN_ENUM_NUMERIC(type, name, upper, lower) enum class name : type {
-# define ENUM_KEY_NUMERIC(type, name, value, enumName, upper, lower, abbrev) name = value,
-# define END_ENUM_NUMERIC(type, name, upper, lower) };
-#endif
-#if !defined(BEGIN_ENUM_TYPE)
-# define BEGIN_ENUM_TYPE(type, name, upper, lower) namespace name {
-# define ENUM_KEY_TYPE(type, name, value, enumName, upper, lower, abbrev) static type const name = value;
-# define END_ENUM_TYPE(type, name, upper, lower) };
-#endif
-#if !defined(BEGIN_ANON_ENUM)
-# define BEGIN_ANON_ENUM() enum {
-# define ANON_ENUM_KEY(type, name, value) name = value,
-# define END_ANON_ENUM() };
-#endif
-#if !defined(ENUM_CONSTANT_NUMERIC)
-# define ENUM_CONSTANT_NUMERIC(type, name, value) enum : type { name = value };
-#endif
-#if !defined(ENUM_CONSTANT)
-# define ENUM_CONSTANT(type, name, value) static type const name = value;
-#endif
 
 class RootObject;
-BEGIN_ENUM(DYNCAST, DYNCAST, dyncast)
-ENUM_KEY(int32_t, object, 0, DYNCAST, DYNCAST, dyncast, DYNCAST)
-ENUM_KEY(int32_t, expression, 1, DYNCAST, DYNCAST, dyncast, DYNCAST)
-ENUM_KEY(int32_t, dsymbol, 2, DYNCAST, DYNCAST, dyncast, DYNCAST)
-ENUM_KEY(int32_t, type, 3, DYNCAST, DYNCAST, dyncast, DYNCAST)
-ENUM_KEY(int32_t, identifier, 4, DYNCAST, DYNCAST, dyncast, DYNCAST)
-ENUM_KEY(int32_t, tuple, 5, DYNCAST, DYNCAST, dyncast, DYNCAST)
-ENUM_KEY(int32_t, parameter, 6, DYNCAST, DYNCAST, dyncast, DYNCAST)
-ENUM_KEY(int32_t, statement, 7, DYNCAST, DYNCAST, dyncast, DYNCAST)
-ENUM_KEY(int32_t, condition, 8, DYNCAST, DYNCAST, dyncast, DYNCAST)
-ENUM_KEY(int32_t, templateparameter, 9, DYNCAST, DYNCAST, dyncast, DYNCAST)
-END_ENUM(DYNCAST, DYNCAST, dyncast)
+enum class DYNCAST
+{
+    object = 0,
+    expression = 1,
+    dsymbol = 2,
+    type = 3,
+    identifier = 4,
+    tuple = 5,
+    parameter = 6,
+    statement = 7,
+    condition = 8,
+    templateparameter = 9,
+};
 
 class Visitor;
 class Identifier;
@@ -55,19 +58,21 @@ class Dsymbol;
 class CPPNamespaceDeclaration;
 struct Symbol;
 struct Loc;
+struct Global;
 struct Scope;
-BEGIN_ENUM(PASS, PASS, pass)
-ENUM_KEY(int32_t, init, 0, PASS, PASS, pass, PASS)
-ENUM_KEY(int32_t, semantic, 1, PASS, PASS, pass, PASS)
-ENUM_KEY(int32_t, semanticdone, 2, PASS, PASS, pass, PASS)
-ENUM_KEY(int32_t, semantic2, 3, PASS, PASS, pass, PASS)
-ENUM_KEY(int32_t, semantic2done, 4, PASS, PASS, pass, PASS)
-ENUM_KEY(int32_t, semantic3, 5, PASS, PASS, pass, PASS)
-ENUM_KEY(int32_t, semantic3done, 6, PASS, PASS, pass, PASS)
-ENUM_KEY(int32_t, inline, 7, PASS, PASS, pass, PASS)
-ENUM_KEY(int32_t, inlinedone, 8, PASS, PASS, pass, PASS)
-ENUM_KEY(int32_t, obj, 9, PASS, PASS, pass, PASS)
-END_ENUM(PASS, PASS, pass)
+enum class PASS
+{
+    init = 0,
+    semantic = 1,
+    semanticdone = 2,
+    semantic2 = 3,
+    semantic2done = 4,
+    semantic3 = 5,
+    semantic3done = 6,
+    inline_ = 7,
+    inlinedone = 8,
+    obj = 9,
+};
 
 class DeprecatedDeclaration;
 class UserAttributeDeclaration;
@@ -80,7 +85,7 @@ class AggregateDeclaration;
 class LabelDsymbol;
 class ClassDeclaration;
 class Type;
-struct Prot;
+struct Visibility;
 class Package;
 class EnumMember;
 class TemplateDeclaration;
@@ -90,6 +95,7 @@ class Nspace;
 class Declaration;
 class StorageClassDeclaration;
 class ExpressionDsymbol;
+class AliasAssign;
 class ThisDeclaration;
 class TypeInfoDeclaration;
 class TupleDeclaration;
@@ -121,26 +127,28 @@ class EnumDeclaration;
 class SymbolDeclaration;
 class AttribDeclaration;
 class AnonDeclaration;
-class ProtDeclaration;
+class VisibilityDeclaration;
 class OverloadSet;
 class CompileDeclaration;
 class DsymbolTable;
-BEGIN_ENUM(Kind, KIND, kind)
-ENUM_KEY(int32_t, undefined, 0, Kind, KIND, kind, K)
-ENUM_KEY(int32_t, none, 1, Kind, KIND, kind, K)
-ENUM_KEY(int32_t, private_, 2, Kind, KIND, kind, K)
-ENUM_KEY(int32_t, package_, 3, Kind, KIND, kind, K)
-ENUM_KEY(int32_t, protected_, 4, Kind, KIND, kind, K)
-ENUM_KEY(int32_t, public_, 5, Kind, KIND, kind, K)
-ENUM_KEY(int32_t, export_, 6, Kind, KIND, kind, K)
-END_ENUM(Kind, KIND, kind)
+enum class Kind : uint8_t
+{
+    undefined = 0u,
+    none = 1u,
+    private_ = 2u,
+    package_ = 3u,
+    protected_ = 4u,
+    public_ = 5u,
+    export_ = 6u,
+};
 
 struct BitArray;
-BEGIN_ENUM(CPPMANGLE, CPPMANGLE, cppmangle)
-ENUM_KEY(int32_t, def, 0, CPPMANGLE, CPPMANGLE, cppmangle, CPPMANGLE)
-ENUM_KEY(int32_t, asStruct, 1, CPPMANGLE, CPPMANGLE, cppmangle, CPPMANGLE)
-ENUM_KEY(int32_t, asClass, 2, CPPMANGLE, CPPMANGLE, cppmangle, CPPMANGLE)
-END_ENUM(CPPMANGLE, CPPMANGLE, cppmangle)
+enum class CPPMANGLE : uint8_t
+{
+    def = 0u,
+    asStruct = 1u,
+    asClass = 2u,
+};
 
 class AliasThis;
 class Expression;
@@ -157,59 +165,73 @@ class GotoCaseStatement;
 class ReturnStatement;
 class GotoStatement;
 struct Ensure;
-BEGIN_ENUM(LINK, LINK, link)
-ENUM_KEY(int32_t, default_, 0, LINK, LINK, link, LINK)
-ENUM_KEY(int32_t, d, 1, LINK, LINK, link, LINK)
-ENUM_KEY(int32_t, c, 2, LINK, LINK, link, LINK)
-ENUM_KEY(int32_t, cpp, 3, LINK, LINK, link, LINK)
-ENUM_KEY(int32_t, windows, 4, LINK, LINK, link, LINK)
-ENUM_KEY(int32_t, pascal, 5, LINK, LINK, link, LINK)
-ENUM_KEY(int32_t, objc, 6, LINK, LINK, link, LINK)
-ENUM_KEY(int32_t, system, 7, LINK, LINK, link, LINK)
-END_ENUM(LINK, LINK, link)
+enum class LINK : uint8_t
+{
+    default_ = 0u,
+    d = 1u,
+    c = 2u,
+    cpp = 3u,
+    windows = 4u,
+    objc = 5u,
+    system = 6u,
+};
 
 class LinkDeclaration;
+class CPPMangleDeclaration;
+class AlignDeclaration;
+class PragmaDeclaration;
+enum class PINLINE : uint8_t
+{
+    default_ = 0u,
+    never = 1u,
+    always = 2u,
+};
+
 class Condition;
+class ConditionalDeclaration;
+class StaticIfDeclaration;
 class StaticForeach;
-BEGIN_ENUM_NUMERIC(uint8_t, BUILTIN, BUILTIN, builtin)
-ENUM_KEY_NUMERIC(uint8_t, unknown, 255u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, unimp, 0u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, gcc, 1u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, llvm, 2u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, sin, 3u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, cos, 4u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, tan, 5u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, sqrt, 6u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, fabs, 7u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, ldexp, 8u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, log, 9u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, log2, 10u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, log10, 11u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, exp, 12u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, expm1, 13u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, exp2, 14u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, round, 15u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, floor, 16u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, ceil, 17u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, trunc, 18u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, copysign, 19u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, pow, 20u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, fmin, 21u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, fmax, 22u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, fma, 23u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, isnan, 24u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, isinfinity, 25u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, isfinite, 26u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, bsf, 27u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, bsr, 28u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, bswap, 29u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, popcnt, 30u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, yl2x, 31u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, yl2xp1, 32u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, toPrecFloat, 33u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, toPrecDouble, 34u, BUILTIN, BUILTIN, builtin, BUILTIN)
-ENUM_KEY_NUMERIC(uint8_t, toPrecReal, 35u, BUILTIN, BUILTIN, builtin, BUILTIN)
-END_ENUM_NUMERIC(uint8_t, BUILTIN, BUILTIN, builtin)
+class StaticForeachDeclaration;
+enum class BUILTIN : uint8_t
+{
+    unknown = 255u,
+    unimp = 0u,
+    gcc = 1u,
+    llvm = 2u,
+    sin = 3u,
+    cos = 4u,
+    tan = 5u,
+    sqrt = 6u,
+    fabs = 7u,
+    ldexp = 8u,
+    log = 9u,
+    log2 = 10u,
+    log10 = 11u,
+    exp = 12u,
+    expm1 = 13u,
+    exp2 = 14u,
+    round = 15u,
+    floor = 16u,
+    ceil = 17u,
+    trunc = 18u,
+    copysign = 19u,
+    pow = 20u,
+    fmin = 21u,
+    fmax = 22u,
+    fma = 23u,
+    isnan = 24u,
+    isinfinity = 25u,
+    isfinite = 26u,
+    bsf = 27u,
+    bsr = 28u,
+    bswap = 29u,
+    popcnt = 30u,
+    yl2x = 31u,
+    yl2xp1 = 32u,
+    toPrecFloat = 33u,
+    toPrecDouble = 34u,
+    toPrecReal = 35u,
+};
 
 struct UnionExp;
 struct complex_t;
@@ -217,260 +239,264 @@ class DebugCondition;
 class VersionCondition;
 class ForeachStatement;
 class ForeachRangeStatement;
-BEGIN_ENUM_NUMERIC(uint8_t, TOK, TOK, tok)
-ENUM_KEY_NUMERIC(uint8_t, reserved, 0u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, leftParentheses, 1u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, rightParentheses, 2u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, leftBracket, 3u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, rightBracket, 4u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, leftCurly, 5u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, rightCurly, 6u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, colon, 7u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, negate, 8u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, semicolon, 9u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, dotDotDot, 10u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, endOfFile, 11u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, cast_, 12u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, null_, 13u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, assert_, 14u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, true_, 15u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, false_, 16u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, array, 17u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, call, 18u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, address, 19u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, type, 20u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, throw_, 21u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, new_, 22u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, delete_, 23u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, star, 24u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, symbolOffset, 25u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, variable, 26u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, dotVariable, 27u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, dotIdentifier, 28u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, dotTemplateInstance, 29u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, dotType, 30u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, slice, 31u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, arrayLength, 32u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, version_, 33u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, module_, 34u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, dollar, 35u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, template_, 36u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, dotTemplateDeclaration, 37u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, declaration, 38u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, typeof_, 39u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, pragma_, 40u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, dSymbol, 41u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, typeid_, 42u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, uadd, 43u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, remove, 44u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, newAnonymousClass, 45u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, comment, 46u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, arrayLiteral, 47u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, assocArrayLiteral, 48u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, structLiteral, 49u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, classReference, 50u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, thrownException, 51u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, delegatePointer, 52u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, delegateFunctionPointer, 53u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, lessThan, 54u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, greaterThan, 55u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, lessOrEqual, 56u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, greaterOrEqual, 57u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, equal, 58u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, notEqual, 59u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, identity, 60u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, notIdentity, 61u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, index, 62u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, is_, 63u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, leftShift, 64u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, rightShift, 65u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, leftShiftAssign, 66u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, rightShiftAssign, 67u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, unsignedRightShift, 68u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, unsignedRightShiftAssign, 69u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, concatenate, 70u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, concatenateAssign, 71u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, concatenateElemAssign, 72u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, concatenateDcharAssign, 73u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, add, 74u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, min, 75u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, addAssign, 76u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, minAssign, 77u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, mul, 78u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, div, 79u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, mod, 80u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, mulAssign, 81u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, divAssign, 82u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, modAssign, 83u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, and, 84u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, or, 85u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, xor, 86u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, andAssign, 87u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, orAssign, 88u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, xorAssign, 89u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, assign, 90u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, not, 91u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, tilde, 92u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, plusPlus, 93u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, minusMinus, 94u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, construct, 95u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, blit, 96u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, dot, 97u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, arrow, 98u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, comma, 99u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, question, 100u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, andAnd, 101u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, orOr, 102u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, prePlusPlus, 103u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, preMinusMinus, 104u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, int32Literal, 105u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, uns32Literal, 106u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, int64Literal, 107u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, uns64Literal, 108u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, int128Literal, 109u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, uns128Literal, 110u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, float32Literal, 111u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, float64Literal, 112u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, float80Literal, 113u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, imaginary32Literal, 114u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, imaginary64Literal, 115u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, imaginary80Literal, 116u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, charLiteral, 117u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, wcharLiteral, 118u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, dcharLiteral, 119u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, identifier, 120u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, string_, 121u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, hexadecimalString, 122u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, this_, 123u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, super_, 124u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, halt, 125u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, tuple, 126u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, error, 127u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, void_, 128u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, int8, 129u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, uns8, 130u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, int16, 131u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, uns16, 132u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, int32, 133u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, uns32, 134u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, int64, 135u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, uns64, 136u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, int128, 137u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, uns128, 138u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, float32, 139u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, float64, 140u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, float80, 141u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, imaginary32, 142u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, imaginary64, 143u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, imaginary80, 144u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, complex32, 145u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, complex64, 146u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, complex80, 147u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, char_, 148u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, wchar_, 149u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, dchar_, 150u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, bool_, 151u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, struct_, 152u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, class_, 153u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, interface_, 154u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, union_, 155u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, enum_, 156u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, import_, 157u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, alias_, 158u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, override_, 159u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, delegate_, 160u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, function_, 161u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, mixin_, 162u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, align_, 163u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, extern_, 164u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, private_, 165u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, protected_, 166u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, public_, 167u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, export_, 168u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, static_, 169u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, final_, 170u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, const_, 171u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, abstract_, 172u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, debug_, 173u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, deprecated_, 174u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, in_, 175u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, out_, 176u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, inout_, 177u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, lazy_, 178u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, auto_, 179u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, package_, 180u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, immutable_, 181u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, if_, 182u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, else_, 183u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, while_, 184u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, for_, 185u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, do_, 186u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, switch_, 187u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, case_, 188u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, default_, 189u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, break_, 190u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, continue_, 191u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, with_, 192u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, synchronized_, 193u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, return_, 194u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, goto_, 195u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, try_, 196u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, catch_, 197u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, finally_, 198u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, asm_, 199u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, foreach_, 200u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, foreach_reverse_, 201u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, scope_, 202u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, onScopeExit, 203u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, onScopeFailure, 204u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, onScopeSuccess, 205u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, invariant_, 206u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, unittest_, 207u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, argumentTypes, 208u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, ref_, 209u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, macro_, 210u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, parameters, 211u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, traits, 212u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, overloadSet, 213u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, pure_, 214u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, nothrow_, 215u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, gshared, 216u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, line, 217u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, file, 218u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, fileFullPath, 219u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, moduleString, 220u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, functionString, 221u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, prettyFunction, 222u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, shared_, 223u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, at, 224u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, pow, 225u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, powAssign, 226u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, goesTo, 227u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, vector, 228u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, pound, 229u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, interval, 230u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, voidExpression, 231u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, cantExpression, 232u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, showCtfeContext, 233u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, objcClassReference, 234u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, vectorArray, 235u, TOK, TOK, tok, TOK)
-ENUM_KEY_NUMERIC(uint8_t, max_, 236u, TOK, TOK, tok, TOK)
-END_ENUM_NUMERIC(uint8_t, TOK, TOK, tok)
+class DVCondition;
+class StaticIfCondition;
+enum class TOK : uint8_t
+{
+    reserved = 0u,
+    leftParentheses = 1u,
+    rightParentheses = 2u,
+    leftBracket = 3u,
+    rightBracket = 4u,
+    leftCurly = 5u,
+    rightCurly = 6u,
+    colon = 7u,
+    negate = 8u,
+    semicolon = 9u,
+    dotDotDot = 10u,
+    endOfFile = 11u,
+    cast_ = 12u,
+    null_ = 13u,
+    assert_ = 14u,
+    true_ = 15u,
+    false_ = 16u,
+    array = 17u,
+    call = 18u,
+    address = 19u,
+    type = 20u,
+    throw_ = 21u,
+    new_ = 22u,
+    delete_ = 23u,
+    star = 24u,
+    symbolOffset = 25u,
+    variable = 26u,
+    dotVariable = 27u,
+    dotIdentifier = 28u,
+    dotTemplateInstance = 29u,
+    dotType = 30u,
+    slice = 31u,
+    arrayLength = 32u,
+    version_ = 33u,
+    module_ = 34u,
+    dollar = 35u,
+    template_ = 36u,
+    dotTemplateDeclaration = 37u,
+    declaration = 38u,
+    typeof_ = 39u,
+    pragma_ = 40u,
+    dSymbol = 41u,
+    typeid_ = 42u,
+    uadd = 43u,
+    remove = 44u,
+    newAnonymousClass = 45u,
+    comment = 46u,
+    arrayLiteral = 47u,
+    assocArrayLiteral = 48u,
+    structLiteral = 49u,
+    classReference = 50u,
+    thrownException = 51u,
+    delegatePointer = 52u,
+    delegateFunctionPointer = 53u,
+    lessThan = 54u,
+    greaterThan = 55u,
+    lessOrEqual = 56u,
+    greaterOrEqual = 57u,
+    equal = 58u,
+    notEqual = 59u,
+    identity = 60u,
+    notIdentity = 61u,
+    index = 62u,
+    is_ = 63u,
+    leftShift = 64u,
+    rightShift = 65u,
+    leftShiftAssign = 66u,
+    rightShiftAssign = 67u,
+    unsignedRightShift = 68u,
+    unsignedRightShiftAssign = 69u,
+    concatenate = 70u,
+    concatenateAssign = 71u,
+    concatenateElemAssign = 72u,
+    concatenateDcharAssign = 73u,
+    add = 74u,
+    min = 75u,
+    addAssign = 76u,
+    minAssign = 77u,
+    mul = 78u,
+    div = 79u,
+    mod = 80u,
+    mulAssign = 81u,
+    divAssign = 82u,
+    modAssign = 83u,
+    and_ = 84u,
+    or_ = 85u,
+    xor_ = 86u,
+    andAssign = 87u,
+    orAssign = 88u,
+    xorAssign = 89u,
+    assign = 90u,
+    not_ = 91u,
+    tilde = 92u,
+    plusPlus = 93u,
+    minusMinus = 94u,
+    construct = 95u,
+    blit = 96u,
+    dot = 97u,
+    comma = 98u,
+    question = 99u,
+    andAnd = 100u,
+    orOr = 101u,
+    prePlusPlus = 102u,
+    preMinusMinus = 103u,
+    int32Literal = 104u,
+    uns32Literal = 105u,
+    int64Literal = 106u,
+    uns64Literal = 107u,
+    int128Literal = 108u,
+    uns128Literal = 109u,
+    float32Literal = 110u,
+    float64Literal = 111u,
+    float80Literal = 112u,
+    imaginary32Literal = 113u,
+    imaginary64Literal = 114u,
+    imaginary80Literal = 115u,
+    charLiteral = 116u,
+    wcharLiteral = 117u,
+    dcharLiteral = 118u,
+    identifier = 119u,
+    string_ = 120u,
+    hexadecimalString = 121u,
+    this_ = 122u,
+    super_ = 123u,
+    halt = 124u,
+    tuple = 125u,
+    error = 126u,
+    void_ = 127u,
+    int8 = 128u,
+    uns8 = 129u,
+    int16 = 130u,
+    uns16 = 131u,
+    int32 = 132u,
+    uns32 = 133u,
+    int64 = 134u,
+    uns64 = 135u,
+    int128 = 136u,
+    uns128 = 137u,
+    float32 = 138u,
+    float64 = 139u,
+    float80 = 140u,
+    imaginary32 = 141u,
+    imaginary64 = 142u,
+    imaginary80 = 143u,
+    complex32 = 144u,
+    complex64 = 145u,
+    complex80 = 146u,
+    char_ = 147u,
+    wchar_ = 148u,
+    dchar_ = 149u,
+    bool_ = 150u,
+    struct_ = 151u,
+    class_ = 152u,
+    interface_ = 153u,
+    union_ = 154u,
+    enum_ = 155u,
+    import_ = 156u,
+    alias_ = 157u,
+    override_ = 158u,
+    delegate_ = 159u,
+    function_ = 160u,
+    mixin_ = 161u,
+    align_ = 162u,
+    extern_ = 163u,
+    private_ = 164u,
+    protected_ = 165u,
+    public_ = 166u,
+    export_ = 167u,
+    static_ = 168u,
+    final_ = 169u,
+    const_ = 170u,
+    abstract_ = 171u,
+    debug_ = 172u,
+    deprecated_ = 173u,
+    in_ = 174u,
+    out_ = 175u,
+    inout_ = 176u,
+    lazy_ = 177u,
+    auto_ = 178u,
+    package_ = 179u,
+    immutable_ = 180u,
+    if_ = 181u,
+    else_ = 182u,
+    while_ = 183u,
+    for_ = 184u,
+    do_ = 185u,
+    switch_ = 186u,
+    case_ = 187u,
+    default_ = 188u,
+    break_ = 189u,
+    continue_ = 190u,
+    with_ = 191u,
+    synchronized_ = 192u,
+    return_ = 193u,
+    goto_ = 194u,
+    try_ = 195u,
+    catch_ = 196u,
+    finally_ = 197u,
+    asm_ = 198u,
+    foreach_ = 199u,
+    foreach_reverse_ = 200u,
+    scope_ = 201u,
+    onScopeExit = 202u,
+    onScopeFailure = 203u,
+    onScopeSuccess = 204u,
+    invariant_ = 205u,
+    unittest_ = 206u,
+    argumentTypes = 207u,
+    ref_ = 208u,
+    macro_ = 209u,
+    parameters = 210u,
+    traits = 211u,
+    overloadSet = 212u,
+    pure_ = 213u,
+    nothrow_ = 214u,
+    gshared = 215u,
+    line = 216u,
+    file = 217u,
+    fileFullPath = 218u,
+    moduleString = 219u,
+    functionString = 220u,
+    prettyFunction = 221u,
+    shared_ = 222u,
+    at = 223u,
+    pow = 224u,
+    powAssign = 225u,
+    goesTo = 226u,
+    vector = 227u,
+    pound = 228u,
+    interval = 229u,
+    voidExpression = 230u,
+    cantExpression = 231u,
+    showCtfeContext = 232u,
+    objcClassReference = 233u,
+    vectorArray = 234u,
+    max_ = 235u,
+};
 
 class StringExp;
 class TupleExp;
-BEGIN_ENUM(MATCH, MATCH, match)
-ENUM_KEY(int32_t, nomatch, 0, MATCH, MATCH, match, MATCH)
-ENUM_KEY(int32_t, convert, 1, MATCH, MATCH, match, MATCH)
-ENUM_KEY(int32_t, constant, 2, MATCH, MATCH, match, MATCH)
-ENUM_KEY(int32_t, exact, 3, MATCH, MATCH, match, MATCH)
-END_ENUM(MATCH, MATCH, match)
+enum class MATCH
+{
+    nomatch = 0,
+    convert = 1,
+    constant = 2,
+    exact = 3,
+};
 
-BEGIN_ENUM(Modifiable, MODIFIABLE, modifiable)
-ENUM_KEY(int32_t, no, 0, Modifiable, MODIFIABLE, modifiable, M)
-ENUM_KEY(int32_t, yes, 1, Modifiable, MODIFIABLE, modifiable, M)
-ENUM_KEY(int32_t, initialization, 2, Modifiable, MODIFIABLE, modifiable, M)
-END_ENUM(Modifiable, MODIFIABLE, modifiable)
+enum class Modifiable
+{
+    no = 0,
+    yes = 1,
+    initialization = 2,
+};
 
 class IntegerExp;
 class ErrorExp;
@@ -500,7 +526,7 @@ class TypeidExp;
 class TraitsExp;
 class HaltExp;
 class IsExp;
-class CompileExp;
+class MixinExp;
 class ImportExp;
 class AssertExp;
 class DotIdExp;
@@ -575,6 +601,8 @@ class ModuleInitExp;
 class FuncInitExp;
 class PrettyFuncInitExp;
 class ClassReferenceExp;
+class ThrownExceptionExp;
+class BinAssignExp;
 class TypeInfoClassDeclaration;
 struct ObjcClassDeclaration;
 class TypeFunction;
@@ -628,60 +656,13 @@ class TypeSlice;
 class TypeNull;
 class TypeMixin;
 class TypeTraits;
+class TypeNoreturn;
 class TemplateTypeParameter;
 class TemplateValueParameter;
 class TemplateAliasParameter;
 class TemplateThisParameter;
 class TypeQualified;
-class StaticAssert;
-class AlignDeclaration;
-class CPPMangleDeclaration;
-class PragmaDeclaration;
-class ConditionalDeclaration;
-class StaticForeachDeclaration;
-class StaticIfDeclaration;
-class ImportStatement;
-class LabelStatement;
-class StaticAssertStatement;
-class CompileStatement;
-class WhileStatement;
-class ForStatement;
-class DoStatement;
-class IfStatement;
-class ScopeGuardStatement;
-class ConditionalStatement;
-class StaticForeachStatement;
-class PragmaStatement;
-class SwitchStatement;
-class CaseRangeStatement;
-class DefaultStatement;
-class BreakStatement;
-class ContinueStatement;
-class GotoDefaultStatement;
-class SynchronizedStatement;
-class TryCatchStatement;
-class TryFinallyStatement;
-class ThrowStatement;
-class AsmStatement;
-class ExpStatement;
-class CompoundStatement;
-class CompoundDeclarationStatement;
-class CompoundAsmStatement;
-class InlineAsmStatement;
-class GccAsmStatement;
-class TypeNext;
-class TypeArray;
-class UnaExp;
-class BinExp;
-class SymbolExp;
-class CmpExp;
-class BinAssignExp;
-class StaticIfCondition;
-class DVCondition;
-class ExpInitializer;
-class StructInitializer;
-class ArrayInitializer;
-class VoidInitializer;
+struct ASTCodegen;
 class ErrorStatement;
 class PeelStatement;
 class UnrolledLoopStatement;
@@ -691,52 +672,80 @@ class DtorExpStatement;
 class ForwardingStatement;
 class ErrorInitializer;
 class ObjcClassReferenceExp;
-class ThrownExceptionExp;
-struct ASTCodegen;
 union __AnonStruct__u;
-BEGIN_ENUM(PINLINE, PINLINE, pinline)
-ENUM_KEY(int32_t, default_, 0, PINLINE, PINLINE, pinline, PINLINE)
-ENUM_KEY(int32_t, never, 1, PINLINE, PINLINE, pinline, PINLINE)
-ENUM_KEY(int32_t, always, 2, PINLINE, PINLINE, pinline, PINLINE)
-END_ENUM(PINLINE, PINLINE, pinline)
-
+class UnaExp;
+class BinExp;
+class CompoundStatement;
+class CompoundDeclarationStatement;
+class WhileStatement;
+class DoStatement;
+class ForStatement;
+class IfStatement;
+class SwitchStatement;
+class CaseRangeStatement;
+class DefaultStatement;
+class SynchronizedStatement;
+class TryCatchStatement;
+class TryFinallyStatement;
+class LabelStatement;
 struct ObjcFuncDeclaration;
 struct ObjcSelector;
-BEGIN_ENUM_NUMERIC(uint8_t, PURE, PURE, pure)
-ENUM_KEY_NUMERIC(uint8_t, impure, 0u, PURE, PURE, pure, PURE)
-ENUM_KEY_NUMERIC(uint8_t, fwdref, 1u, PURE, PURE, pure, PURE)
-ENUM_KEY_NUMERIC(uint8_t, weak, 2u, PURE, PURE, pure, PURE)
-ENUM_KEY_NUMERIC(uint8_t, const_, 3u, PURE, PURE, pure, PURE)
-ENUM_KEY_NUMERIC(uint8_t, strong, 4u, PURE, PURE, pure, PURE)
-END_ENUM_NUMERIC(uint8_t, PURE, PURE, pure)
+enum class PURE : uint8_t
+{
+    impure = 0u,
+    fwdref = 1u,
+    weak = 2u,
+    const_ = 3u,
+    strong = 4u,
+};
 
 struct ParameterList;
-BEGIN_ENUM_NUMERIC(uint8_t, VarArg, VARARG, vararg)
-ENUM_KEY_NUMERIC(uint8_t, none, 0u, VarArg, VARARG, vararg, VA)
-ENUM_KEY_NUMERIC(uint8_t, variadic, 1u, VarArg, VARARG, vararg, VA)
-ENUM_KEY_NUMERIC(uint8_t, typesafe, 2u, VarArg, VARARG, vararg, VA)
-END_ENUM_NUMERIC(uint8_t, VarArg, VARARG, vararg)
+enum class VarArg : uint8_t
+{
+    none = 0u,
+    variadic = 1u,
+    typesafe = 2u,
+};
 
-BEGIN_ENUM_NUMERIC(uint32_t, JsonFieldFlags, JSONFIELDFLAGS, jsonfieldflags)
-ENUM_KEY_NUMERIC(uint32_t, none, 0u, JsonFieldFlags, JSONFIELDFLAGS, jsonfieldflags, JFF)
-ENUM_KEY_NUMERIC(uint32_t, compilerInfo, 1u, JsonFieldFlags, JSONFIELDFLAGS, jsonfieldflags, JFF)
-ENUM_KEY_NUMERIC(uint32_t, buildInfo, 2u, JsonFieldFlags, JSONFIELDFLAGS, jsonfieldflags, JFF)
-ENUM_KEY_NUMERIC(uint32_t, modules, 4u, JsonFieldFlags, JSONFIELDFLAGS, jsonfieldflags, JFF)
-ENUM_KEY_NUMERIC(uint32_t, semantics, 8u, JsonFieldFlags, JSONFIELDFLAGS, jsonfieldflags, JFF)
-END_ENUM_NUMERIC(uint32_t, JsonFieldFlags, JSONFIELDFLAGS, jsonfieldflags)
+class VoidInitializer;
+class StructInitializer;
+class ArrayInitializer;
+class ExpInitializer;
+enum class JsonFieldFlags : uint32_t
+{
+    none = 0u,
+    compilerInfo = 1u,
+    buildInfo = 2u,
+    modules = 4u,
+    semantics = 8u,
+};
 
-class Library;
-struct _IO_FILE;
 struct ObNode;
 class StoppableVisitor;
+class PragmaStatement;
+class ScopeGuardStatement;
+class ExpStatement;
+class GotoDefaultStatement;
+class BreakStatement;
+class ContinueStatement;
+class ThrowStatement;
+class CompileStatement;
+class ConditionalStatement;
+class StaticForeachStatement;
+class StaticAssert;
+class StaticAssertStatement;
 struct Token;
+class AsmStatement;
 struct code;
+class InlineAsmStatement;
+class GccAsmStatement;
+class CompoundAsmStatement;
+class ImportStatement;
 struct TargetC;
 struct TargetCPP;
 struct TargetObjC;
 struct Param;
 struct Target;
-struct Global;
 struct Mem;
 class Object;
 class TypeInfo_Class;
@@ -748,6 +757,9 @@ public:
     RootObject();
     virtual bool equals(const RootObject* const o) const;
     virtual const char* toChars() const;
+private:
+    virtual void __vtable_slot_0();
+public:
     virtual DYNCAST dyncast() const;
 };
 
@@ -758,12 +770,14 @@ public:
     ASTNode();
 };
 
+extern Global global;
+
 struct Loc
 {
     const char* filename;
     uint32_t linnum;
     uint32_t charnum;
-    const char* toChars(bool showColumns, uint8_t messageStyle) const;
+    const char* toChars(bool showColumns = global.params.showColumns, uint8_t messageStyle = static_cast<uint8_t>(global.params.messageStyle)) const;
     bool equals(const Loc& loc) const;
     Loc() :
         filename(),
@@ -781,12 +795,13 @@ public:
     CPPNamespaceDeclaration* cppnamespace;
     Symbol* csym;
     Symbol* isym;
-    char* comment;
-    Loc loc;
+    const char* comment;
+    const Loc loc;
     Scope* _scope;
-    char* prettystring;
+    const char* prettystring;
     bool errors;
     PASS semanticRun;
+    uint16_t localNum;
     DeprecatedDeclaration* depdecl;
     UserAttributeDeclaration* userAttribDecl;
     UnitTestDeclaration* ddocUnittest;
@@ -809,10 +824,9 @@ public:
     Dsymbol* toParent2();
     Dsymbol* toParentDecl();
     Dsymbol* toParentLocal();
-    Dsymbol* toParentDeclImpl(bool localOnly);
-    Dsymbol* toParentP(Dsymbol* p1, Dsymbol* p2);
+    Dsymbol* toParentP(Dsymbol* p1, Dsymbol* p2 = nullptr);
     TemplateInstance* isInstantiated();
-    bool followInstantiationContext(Dsymbol* p1, Dsymbol* p2);
+    bool followInstantiationContext(Dsymbol* p1, Dsymbol* p2 = nullptr);
     TemplateInstance* isSpeculative();
     Ungag ungagSpeculative() const;
     DYNCAST dyncast() const;
@@ -841,14 +855,14 @@ public:
     ClassDeclaration* isClassMember();
     virtual Type* getType();
     virtual bool needThis();
-    virtual Prot prot();
+    virtual Visibility visible();
     virtual Dsymbol* syntaxCopy(Dsymbol* s);
     virtual bool oneMember(Dsymbol** ps, Identifier* ident);
     virtual void setFieldOffset(AggregateDeclaration* ad, uint32_t* poffset, bool isunion);
     virtual bool hasPointers();
     virtual bool hasStaticCtorOrDtor();
-    virtual void addLocalClass(Array<ClassDeclaration*>* _param_0);
-    virtual void addObjcSymbols(Array<ClassDeclaration*>* classes, Array<ClassDeclaration*>* categories);
+    virtual void addLocalClass(Array<ClassDeclaration* >* _param_0);
+    virtual void addObjcSymbols(Array<ClassDeclaration* >* classes, Array<ClassDeclaration* >* categories);
     virtual void checkCtorConstInit();
     virtual void addComment(const char* comment);
     bool inNonRoot();
@@ -864,6 +878,7 @@ public:
     virtual Declaration* isDeclaration();
     virtual StorageClassDeclaration* isStorageClassDeclaration();
     virtual ExpressionDsymbol* isExpressionDsymbol();
+    virtual AliasAssign* isAliasAssign();
     virtual ThisDeclaration* isThisDeclaration();
     virtual TypeInfoDeclaration* isTypeInfoDeclaration();
     virtual TupleDeclaration* isTupleDeclaration();
@@ -900,7 +915,7 @@ public:
     virtual AttribDeclaration* isAttribDeclaration();
     virtual AnonDeclaration* isAnonDeclaration();
     virtual CPPNamespaceDeclaration* isCPPNamespaceDeclaration();
-    virtual ProtDeclaration* isProtDeclaration();
+    virtual VisibilityDeclaration* isVisibilityDeclaration();
     virtual OverloadSet* isOverloadSet();
     virtual CompileDeclaration* isCompileDeclaration();
 };
@@ -908,12 +923,14 @@ public:
 struct BitArray
 {
     typedef uint64_t Chunk_t;
-    ENUM_CONSTANT_NUMERIC(uint64_t, ChunkSize, 8LLU)
+    enum : uint64_t { ChunkSize = 8LLU };
 
-    ENUM_CONSTANT_NUMERIC(uint64_t, BitsPerChunk, 64LLU)
+    enum : uint64_t { BitsPerChunk = 64LLU };
 
+private:
     size_t len;
     uint64_t* ptr;
+public:
     BitArray()
     {
     }
@@ -922,17 +939,19 @@ struct BitArray
 class ScopeDsymbol : public Dsymbol
 {
 public:
-    Array<Dsymbol*>* members;
+    Array<Dsymbol* >* members;
     DsymbolTable* symtab;
     uint32_t endlinnum;
-    Array<Dsymbol*>* importedScopes;
-    Kind* prots;
+private:
+    Array<Dsymbol* >* importedScopes;
+    Kind* visibilities;
     BitArray accessiblePackages;
     BitArray privateAccessiblePackages;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+public:
+    ScopeDsymbol* syntaxCopy(Dsymbol* s);
     Dsymbol* search(const Loc& loc, Identifier* ident, int32_t flags = 8);
-    virtual void importScope(Dsymbol* s, Prot protection);
-    virtual bool isPackageAccessible(Package* p, Prot protection, int32_t flags = 0);
+    virtual void importScope(Dsymbol* s, Visibility visibility);
+    virtual bool isPackageAccessible(Package* p, Visibility visibility, int32_t flags = 0);
     bool isforwardRef();
     static void multiplyDefined(const Loc& loc, Dsymbol* s1, Dsymbol* s2);
     const char* kind() const;
@@ -945,14 +964,12 @@ public:
     ~ScopeDsymbol();
 };
 
-struct Prot
+struct Visibility
 {
     Kind kind;
     Package* pkg;
-    bool isMoreRestrictiveThan(const Prot other) const;
-    bool opEquals(const Prot& other) const;
-    bool isSubsetOf(const Prot& parent) const;
-    Prot() :
+    bool isSubsetOf(const Visibility& parent) const;
+    Visibility() :
         pkg()
     {
     }
@@ -961,7 +978,7 @@ struct Prot
 class Expression : public ASTNode
 {
 public:
-    TOK op;
+    const TOK op;
     uint8_t size;
     uint8_t parens;
     Type* type;
@@ -993,7 +1010,6 @@ public:
     virtual bool checkType();
     virtual bool checkValue();
     bool checkDeprecated(Scope* sc, Dsymbol* s);
-    static bool checkImpure(Scope* sc);
     virtual Modifiable checkModifiable(Scope* sc, int32_t flag = 0);
     virtual Expression* toBoolean(Scope* sc);
     virtual Expression* addDtorHook(Scope* sc);
@@ -1034,7 +1050,7 @@ public:
     TraitsExp* isTraitsExp();
     HaltExp* isHaltExp();
     IsExp* isExp();
-    CompileExp* isCompileExp();
+    MixinExp* isMixinExp();
     ImportExp* isImportExp();
     AssertExp* isAssertExp();
     DotIdExp* isDotIdExp();
@@ -1109,6 +1125,8 @@ public:
     FuncInitExp* isFuncInitExp();
     PrettyFuncInitExp* isPrettyFuncInitExp();
     ClassReferenceExp* isClassReferenceExp();
+    ThrownExceptionExp* isThrownExceptionExp();
+    virtual BinAssignExp* isBinAssignExp();
     void accept(Visitor* v);
 };
 
@@ -1119,7 +1137,7 @@ struct ObjcClassDeclaration
     Identifier* identifier;
     ClassDeclaration* classDeclaration;
     ClassDeclaration* metaclass;
-    Array<FuncDeclaration*>* methodList;
+    _d_dynamicArray< FuncDeclaration* > methodList;
     bool isRootClass() const;
     ObjcClassDeclaration() :
         isMeta(false),
@@ -1134,10 +1152,12 @@ struct ObjcClassDeclaration
 
 struct FileName
 {
-    DArray< const char > str;
+private:
+    _d_dynamicArray< const char > str;
+public:
     static bool equals(const char* name1, const char* name2);
     static bool absolute(const char* name);
-    static const char* toAbsolute(const char* name, const char* base);
+    static const char* toAbsolute(const char* name, const char* base = nullptr);
     static const char* ext(const char* str);
     const char* ext() const;
     static const char* removeExt(const char* str);
@@ -1145,13 +1165,12 @@ struct FileName
     const char* name() const;
     static const char* path(const char* str);
     static const char* combine(const char* path, const char* name);
-    static Array<const char*>* splitPath(const char* path);
+    static Array<const char* >* splitPath(const char* path);
     static const char* defaultExt(const char* name, const char* ext);
     static const char* forceExt(const char* name, const char* ext);
     static bool equalsExt(const char* name, const char* ext);
     bool equalsExt(const char* ext) const;
-    static const char* searchPath(Array<const char*>* path, const char* name, bool cwd);
-    static const char* safeSearchPath(Array<const char*>* path, const char* name);
+    static const char* searchPath(Array<const char* >* path, const char* name, bool cwd);
     static int32_t exists(const char* name);
     static bool ensurePathExists(const char* path);
     static const char* canonicalName(const char* name);
@@ -1189,9 +1208,21 @@ public:
             swcto()
         {
         }
+        Mcache(Type* cto, Type* ito = nullptr, Type* sto = nullptr, Type* scto = nullptr, Type* wto = nullptr, Type* wcto = nullptr, Type* swto = nullptr, Type* swcto = nullptr) :
+            cto(cto),
+            ito(ito),
+            sto(sto),
+            scto(scto),
+            wto(wto),
+            wcto(wcto),
+            swto(swto),
+            swcto(swcto)
+            {}
     };
 
+private:
     Mcache* mcache;
+public:
     Type* pto;
     Type* rto;
     Type* arrayof;
@@ -1228,6 +1259,7 @@ public:
     static Type* tdstring;
     static Type* terror;
     static Type* tnull;
+    static Type* tnoreturn;
     static Type* tsize_t;
     static Type* tptrdiff_t;
     static Type* thash_t;
@@ -1249,14 +1281,14 @@ public:
     static ClassDeclaration* typeinfoshared;
     static ClassDeclaration* typeinfowild;
     static TemplateDeclaration* rtinfo;
-    static Type* basic[46LLU];
+    static Type* basic[47LLU];
     virtual const char* kind() const;
     Type* copy() const;
     virtual Type* syntaxCopy();
     bool equals(const RootObject* const o) const;
     bool equivalent(Type* t);
     DYNCAST dyncast() const;
-    int32_t covariant(Type* t, uint64_t* pstc);
+    int32_t covariant(Type* t, uint64_t* pstc = nullptr);
     const char* toChars() const;
     char* toPrettyChars(bool QualifyTypes = false);
     static void _init();
@@ -1367,234 +1399,12 @@ public:
     TypeNull* isTypeNull();
     TypeMixin* isTypeMixin();
     TypeTraits* isTypeTraits();
+    TypeNoreturn* isTypeNoreturn();
     void accept(Visitor* v);
     TypeFunction* toTypeFunction();
 };
 
-class ParseTimeVisitor
-{
-public:
-    virtual void visit(Dsymbol* _param_0);
-    virtual void visit(Parameter* _param_0);
-    virtual void visit(Statement* _param_0);
-    virtual void visit(Type* _param_0);
-    virtual void visit(Expression* _param_0);
-    virtual void visit(TemplateParameter* _param_0);
-    virtual void visit(Condition* _param_0);
-    virtual void visit(Initializer* _param_0);
-    virtual void visit(AliasThis* s);
-    virtual void visit(Declaration* s);
-    virtual void visit(ScopeDsymbol* s);
-    virtual void visit(Import* s);
-    virtual void visit(AttribDeclaration* s);
-    virtual void visit(StaticAssert* s);
-    virtual void visit(DebugSymbol* s);
-    virtual void visit(VersionSymbol* s);
-    virtual void visit(Package* s);
-    virtual void visit(EnumDeclaration* s);
-    virtual void visit(AggregateDeclaration* s);
-    virtual void visit(TemplateDeclaration* s);
-    virtual void visit(TemplateInstance* s);
-    virtual void visit(Nspace* s);
-    virtual void visit(VarDeclaration* s);
-    virtual void visit(FuncDeclaration* s);
-    virtual void visit(AliasDeclaration* s);
-    virtual void visit(TupleDeclaration* s);
-    virtual void visit(FuncLiteralDeclaration* s);
-    virtual void visit(PostBlitDeclaration* s);
-    virtual void visit(CtorDeclaration* s);
-    virtual void visit(DtorDeclaration* s);
-    virtual void visit(InvariantDeclaration* s);
-    virtual void visit(UnitTestDeclaration* s);
-    virtual void visit(NewDeclaration* s);
-    virtual void visit(StaticCtorDeclaration* s);
-    virtual void visit(StaticDtorDeclaration* s);
-    virtual void visit(SharedStaticCtorDeclaration* s);
-    virtual void visit(SharedStaticDtorDeclaration* s);
-    virtual void visit(CompileDeclaration* s);
-    virtual void visit(UserAttributeDeclaration* s);
-    virtual void visit(LinkDeclaration* s);
-    virtual void visit(AnonDeclaration* s);
-    virtual void visit(AlignDeclaration* s);
-    virtual void visit(CPPMangleDeclaration* s);
-    virtual void visit(CPPNamespaceDeclaration* s);
-    virtual void visit(ProtDeclaration* s);
-    virtual void visit(PragmaDeclaration* s);
-    virtual void visit(StorageClassDeclaration* s);
-    virtual void visit(ConditionalDeclaration* s);
-    virtual void visit(StaticForeachDeclaration* s);
-    virtual void visit(DeprecatedDeclaration* s);
-    virtual void visit(StaticIfDeclaration* s);
-    virtual void visit(EnumMember* s);
-    virtual void visit(Module* s);
-    virtual void visit(StructDeclaration* s);
-    virtual void visit(UnionDeclaration* s);
-    virtual void visit(ClassDeclaration* s);
-    virtual void visit(InterfaceDeclaration* s);
-    virtual void visit(TemplateMixin* s);
-    virtual void visit(ImportStatement* s);
-    virtual void visit(ScopeStatement* s);
-    virtual void visit(ReturnStatement* s);
-    virtual void visit(LabelStatement* s);
-    virtual void visit(StaticAssertStatement* s);
-    virtual void visit(CompileStatement* s);
-    virtual void visit(WhileStatement* s);
-    virtual void visit(ForStatement* s);
-    virtual void visit(DoStatement* s);
-    virtual void visit(ForeachRangeStatement* s);
-    virtual void visit(ForeachStatement* s);
-    virtual void visit(IfStatement* s);
-    virtual void visit(ScopeGuardStatement* s);
-    virtual void visit(ConditionalStatement* s);
-    virtual void visit(StaticForeachStatement* s);
-    virtual void visit(PragmaStatement* s);
-    virtual void visit(SwitchStatement* s);
-    virtual void visit(CaseRangeStatement* s);
-    virtual void visit(CaseStatement* s);
-    virtual void visit(DefaultStatement* s);
-    virtual void visit(BreakStatement* s);
-    virtual void visit(ContinueStatement* s);
-    virtual void visit(GotoDefaultStatement* s);
-    virtual void visit(GotoCaseStatement* s);
-    virtual void visit(GotoStatement* s);
-    virtual void visit(SynchronizedStatement* s);
-    virtual void visit(WithStatement* s);
-    virtual void visit(TryCatchStatement* s);
-    virtual void visit(TryFinallyStatement* s);
-    virtual void visit(ThrowStatement* s);
-    virtual void visit(AsmStatement* s);
-    virtual void visit(ExpStatement* s);
-    virtual void visit(CompoundStatement* s);
-    virtual void visit(CompoundDeclarationStatement* s);
-    virtual void visit(CompoundAsmStatement* s);
-    virtual void visit(InlineAsmStatement* s);
-    virtual void visit(GccAsmStatement* s);
-    virtual void visit(TypeBasic* t);
-    virtual void visit(TypeError* t);
-    virtual void visit(TypeNull* t);
-    virtual void visit(TypeVector* t);
-    virtual void visit(TypeEnum* t);
-    virtual void visit(TypeTuple* t);
-    virtual void visit(TypeClass* t);
-    virtual void visit(TypeStruct* t);
-    virtual void visit(TypeNext* t);
-    virtual void visit(TypeQualified* t);
-    virtual void visit(TypeTraits* t);
-    virtual void visit(TypeMixin* t);
-    virtual void visit(TypeReference* t);
-    virtual void visit(TypeSlice* t);
-    virtual void visit(TypeDelegate* t);
-    virtual void visit(TypePointer* t);
-    virtual void visit(TypeFunction* t);
-    virtual void visit(TypeArray* t);
-    virtual void visit(TypeDArray* t);
-    virtual void visit(TypeAArray* t);
-    virtual void visit(TypeSArray* t);
-    virtual void visit(TypeIdentifier* t);
-    virtual void visit(TypeReturn* t);
-    virtual void visit(TypeTypeof* t);
-    virtual void visit(TypeInstance* t);
-    virtual void visit(DeclarationExp* e);
-    virtual void visit(IntegerExp* e);
-    virtual void visit(NewAnonClassExp* e);
-    virtual void visit(IsExp* e);
-    virtual void visit(RealExp* e);
-    virtual void visit(NullExp* e);
-    virtual void visit(TypeidExp* e);
-    virtual void visit(TraitsExp* e);
-    virtual void visit(StringExp* e);
-    virtual void visit(NewExp* e);
-    virtual void visit(AssocArrayLiteralExp* e);
-    virtual void visit(ArrayLiteralExp* e);
-    virtual void visit(CompileExp* e);
-    virtual void visit(FuncExp* e);
-    virtual void visit(IntervalExp* e);
-    virtual void visit(TypeExp* e);
-    virtual void visit(ScopeExp* e);
-    virtual void visit(IdentifierExp* e);
-    virtual void visit(UnaExp* e);
-    virtual void visit(DefaultInitExp* e);
-    virtual void visit(BinExp* e);
-    virtual void visit(DsymbolExp* e);
-    virtual void visit(TemplateExp* e);
-    virtual void visit(SymbolExp* e);
-    virtual void visit(TupleExp* e);
-    virtual void visit(ThisExp* e);
-    virtual void visit(VarExp* e);
-    virtual void visit(DollarExp* e);
-    virtual void visit(SuperExp* e);
-    virtual void visit(AddrExp* e);
-    virtual void visit(PreExp* e);
-    virtual void visit(PtrExp* e);
-    virtual void visit(NegExp* e);
-    virtual void visit(UAddExp* e);
-    virtual void visit(NotExp* e);
-    virtual void visit(ComExp* e);
-    virtual void visit(DeleteExp* e);
-    virtual void visit(CastExp* e);
-    virtual void visit(CallExp* e);
-    virtual void visit(DotIdExp* e);
-    virtual void visit(AssertExp* e);
-    virtual void visit(ImportExp* e);
-    virtual void visit(DotTemplateInstanceExp* e);
-    virtual void visit(ArrayExp* e);
-    virtual void visit(FuncInitExp* e);
-    virtual void visit(PrettyFuncInitExp* e);
-    virtual void visit(FileInitExp* e);
-    virtual void visit(LineInitExp* e);
-    virtual void visit(ModuleInitExp* e);
-    virtual void visit(CommaExp* e);
-    virtual void visit(PostExp* e);
-    virtual void visit(PowExp* e);
-    virtual void visit(MulExp* e);
-    virtual void visit(DivExp* e);
-    virtual void visit(ModExp* e);
-    virtual void visit(AddExp* e);
-    virtual void visit(MinExp* e);
-    virtual void visit(CatExp* e);
-    virtual void visit(ShlExp* e);
-    virtual void visit(ShrExp* e);
-    virtual void visit(UshrExp* e);
-    virtual void visit(EqualExp* e);
-    virtual void visit(InExp* e);
-    virtual void visit(IdentityExp* e);
-    virtual void visit(CmpExp* e);
-    virtual void visit(AndExp* e);
-    virtual void visit(XorExp* e);
-    virtual void visit(OrExp* e);
-    virtual void visit(LogicalExp* e);
-    virtual void visit(CondExp* e);
-    virtual void visit(AssignExp* e);
-    virtual void visit(BinAssignExp* e);
-    virtual void visit(AddAssignExp* e);
-    virtual void visit(MinAssignExp* e);
-    virtual void visit(MulAssignExp* e);
-    virtual void visit(DivAssignExp* e);
-    virtual void visit(ModAssignExp* e);
-    virtual void visit(PowAssignExp* e);
-    virtual void visit(AndAssignExp* e);
-    virtual void visit(OrAssignExp* e);
-    virtual void visit(XorAssignExp* e);
-    virtual void visit(ShlAssignExp* e);
-    virtual void visit(ShrAssignExp* e);
-    virtual void visit(UshrAssignExp* e);
-    virtual void visit(CatAssignExp* e);
-    virtual void visit(TemplateAliasParameter* tp);
-    virtual void visit(TemplateTypeParameter* tp);
-    virtual void visit(TemplateTupleParameter* tp);
-    virtual void visit(TemplateValueParameter* tp);
-    virtual void visit(TemplateThisParameter* tp);
-    virtual void visit(StaticIfCondition* c);
-    virtual void visit(DVCondition* c);
-    virtual void visit(DebugCondition* c);
-    virtual void visit(VersionCondition* c);
-    virtual void visit(ExpInitializer* i);
-    virtual void visit(StructInitializer* i);
-    virtual void visit(ArrayInitializer* i);
-    virtual void visit(VoidInitializer* i);
-};
-
-class Visitor : public ParseTimeVisitor
+class Visitor : public ParseTimeVisitor<ASTCodegen >
 {
 public:
     virtual void visit(ErrorStatement* s);
@@ -1704,19 +1514,26 @@ struct ObjcFuncDeclaration
 {
     ObjcSelector* selector;
     VarDeclaration* selectorParameter;
+    bool isOptional;
     ObjcFuncDeclaration() :
         selector(),
-        selectorParameter()
+        selectorParameter(),
+        isOptional()
     {
     }
+    ObjcFuncDeclaration(ObjcSelector* selector, VarDeclaration* selectorParameter = nullptr, bool isOptional = false) :
+        selector(selector),
+        selectorParameter(selectorParameter),
+        isOptional(isOptional)
+        {}
 };
 
 struct ParameterList
 {
-    Array<Parameter*>* parameters;
+    Array<Parameter* >* parameters;
     StorageClass stc;
     VarArg varargs;
-    ParameterList(Array<Parameter*>* parameters, VarArg varargs = cast(VarArg)cast(ubyte)0u, StorageClass stc = 0);
+    ParameterList(Array<Parameter* >* parameters, VarArg varargs = (VarArg)0u, StorageClass stc = 0);
     size_t length();
     Parameter* opIndex(size_t i);
     ParameterList() :
@@ -1737,13 +1554,15 @@ struct TargetC
 {
     uint32_t longsize;
     uint32_t long_doublesize;
-    uint32_t criticalSectionSize;
     TargetC() :
         longsize(),
-        long_doublesize(),
-        criticalSectionSize()
+        long_doublesize()
     {
     }
+    TargetC(uint32_t longsize, uint32_t long_doublesize = 0u) :
+        longsize(longsize),
+        long_doublesize(long_doublesize)
+        {}
 };
 
 struct TargetCPP
@@ -1753,6 +1572,7 @@ struct TargetCPP
     bool twoDtorInVtable;
     const char* toMangle(Dsymbol* s);
     const char* typeInfoMangle(ClassDeclaration* cd);
+    const char* thunkMangle(FuncDeclaration* fd, int32_t offset);
     const char* typeMangle(Type* t);
     Type* parameterType(Parameter* p);
     bool fundamentalType(const Type* const t, bool& isFundamental);
@@ -1762,6 +1582,11 @@ struct TargetCPP
         twoDtorInVtable()
     {
     }
+    TargetCPP(bool reverseOverloads, bool exceptions = false, bool twoDtorInVtable = false) :
+        reverseOverloads(reverseOverloads),
+        exceptions(exceptions),
+        twoDtorInVtable(twoDtorInVtable)
+        {}
 };
 
 struct TargetObjC
@@ -1771,27 +1596,33 @@ struct TargetObjC
         supported()
     {
     }
+    TargetObjC(bool supported) :
+        supported(supported)
+        {}
 };
 
-BEGIN_ENUM(Sizeok, SIZEOK, sizeok)
-    ENUM_KEY(int32_t, none, 0, Sizeok, SIZEOK, sizeok, S)
-    ENUM_KEY(int32_t, fwd, 1, Sizeok, SIZEOK, sizeok, S)
-    ENUM_KEY(int32_t, inProcess, 2, Sizeok, SIZEOK, sizeok, S)
-    ENUM_KEY(int32_t, done, 3, Sizeok, SIZEOK, sizeok, S)
-END_ENUM(Sizeok, SIZEOK, sizeok)
+enum class Sizeok : uint8_t
+{
+    none = 0u,
+    fwd = 1u,
+    inProcess = 2u,
+    done = 3u,
+};
 
-BEGIN_ENUM(Baseok, BASEOK, baseok)
-    ENUM_KEY(int32_t, none, 0, Baseok, BASEOK, baseok, B)
-    ENUM_KEY(int32_t, start, 1, Baseok, BASEOK, baseok, B)
-    ENUM_KEY(int32_t, done, 2, Baseok, BASEOK, baseok, B)
-    ENUM_KEY(int32_t, semanticdone, 3, Baseok, BASEOK, baseok, B)
-END_ENUM(Baseok, BASEOK, baseok)
+enum class Baseok : uint8_t
+{
+    none = 0u,
+    start = 1u,
+    done = 2u,
+    semanticdone = 3u,
+};
 
-BEGIN_ENUM(ClassKind, CLASSKIND, classkind)
-    ENUM_KEY(int32_t, d, 0, ClassKind, CLASSKIND, classkind, CK)
-    ENUM_KEY(int32_t, cpp, 1, ClassKind, CLASSKIND, classkind, CK)
-    ENUM_KEY(int32_t, objc, 2, ClassKind, CLASSKIND, classkind, CK)
-END_ENUM(ClassKind, CLASSKIND, classkind)
+enum class ClassKind : uint8_t
+{
+    d = 0u,
+    cpp = 1u,
+    objc = 2u,
+};
 
 class AggregateDeclaration : public ScopeDsymbol
 {
@@ -1800,26 +1631,26 @@ public:
     StorageClass storage_class;
     uint32_t structsize;
     uint32_t alignsize;
-    Array<VarDeclaration*> fields;
+    Array<VarDeclaration* > fields;
     Dsymbol* deferred;
     ClassKind classKind;
     CPPMANGLE cppmangle;
     Dsymbol* enclosing;
     VarDeclaration* vthis;
     VarDeclaration* vthis2;
-    Array<FuncDeclaration*> invs;
+    Array<FuncDeclaration* > invs;
     FuncDeclaration* inv;
     NewDeclaration* aggNew;
     Dsymbol* ctor;
     CtorDeclaration* defaultCtor;
     AliasThis* aliasthis;
-    Array<DtorDeclaration*> dtors;
+    Array<DtorDeclaration* > dtors;
     DtorDeclaration* dtor;
     DtorDeclaration* primaryDtor;
     DtorDeclaration* tidtor;
     FuncDeclaration* fieldDtor;
     Expression* getRTInfo;
-    Prot protection;
+    Visibility visibility;
     bool noDefaultCtor;
     Sizeok sizeok;
     virtual Scope* newScope(Scope* sc);
@@ -1829,14 +1660,14 @@ public:
     bool determineSize(Loc loc);
     virtual void finalizeSize() = 0;
     d_uns64 size(const Loc& loc);
-    bool fill(Loc loc, Array<Expression*>* elements, bool ctorinit);
+    bool fill(Loc loc, Array<Expression* >* elements, bool ctorinit);
     Type* getType();
     bool isDeprecated() const;
     void setDeprecated();
     bool isNested() const;
     bool isExport() const;
     Dsymbol* searchCtor();
-    Prot prot();
+    Visibility visible();
     Type* handleType();
     Symbol* stag;
     Symbol* sinit;
@@ -1845,13 +1676,13 @@ public:
     ~AggregateDeclaration();
 };
 
-class AliasThis : public Dsymbol
+class AliasThis final : public Dsymbol
 {
 public:
     Identifier* ident;
     Dsymbol* sym;
     bool isDeprecated_;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    AliasThis* syntaxCopy(Dsymbol* s);
     const char* kind() const;
     AliasThis* isAliasThis();
     void accept(Visitor* v);
@@ -1864,67 +1695,67 @@ extern TypeTuple* toArgTypes_sysv_x64(Type* t);
 
 extern TypeTuple* toArgTypes_aarch64(Type* t);
 
-extern bool isHFVA(Type* t, int32_t maxNumElements = 4, Type** rewriteType);
+extern bool isHFVA(Type* t, int32_t maxNumElements = 4, Type** rewriteType = nullptr);
 
-typedef Array<const char*> Strings;
+typedef Array<const char* > Strings;
 
-typedef Array<Identifier*> Identifiers;
+typedef Array<Identifier* > Identifiers;
 
-typedef Array<TemplateParameter*> TemplateParameters;
+typedef Array<TemplateParameter* > TemplateParameters;
 
-typedef Array<Expression*> Expressions;
+typedef Array<Expression* > Expressions;
 
-typedef Array<Statement*> Statements;
+typedef Array<Statement* > Statements;
 
-typedef Array<BaseClass*> BaseClasses;
+typedef Array<BaseClass* > BaseClasses;
 
-typedef Array<ClassDeclaration*> ClassDeclarations;
+typedef Array<ClassDeclaration* > ClassDeclarations;
 
-typedef Array<Dsymbol*> Dsymbols;
+typedef Array<Dsymbol* > Dsymbols;
 
-typedef Array<RootObject*> Objects;
+typedef Array<RootObject* > Objects;
 
-typedef Array<DtorDeclaration*> DtorDeclarations;
+typedef Array<DtorDeclaration* > DtorDeclarations;
 
-typedef Array<FuncDeclaration*> FuncDeclarations;
+typedef Array<FuncDeclaration* > FuncDeclarations;
 
-typedef Array<Parameter*> Parameters;
+typedef Array<Parameter* > Parameters;
 
-typedef Array<Initializer*> Initializers;
+typedef Array<Initializer* > Initializers;
 
-typedef Array<VarDeclaration*> VarDeclarations;
+typedef Array<VarDeclaration* > VarDeclarations;
 
-typedef Array<Type*> Types;
+typedef Array<Type* > Types;
 
-typedef Array<Catch*> Catches;
+typedef Array<Catch* > Catches;
 
-typedef Array<StaticDtorDeclaration*> StaticDtorDeclarations;
+typedef Array<StaticDtorDeclaration* > StaticDtorDeclarations;
 
-typedef Array<SharedStaticDtorDeclaration*> SharedStaticDtorDeclarations;
+typedef Array<SharedStaticDtorDeclaration* > SharedStaticDtorDeclarations;
 
-typedef Array<AliasDeclaration*> AliasDeclarations;
+typedef Array<AliasDeclaration* > AliasDeclarations;
 
-typedef Array<Module*> Modules;
+typedef Array<Module* > Modules;
 
-typedef Array<CaseStatement*> CaseStatements;
+typedef Array<CaseStatement* > CaseStatements;
 
-typedef Array<ScopeStatement*> ScopeStatements;
+typedef Array<ScopeStatement* > ScopeStatements;
 
-typedef Array<GotoCaseStatement*> GotoCaseStatements;
+typedef Array<GotoCaseStatement* > GotoCaseStatements;
 
-typedef Array<ReturnStatement*> ReturnStatements;
+typedef Array<ReturnStatement* > ReturnStatements;
 
-typedef Array<GotoStatement*> GotoStatements;
+typedef Array<GotoStatement* > GotoStatements;
 
-typedef Array<TemplateInstance*> TemplateInstances;
+typedef Array<TemplateInstance* > TemplateInstances;
 
-typedef Array<Ensure> Ensures;
+typedef Array<Ensure > Ensures;
 
 class AttribDeclaration : public Dsymbol
 {
 public:
-    Array<Dsymbol*>* decl;
-    virtual Array<Dsymbol*>* include(Scope* sc);
+    Array<Dsymbol* >* decl;
+    virtual Array<Dsymbol* >* include(Scope* sc);
     virtual Scope* newScope(Scope* sc);
     void addMember(Scope* sc, ScopeDsymbol* sds);
     void setScope(Scope* sc);
@@ -1936,8 +1767,8 @@ public:
     bool hasPointers();
     bool hasStaticCtorOrDtor();
     void checkCtorConstInit();
-    void addLocalClass(Array<ClassDeclaration*>* aclasses);
-    void addObjcSymbols(Array<ClassDeclaration*>* classes, Array<ClassDeclaration*>* categories);
+    void addLocalClass(Array<ClassDeclaration* >* aclasses);
+    void addObjcSymbols(Array<ClassDeclaration* >* classes, Array<ClassDeclaration* >* categories);
     AttribDeclaration* isAttribDeclaration();
     void accept(Visitor* v);
 };
@@ -1946,7 +1777,7 @@ class StorageClassDeclaration : public AttribDeclaration
 {
 public:
     StorageClass stc;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    StorageClassDeclaration* syntaxCopy(Dsymbol* s);
     Scope* newScope(Scope* sc);
     bool oneMember(Dsymbol** ps, Identifier* ident);
     void addMember(Scope* sc, ScopeDsymbol* sds);
@@ -1954,77 +1785,77 @@ public:
     void accept(Visitor* v);
 };
 
-class DeprecatedDeclaration : public StorageClassDeclaration
+class DeprecatedDeclaration final : public StorageClassDeclaration
 {
 public:
     Expression* msg;
-    char* msgstr;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    const char* msgstr;
+    DeprecatedDeclaration* syntaxCopy(Dsymbol* s);
     Scope* newScope(Scope* sc);
     void setScope(Scope* sc);
     void accept(Visitor* v);
 };
 
-class LinkDeclaration : public AttribDeclaration
+class LinkDeclaration final : public AttribDeclaration
 {
 public:
     LINK linkage;
-    static LinkDeclaration* create(LINK p, Array<Dsymbol*>* decl);
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    static LinkDeclaration* create(const Loc& loc, LINK p, Array<Dsymbol* >* decl);
+    LinkDeclaration* syntaxCopy(Dsymbol* s);
     Scope* newScope(Scope* sc);
     const char* toChars() const;
     void accept(Visitor* v);
 };
 
-class CPPMangleDeclaration : public AttribDeclaration
+class CPPMangleDeclaration final : public AttribDeclaration
 {
 public:
     CPPMANGLE cppmangle;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    CPPMangleDeclaration* syntaxCopy(Dsymbol* s);
     Scope* newScope(Scope* sc);
     void setScope(Scope* sc);
     const char* toChars() const;
     void accept(Visitor* v);
 };
 
-class CPPNamespaceDeclaration : public AttribDeclaration
+class CPPNamespaceDeclaration final : public AttribDeclaration
 {
 public:
     Expression* exp;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    CPPNamespaceDeclaration* syntaxCopy(Dsymbol* s);
     Scope* newScope(Scope* sc);
     const char* toChars() const;
     void accept(Visitor* v);
     CPPNamespaceDeclaration* isCPPNamespaceDeclaration();
 };
 
-class ProtDeclaration : public AttribDeclaration
+class VisibilityDeclaration final : public AttribDeclaration
 {
 public:
-    Prot protection;
-    Array<Identifier*>* pkg_identifiers;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    Visibility visibility;
+    _d_dynamicArray< Identifier* > pkg_identifiers;
+    VisibilityDeclaration* syntaxCopy(Dsymbol* s);
     Scope* newScope(Scope* sc);
     void addMember(Scope* sc, ScopeDsymbol* sds);
     const char* kind() const;
     const char* toPrettyChars(bool _param_0);
-    ProtDeclaration* isProtDeclaration();
+    VisibilityDeclaration* isVisibilityDeclaration();
     void accept(Visitor* v);
 };
 
-class AlignDeclaration : public AttribDeclaration
+class AlignDeclaration final : public AttribDeclaration
 {
 public:
     Expression* ealign;
-    ENUM_CONSTANT_NUMERIC(uint32_t, UNKNOWN, 0u)
+    enum : uint32_t { UNKNOWN = 0u };
 
     uint32_t salign;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    AlignDeclaration* syntaxCopy(Dsymbol* s);
     Scope* newScope(Scope* sc);
     void accept(Visitor* v);
 };
 
-class AnonDeclaration : public AttribDeclaration
+class AnonDeclaration final : public AttribDeclaration
 {
 public:
     bool isunion;
@@ -2032,7 +1863,7 @@ public:
     uint32_t anonoffset;
     uint32_t anonstructsize;
     uint32_t anonalignsize;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    AnonDeclaration* syntaxCopy(Dsymbol* s);
     void setScope(Scope* sc);
     void setFieldOffset(AggregateDeclaration* ad, uint32_t* poffset, bool isunion);
     const char* kind() const;
@@ -2040,12 +1871,13 @@ public:
     void accept(Visitor* v);
 };
 
-class PragmaDeclaration : public AttribDeclaration
+class PragmaDeclaration final : public AttribDeclaration
 {
 public:
-    Array<Expression*>* args;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    Array<Expression* >* args;
+    PragmaDeclaration* syntaxCopy(Dsymbol* s);
     Scope* newScope(Scope* sc);
+    PINLINE evalPragmaInline(Scope* sc);
     const char* kind() const;
     void accept(Visitor* v);
 };
@@ -2054,23 +1886,25 @@ class ConditionalDeclaration : public AttribDeclaration
 {
 public:
     Condition* condition;
-    Array<Dsymbol*>* elsedecl;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    Array<Dsymbol* >* elsedecl;
+    ConditionalDeclaration* syntaxCopy(Dsymbol* s);
     bool oneMember(Dsymbol** ps, Identifier* ident);
-    Array<Dsymbol*>* include(Scope* sc);
+    Array<Dsymbol* >* include(Scope* sc);
     void addComment(const char* comment);
     void setScope(Scope* sc);
     void accept(Visitor* v);
 };
 
-class StaticIfDeclaration : public ConditionalDeclaration
+class StaticIfDeclaration final : public ConditionalDeclaration
 {
 public:
     ScopeDsymbol* scopesym;
+private:
     bool addisdone;
     bool onStack;
-    Dsymbol* syntaxCopy(Dsymbol* s);
-    Array<Dsymbol*>* include(Scope* sc);
+public:
+    StaticIfDeclaration* syntaxCopy(Dsymbol* s);
+    Array<Dsymbol* >* include(Scope* sc);
     void addMember(Scope* sc, ScopeDsymbol* sds);
     void setScope(Scope* sc);
     void importAll(Scope* sc);
@@ -2078,17 +1912,17 @@ public:
     void accept(Visitor* v);
 };
 
-class StaticForeachDeclaration : public AttribDeclaration
+class StaticForeachDeclaration final : public AttribDeclaration
 {
 public:
     StaticForeach* sfe;
     ScopeDsymbol* scopesym;
     bool onStack;
     bool cached;
-    Array<Dsymbol*>* cache;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    Array<Dsymbol* >* cache;
+    StaticForeachDeclaration* syntaxCopy(Dsymbol* s);
     bool oneMember(Dsymbol** ps, Identifier* ident);
-    Array<Dsymbol*>* include(Scope* sc);
+    Array<Dsymbol* >* include(Scope* sc);
     void addMember(Scope* sc, ScopeDsymbol* sds);
     void addComment(const char* comment);
     void setScope(Scope* sc);
@@ -2097,24 +1931,24 @@ public:
     void accept(Visitor* v);
 };
 
-class ForwardingAttribDeclaration : public AttribDeclaration
+class ForwardingAttribDeclaration final : public AttribDeclaration
 {
 public:
     ForwardingScopeDsymbol* sym;
-    ForwardingAttribDeclaration(Array<Dsymbol*>* decl);
+    ForwardingAttribDeclaration(Array<Dsymbol* >* decl);
     Scope* newScope(Scope* sc);
     void addMember(Scope* sc, ScopeDsymbol* sds);
     ForwardingAttribDeclaration* isForwardingAttribDeclaration();
     void accept(Visitor* v);
 };
 
-class CompileDeclaration : public AttribDeclaration
+class CompileDeclaration final : public AttribDeclaration
 {
 public:
-    Array<Expression*>* exps;
+    Array<Expression* >* exps;
     ScopeDsymbol* scopesym;
     bool compiled;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    CompileDeclaration* syntaxCopy(Dsymbol* s);
     void addMember(Scope* sc, ScopeDsymbol* sds);
     void setScope(Scope* sc);
     const char* kind() const;
@@ -2122,56 +1956,60 @@ public:
     void accept(Visitor* v);
 };
 
-class UserAttributeDeclaration : public AttribDeclaration
+class UserAttributeDeclaration final : public AttribDeclaration
 {
 public:
-    Array<Expression*>* atts;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    Array<Expression* >* atts;
+    UserAttributeDeclaration* syntaxCopy(Dsymbol* s);
     Scope* newScope(Scope* sc);
     void setScope(Scope* sc);
-    Array<Expression*>* getAttributes();
+    Array<Expression* >* getAttributes();
     const char* kind() const;
     void accept(Visitor* v);
     static bool isGNUABITag(Expression* e);
     static void checkGNUABITag(Dsymbol* sym, LINK linkage);
 };
 
-BEGIN_ENUM(BE, BE, be)
-    ENUM_KEY(int32_t, none, 0, BE, BE, be, BE)
-    ENUM_KEY(int32_t, fallthru, 1, BE, BE, be, BE)
-    ENUM_KEY(int32_t, throw_, 2, BE, BE, be, BE)
-    ENUM_KEY(int32_t, return_, 4, BE, BE, be, BE)
-    ENUM_KEY(int32_t, goto_, 8, BE, BE, be, BE)
-    ENUM_KEY(int32_t, halt, 16, BE, BE, be, BE)
-    ENUM_KEY(int32_t, break_, 32, BE, BE, be, BE)
-    ENUM_KEY(int32_t, continue_, 64, BE, BE, be, BE)
-    ENUM_KEY(int32_t, errthrow, 128, BE, BE, be, BE)
-    ENUM_KEY(int32_t, any, 31, BE, BE, be, BE)
-END_ENUM(BE, BE, be)
+enum class BE
+{
+    none = 0,
+    fallthru = 1,
+    throw_ = 2,
+    return_ = 4,
+    goto_ = 8,
+    halt = 16,
+    break_ = 32,
+    continue_ = 64,
+    errthrow = 128,
+    any = 31,
+};
 
 extern BUILTIN isBuiltin(FuncDeclaration* fd);
 
-extern Expression* eval_builtin(Loc loc, FuncDeclaration* fd, Array<Expression*>* arguments);
+extern Expression* eval_builtin(Loc loc, FuncDeclaration* fd, Array<Expression* >* arguments);
 
 extern bool canThrow(Expression* e, FuncDeclaration* func, bool mustNotThrow);
 
-BEGIN_ENUM(TargetOS, TARGETOS, targetos)
-    ENUM_KEY(int32_t, all, 2147483647, TargetOS, TARGETOS, targetos, TOS)
-    ENUM_KEY(int32_t, linux, 1, TargetOS, TARGETOS, targetos, TOS)
-    ENUM_KEY(int32_t, windows, 2, TargetOS, TARGETOS, targetos, TOS)
-    ENUM_KEY(int32_t, macOS, 4, TargetOS, TARGETOS, targetos, TOS)
-    ENUM_KEY(int32_t, freeBSD, 8, TargetOS, TARGETOS, targetos, TOS)
-    ENUM_KEY(int32_t, solaris, 16, TargetOS, TARGETOS, targetos, TOS)
-    ENUM_KEY(int32_t, dragonFlyBSD, 32, TargetOS, TARGETOS, targetos, TOS)
-END_ENUM(TargetOS, TARGETOS, targetos)
+enum class TargetOS : uint8_t
+{
+    linux = 1u,
+    Windows = 2u,
+    OSX = 4u,
+    OpenBSD = 8u,
+    FreeBSD = 16u,
+    Solaris = 32u,
+    DragonFlyBSD = 64u,
+    all = 119u,
+    Posix = 117u,
+};
 
 extern Module* rootHasMain;
 
 extern bool includeImports;
 
-extern Array<const char*> includeModulePatterns;
+extern Array<const char* > includeModulePatterns;
 
-extern Array<Module*> compiledImports;
+extern Array<Module* > compiledImports;
 
 struct Compiler
 {
@@ -2187,8 +2025,7 @@ struct complex_t
 {
     _d_real re;
     _d_real im;
-    private: complex_t();
-    public:
+    complex_t() = delete;
     complex_t(_d_real re);
     complex_t(_d_real re, _d_real im);
     int32_t opEquals(complex_t y) const;
@@ -2198,11 +2035,12 @@ extern _d_real creall(complex_t x);
 
 extern _d_real cimagl(complex_t x);
 
-BEGIN_ENUM(Include, INCLUDE, include)
-    ENUM_KEY(int32_t, notComputed, 0, Include, INCLUDE, include, I)
-    ENUM_KEY(int32_t, yes, 1, Include, INCLUDE, include, I)
-    ENUM_KEY(int32_t, no, 2, Include, INCLUDE, include, I)
-END_ENUM(Include, INCLUDE, include)
+enum class Include : uint8_t
+{
+    notComputed = 0u,
+    yes = 1u,
+    no = 2u,
+};
 
 class Condition : public ASTNode
 {
@@ -2217,7 +2055,7 @@ public:
     void accept(Visitor* v);
 };
 
-class StaticForeach : public RootObject
+class StaticForeach final : public RootObject
 {
 public:
     Loc loc;
@@ -2225,7 +2063,6 @@ public:
     ForeachRangeStatement* rangefe;
     bool needExpansion;
     StaticForeach* syntaxCopy();
-    void lowerNonArrayAggregate(Scope* sc);
 };
 
 class DVCondition : public Condition
@@ -2234,11 +2071,11 @@ public:
     uint32_t level;
     Identifier* ident;
     Module* mod;
-    Condition* syntaxCopy();
+    DVCondition* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class DebugCondition : public DVCondition
+class DebugCondition final : public DVCondition
 {
 public:
     static void addGlobalIdent(const char* ident);
@@ -2248,7 +2085,7 @@ public:
     const char* toChars() const;
 };
 
-class VersionCondition : public DVCondition
+class VersionCondition final : public DVCondition
 {
 public:
     static void addGlobalIdent(const char* ident);
@@ -2259,47 +2096,49 @@ public:
     const char* toChars() const;
 };
 
-class StaticIfCondition : public Condition
+class StaticIfCondition final : public Condition
 {
 public:
     Expression* exp;
-    Condition* syntaxCopy();
+    StaticIfCondition* syntaxCopy();
     int32_t include(Scope* sc);
     void accept(Visitor* v);
     const char* toChars() const;
 };
 
-BEGIN_ENUM(CppOperator, CPPOPERATOR, cppoperator)
-    ENUM_KEY(int32_t, Cast, 0, CppOperator, CPPOPERATOR, cppoperator, CO)
-    ENUM_KEY(int32_t, Assign, 1, CppOperator, CPPOPERATOR, cppoperator, CO)
-    ENUM_KEY(int32_t, Eq, 2, CppOperator, CPPOPERATOR, cppoperator, CO)
-    ENUM_KEY(int32_t, Index, 3, CppOperator, CPPOPERATOR, cppoperator, CO)
-    ENUM_KEY(int32_t, Call, 4, CppOperator, CPPOPERATOR, cppoperator, CO)
-    ENUM_KEY(int32_t, Unary, 5, CppOperator, CPPOPERATOR, cppoperator, CO)
-    ENUM_KEY(int32_t, Binary, 6, CppOperator, CPPOPERATOR, cppoperator, CO)
-    ENUM_KEY(int32_t, OpAssign, 7, CppOperator, CPPOPERATOR, cppoperator, CO)
-    ENUM_KEY(int32_t, Unknown, 8, CppOperator, CPPOPERATOR, cppoperator, CO)
-END_ENUM(CppOperator, CPPOPERATOR, cppoperator)
+enum class CppOperator
+{
+    Cast = 0,
+    Assign = 1,
+    Eq = 2,
+    Index = 3,
+    Call = 4,
+    Unary = 5,
+    Binary = 6,
+    OpAssign = 7,
+    Unknown = 8,
+};
 
 extern const char* toCppMangleItanium(Dsymbol* s);
 
 extern const char* cppTypeInfoMangleItanium(Dsymbol* s);
 
+extern const char* cppThunkMangleItanium(FuncDeclaration* fd, int32_t offset);
+
 extern const char* toCppMangleMSVC(Dsymbol* s);
 
 extern const char* cppTypeInfoMangleMSVC(Dsymbol* s);
 
-class ClassReferenceExp : public Expression
+class ClassReferenceExp final : public Expression
 {
 public:
     StructLiteralExp* value;
     ClassDeclaration* originalClass();
-    int32_t getFieldIndex(Type* fieldtype, uint32_t fieldoffset);
     int32_t findFieldIndexByName(VarDeclaration* v);
     void accept(Visitor* v);
 };
 
-class ThrownExceptionExp : public Expression
+class ThrownExceptionExp final : public Expression
 {
 public:
     ClassReferenceExp* thrown;
@@ -2307,40 +2146,40 @@ public:
     void accept(Visitor* v);
 };
 
-class CTFEExp : public Expression
+class CTFEExp final : public Expression
 {
 public:
     const char* toChars() const;
 };
 
-BEGIN_ENUM_NUMERIC(uint16_t, CSX, CSX, csx)
-    ENUM_KEY_NUMERIC(uint16_t, none, 0u, CSX, CSX, csx, CSX)
-    ENUM_KEY_NUMERIC(uint16_t, this_ctor, 1u, CSX, CSX, csx, CSX)
-    ENUM_KEY_NUMERIC(uint16_t, super_ctor, 2u, CSX, CSX, csx, CSX)
-    ENUM_KEY_NUMERIC(uint16_t, label, 4u, CSX, CSX, csx, CSX)
-    ENUM_KEY_NUMERIC(uint16_t, return_, 8u, CSX, CSX, csx, CSX)
-    ENUM_KEY_NUMERIC(uint16_t, any_ctor, 16u, CSX, CSX, csx, CSX)
-    ENUM_KEY_NUMERIC(uint16_t, halt, 32u, CSX, CSX, csx, CSX)
-END_ENUM_NUMERIC(uint16_t, CSX, CSX, csx)
-
-ENUM_CONSTANT_NUMERIC(bool, LOG, false)
+enum class CSX : uint16_t
+{
+    none = 0u,
+    this_ctor = 1u,
+    super_ctor = 2u,
+    label = 4u,
+    return_ = 8u,
+    any_ctor = 16u,
+    halt = 32u,
+};
 
 extern bool arrayTypeCompatibleWithoutCasting(Type* t1, Type* t2);
 
-BEGIN_ENUM(Abstract, ABSTRACT, abstract)
-    ENUM_KEY(int32_t, fwdref, 0, Abstract, ABSTRACT, abstract, A)
-    ENUM_KEY(int32_t, yes, 1, Abstract, ABSTRACT, abstract, A)
-    ENUM_KEY(int32_t, no, 2, Abstract, ABSTRACT, abstract, A)
-END_ENUM(Abstract, ABSTRACT, abstract)
+enum class Abstract : uint8_t
+{
+    fwdref = 0u,
+    yes = 1u,
+    no = 2u,
+};
 
 struct BaseClass
 {
     Type* type;
     ClassDeclaration* sym;
     uint32_t offset;
-    Array<FuncDeclaration*> vtbl;
-    DArray< BaseClass > baseInterfaces;
-    bool fillVtbl(ClassDeclaration* cd, Array<FuncDeclaration*>* vtbl, int32_t newinstance);
+    Array<FuncDeclaration* > vtbl;
+    _d_dynamicArray< BaseClass > baseInterfaces;
+    bool fillVtbl(ClassDeclaration* cd, Array<FuncDeclaration* >* vtbl, int32_t newinstance);
     ~BaseClass();
     BaseClass() :
         type(),
@@ -2352,18 +2191,19 @@ struct BaseClass
     }
 };
 
-BEGIN_ENUM(ClassFlags, CLASSFLAGS, classflags)
-    ENUM_KEY(int32_t, none, 0, ClassFlags, CLASSFLAGS, classflags, CF)
-    ENUM_KEY(int32_t, isCOMclass, 1, ClassFlags, CLASSFLAGS, classflags, CF)
-    ENUM_KEY(int32_t, noPointers, 2, ClassFlags, CLASSFLAGS, classflags, CF)
-    ENUM_KEY(int32_t, hasOffTi, 4, ClassFlags, CLASSFLAGS, classflags, CF)
-    ENUM_KEY(int32_t, hasCtor, 8, ClassFlags, CLASSFLAGS, classflags, CF)
-    ENUM_KEY(int32_t, hasGetMembers, 16, ClassFlags, CLASSFLAGS, classflags, CF)
-    ENUM_KEY(int32_t, hasTypeInfo, 32, ClassFlags, CLASSFLAGS, classflags, CF)
-    ENUM_KEY(int32_t, isAbstract, 64, ClassFlags, CLASSFLAGS, classflags, CF)
-    ENUM_KEY(int32_t, isCPPclass, 128, ClassFlags, CLASSFLAGS, classflags, CF)
-    ENUM_KEY(int32_t, hasDtor, 256, ClassFlags, CLASSFLAGS, classflags, CF)
-END_ENUM(ClassFlags, CLASSFLAGS, classflags)
+enum class ClassFlags : uint32_t
+{
+    none = 0u,
+    isCOMclass = 1u,
+    noPointers = 2u,
+    hasOffTi = 4u,
+    hasCtor = 8u,
+    hasGetMembers = 16u,
+    hasTypeInfo = 32u,
+    isAbstract = 64u,
+    isCPPclass = 128u,
+    hasDtor = 256u,
+};
 
 class ClassDeclaration : public AggregateDeclaration
 {
@@ -2376,27 +2216,30 @@ public:
     ClassDeclaration* baseClass;
     FuncDeclaration* staticCtor;
     FuncDeclaration* staticDtor;
-    Array<Dsymbol*> vtbl;
-    Array<Dsymbol*> vtblFinal;
-    Array<BaseClass*>* baseclasses;
-    DArray< BaseClass* > interfaces;
-    Array<BaseClass*>* vtblInterfaces;
+    Array<Dsymbol* > vtbl;
+    Array<Dsymbol* > vtblFinal;
+    Array<BaseClass* >* baseclasses;
+    _d_dynamicArray< BaseClass* > interfaces;
+    Array<BaseClass* >* vtblInterfaces;
     TypeInfoClassDeclaration* vclassinfo;
     bool com;
     bool stack;
     int32_t cppDtorVtblIndex;
+private:
     bool inuse;
+public:
     Abstract isabstract;
     Baseok baseok;
     ObjcClassDeclaration objc;
     Symbol* cpp_type_info_ptr_sym;
-    static ClassDeclaration* create(Loc loc, Identifier* id, Array<BaseClass*>* baseclasses, Array<Dsymbol*>* members, bool inObject);
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    static ClassDeclaration* create(Loc loc, Identifier* id, Array<BaseClass* >* baseclasses, Array<Dsymbol* >* members, bool inObject);
+    const char* toPrettyChars(bool qualifyTypes = false);
+    ClassDeclaration* syntaxCopy(Dsymbol* s);
     Scope* newScope(Scope* sc);
     bool isBaseOf2(ClassDeclaration* cd);
-    ENUM_CONSTANT_NUMERIC(int32_t, OFFSET_RUNTIME, 1985229328)
+    enum : int32_t { OFFSET_RUNTIME = 1985229328 };
 
-    ENUM_CONSTANT_NUMERIC(int32_t, OFFSET_FWDREF, 1985229329)
+    enum : int32_t { OFFSET_FWDREF = 1985229329 };
 
     virtual bool isBaseOf(ClassDeclaration* cd, int32_t* poffset);
     bool isBaseInfoComplete() const;
@@ -2413,8 +2256,8 @@ public:
     bool isAbstract();
     virtual int32_t vtblOffset() const;
     const char* kind() const;
-    void addLocalClass(Array<ClassDeclaration*>* aclasses);
-    void addObjcSymbols(Array<ClassDeclaration*>* classes, Array<ClassDeclaration*>* categories);
+    void addLocalClass(Array<ClassDeclaration* >* aclasses);
+    void addObjcSymbols(Array<ClassDeclaration* >* classes, Array<ClassDeclaration* >* categories);
     Dsymbol* vtblsym;
     Dsymbol* vtblSymbol();
     ClassDeclaration* isClassDeclaration();
@@ -2422,10 +2265,10 @@ public:
     ~ClassDeclaration();
 };
 
-class InterfaceDeclaration : public ClassDeclaration
+class InterfaceDeclaration final : public ClassDeclaration
 {
 public:
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    InterfaceDeclaration* syntaxCopy(Dsymbol* s);
     Scope* newScope(Scope* sc);
     bool isBaseOf(ClassDeclaration* cd, int32_t* poffset);
     bool isBaseOf(BaseClass* bc, int32_t* poffset);
@@ -2440,72 +2283,67 @@ public:
 
 extern void ObjectNotFound(Identifier* id);
 
-BEGIN_ENUM_NUMERIC(uint64_t, STC, STC, stc)
-    ENUM_KEY_NUMERIC(uint64_t, undefined_, 0LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, static_, 1LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, extern_, 2LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, const_, 4LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, final_, 8LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, abstract_, 16LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, parameter, 32LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, field, 64LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, override_, 128LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, auto_, 256LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, synchronized_, 512LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, deprecated_, 1024LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, in_, 2048LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, out_, 4096LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, lazy_, 8192LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, foreach_, 16384LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, variadic, 65536LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, ctorinit, 131072LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, templateparameter, 262144LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, scope_, 524288LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, immutable_, 1048576LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, ref_, 2097152LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, init, 4194304LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, manifest, 8388608LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, nodtor, 16777216LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, nothrow_, 33554432LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, pure_, 67108864LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, tls, 134217728LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, alias_, 268435456LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, shared_, 536870912LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, gshared, 1073741824LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, wild, 2147483648LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, property, 4294967296LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, safe, 8589934592LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, trusted, 17179869184LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, system, 34359738368LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, ctfe, 68719476736LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, disable, 137438953472LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, result, 274877906944LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, nodefaultctor, 549755813888LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, temp, 1099511627776LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, rvalue, 2199023255552LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, nogc, 4398046511104LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, volatile_, 8796093022208LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, return_, 17592186044416LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, autoref, 35184372088832LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, inference, 70368744177664LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, exptemp, 140737488355328LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, maybescope, 281474976710656LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, scopeinferred, 562949953421312LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, future, 1125899906842624LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, local, 2251799813685248LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, returninferred, 4503599627370496LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, live, 9007199254740992LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, safeGroup, 60129542144LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, IOR, 2103296LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, TYPECTOR, 2685403140LLU, STC, STC, stc, STC)
-    ENUM_KEY_NUMERIC(uint64_t, FUNCATTR, 9011661828521984LLU, STC, STC, stc, STC)
-END_ENUM_NUMERIC(uint64_t, STC, STC, stc)
-
-ENUM_CONSTANT(STC, STCStorageClass, (STC)12407095344775071LLU)
-
-ENUM_CONSTANT(STC, STCFlowThruAggregate, (STC)60129542144LLU)
-
-ENUM_CONSTANT(STC, STCFlowThruFunction, (STC)18446726413102348896LLU)
+enum class STC : uint64_t
+{
+    undefined_ = 0LLU,
+    static_ = 1LLU,
+    extern_ = 2LLU,
+    const_ = 4LLU,
+    final_ = 8LLU,
+    abstract_ = 16LLU,
+    parameter = 32LLU,
+    field = 64LLU,
+    override_ = 128LLU,
+    auto_ = 256LLU,
+    synchronized_ = 512LLU,
+    deprecated_ = 1024LLU,
+    in_ = 2048LLU,
+    out_ = 4096LLU,
+    lazy_ = 8192LLU,
+    foreach_ = 16384LLU,
+    variadic = 65536LLU,
+    ctorinit = 131072LLU,
+    templateparameter = 262144LLU,
+    scope_ = 524288LLU,
+    immutable_ = 1048576LLU,
+    ref_ = 2097152LLU,
+    init = 4194304LLU,
+    manifest = 8388608LLU,
+    nodtor = 16777216LLU,
+    nothrow_ = 33554432LLU,
+    pure_ = 67108864LLU,
+    tls = 134217728LLU,
+    alias_ = 268435456LLU,
+    shared_ = 536870912LLU,
+    gshared = 1073741824LLU,
+    wild = 2147483648LLU,
+    property = 4294967296LLU,
+    safe = 8589934592LLU,
+    trusted = 17179869184LLU,
+    system = 34359738368LLU,
+    ctfe = 68719476736LLU,
+    disable = 137438953472LLU,
+    result = 274877906944LLU,
+    nodefaultctor = 549755813888LLU,
+    temp = 1099511627776LLU,
+    rvalue = 2199023255552LLU,
+    nogc = 4398046511104LLU,
+    volatile_ = 8796093022208LLU,
+    return_ = 17592186044416LLU,
+    autoref = 35184372088832LLU,
+    inference = 70368744177664LLU,
+    exptemp = 140737488355328LLU,
+    maybescope = 281474976710656LLU,
+    scopeinferred = 562949953421312LLU,
+    future = 1125899906842624LLU,
+    local = 2251799813685248LLU,
+    returninferred = 4503599627370496LLU,
+    live = 9007199254740992LLU,
+    safeGroup = 60129542144LLU,
+    IOR = 2103296LLU,
+    TYPECTOR = 2685403140LLU,
+    FUNCATTR = 9011661828521984LLU,
+};
 
 class Declaration : public Dsymbol
 {
@@ -2513,10 +2351,15 @@ public:
     Type* type;
     Type* originalType;
     StorageClass storage_class;
-    Prot protection;
+    Visibility visibility;
     LINK linkage;
-    int32_t inuse;
-    DArray< char > mangleOverride;
+    int16_t inuse;
+    uint8_t adFlags;
+    enum : int32_t { wasRead = 1 };
+
+    enum : int32_t { ignoreRead = 2 };
+
+    _d_dynamicArray< const char > mangleOverride;
     const char* kind() const;
     d_uns64 size(const Loc& loc);
     Dsymbol* search(const Loc& loc, Identifier* ident, int32_t flags = 8);
@@ -2544,18 +2387,18 @@ public:
     bool isOut() const;
     bool isRef() const;
     bool isFuture() const;
-    Prot prot();
+    Visibility visible();
     Declaration* isDeclaration();
     void accept(Visitor* v);
 };
 
-class TupleDeclaration : public Declaration
+class TupleDeclaration final : public Declaration
 {
 public:
-    Array<RootObject*>* objects;
+    Array<RootObject* >* objects;
     bool isexp;
     TypeTuple* tupletype;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    TupleDeclaration* syntaxCopy(Dsymbol* s);
     const char* kind() const;
     Type* getType();
     Dsymbol* toAlias2();
@@ -2564,14 +2407,14 @@ public:
     void accept(Visitor* v);
 };
 
-class AliasDeclaration : public Declaration
+class AliasDeclaration final : public Declaration
 {
 public:
     Dsymbol* aliassym;
     Dsymbol* overnext;
     Dsymbol* _import;
     static AliasDeclaration* create(Loc loc, Identifier* id, Type* type);
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    AliasDeclaration* syntaxCopy(Dsymbol* s);
     bool overloadInsert(Dsymbol* s);
     const char* kind() const;
     Type* getType();
@@ -2582,12 +2425,11 @@ public:
     void accept(Visitor* v);
 };
 
-class OverDeclaration : public Declaration
+class OverDeclaration final : public Declaration
 {
 public:
     Dsymbol* overnext;
     Dsymbol* aliassym;
-    bool hasOverloads;
     const char* kind() const;
     bool equals(const RootObject* const o) const;
     bool overloadInsert(Dsymbol* s);
@@ -2601,11 +2443,20 @@ class VarDeclaration : public Declaration
 {
 public:
     Initializer* _init;
+    Array<FuncDeclaration* > nestedrefs;
+    Dsymbol* aliassym;
+    VarDeclaration* lastVar;
+    Expression* edtor;
+    IntRange* range;
+    Array<VarDeclaration* >* maybes;
+    uint32_t endlinnum;
     uint32_t offset;
     uint32_t sequenceNumber;
     static uint32_t nextSequenceNumber;
-    Array<FuncDeclaration*> nestedrefs;
     uint32_t alignment;
+    enum : uint32_t { AdrOnStackNone = 4294967295u };
+
+    uint32_t ctfeAdrOnStack;
     bool isargptr;
     bool ctorinit;
     bool iscatchvar;
@@ -2618,17 +2469,9 @@ public:
     bool doNotInferScope;
     bool doNotInferReturn;
     uint8_t isdataseg;
-    Dsymbol* aliassym;
-    VarDeclaration* lastVar;
-    uint32_t endlinnum;
-    ENUM_CONSTANT_NUMERIC(uint32_t, AdrOnStackNone, 4294967295u)
-
-    uint32_t ctfeAdrOnStack;
-    Expression* edtor;
-    IntRange* range;
-    Array<VarDeclaration*>* maybes;
-    static VarDeclaration* create(const Loc& loc, Type* type, Identifier* ident, Initializer* _init, StorageClass storage_class);
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    bool isArgDtorVar;
+    static VarDeclaration* create(const Loc& loc, Type* type, Identifier* ident, Initializer* _init, StorageClass storage_class = static_cast<StorageClass>(STC::undefined_));
+    VarDeclaration* syntaxCopy(Dsymbol* s);
     void setFieldOffset(AggregateDeclaration* ad, uint32_t* poffset, bool isunion);
     const char* kind() const;
     AggregateDeclaration* isThis();
@@ -2651,7 +2494,7 @@ public:
     ~VarDeclaration();
 };
 
-class SymbolDeclaration : public Declaration
+class SymbolDeclaration final : public Declaration
 {
 public:
     StructDeclaration* dsym;
@@ -2664,14 +2507,14 @@ class TypeInfoDeclaration : public VarDeclaration
 public:
     Type* tinfo;
     static TypeInfoDeclaration* create(Type* tinfo);
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    TypeInfoDeclaration* syntaxCopy(Dsymbol* s);
     const char* toChars() const;
     TypeInfoDeclaration* isTypeInfoDeclaration();
     void accept(Visitor* v);
     ~TypeInfoDeclaration();
 };
 
-class TypeInfoStructDeclaration : public TypeInfoDeclaration
+class TypeInfoStructDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoStructDeclaration* create(Type* tinfo);
@@ -2679,7 +2522,7 @@ public:
     ~TypeInfoStructDeclaration();
 };
 
-class TypeInfoClassDeclaration : public TypeInfoDeclaration
+class TypeInfoClassDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoClassDeclaration* create(Type* tinfo);
@@ -2687,7 +2530,7 @@ public:
     ~TypeInfoClassDeclaration();
 };
 
-class TypeInfoInterfaceDeclaration : public TypeInfoDeclaration
+class TypeInfoInterfaceDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoInterfaceDeclaration* create(Type* tinfo);
@@ -2695,7 +2538,7 @@ public:
     ~TypeInfoInterfaceDeclaration();
 };
 
-class TypeInfoPointerDeclaration : public TypeInfoDeclaration
+class TypeInfoPointerDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoPointerDeclaration* create(Type* tinfo);
@@ -2703,7 +2546,7 @@ public:
     ~TypeInfoPointerDeclaration();
 };
 
-class TypeInfoArrayDeclaration : public TypeInfoDeclaration
+class TypeInfoArrayDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoArrayDeclaration* create(Type* tinfo);
@@ -2711,7 +2554,7 @@ public:
     ~TypeInfoArrayDeclaration();
 };
 
-class TypeInfoStaticArrayDeclaration : public TypeInfoDeclaration
+class TypeInfoStaticArrayDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoStaticArrayDeclaration* create(Type* tinfo);
@@ -2719,7 +2562,7 @@ public:
     ~TypeInfoStaticArrayDeclaration();
 };
 
-class TypeInfoAssociativeArrayDeclaration : public TypeInfoDeclaration
+class TypeInfoAssociativeArrayDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoAssociativeArrayDeclaration* create(Type* tinfo);
@@ -2727,7 +2570,7 @@ public:
     ~TypeInfoAssociativeArrayDeclaration();
 };
 
-class TypeInfoEnumDeclaration : public TypeInfoDeclaration
+class TypeInfoEnumDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoEnumDeclaration* create(Type* tinfo);
@@ -2735,7 +2578,7 @@ public:
     ~TypeInfoEnumDeclaration();
 };
 
-class TypeInfoFunctionDeclaration : public TypeInfoDeclaration
+class TypeInfoFunctionDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoFunctionDeclaration* create(Type* tinfo);
@@ -2743,7 +2586,7 @@ public:
     ~TypeInfoFunctionDeclaration();
 };
 
-class TypeInfoDelegateDeclaration : public TypeInfoDeclaration
+class TypeInfoDelegateDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoDelegateDeclaration* create(Type* tinfo);
@@ -2751,7 +2594,7 @@ public:
     ~TypeInfoDelegateDeclaration();
 };
 
-class TypeInfoTupleDeclaration : public TypeInfoDeclaration
+class TypeInfoTupleDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoTupleDeclaration* create(Type* tinfo);
@@ -2759,7 +2602,7 @@ public:
     ~TypeInfoTupleDeclaration();
 };
 
-class TypeInfoConstDeclaration : public TypeInfoDeclaration
+class TypeInfoConstDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoConstDeclaration* create(Type* tinfo);
@@ -2767,7 +2610,7 @@ public:
     ~TypeInfoConstDeclaration();
 };
 
-class TypeInfoInvariantDeclaration : public TypeInfoDeclaration
+class TypeInfoInvariantDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoInvariantDeclaration* create(Type* tinfo);
@@ -2775,7 +2618,7 @@ public:
     ~TypeInfoInvariantDeclaration();
 };
 
-class TypeInfoSharedDeclaration : public TypeInfoDeclaration
+class TypeInfoSharedDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoSharedDeclaration* create(Type* tinfo);
@@ -2783,7 +2626,7 @@ public:
     ~TypeInfoSharedDeclaration();
 };
 
-class TypeInfoWildDeclaration : public TypeInfoDeclaration
+class TypeInfoWildDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoWildDeclaration* create(Type* tinfo);
@@ -2791,7 +2634,7 @@ public:
     ~TypeInfoWildDeclaration();
 };
 
-class TypeInfoVectorDeclaration : public TypeInfoDeclaration
+class TypeInfoVectorDeclaration final : public TypeInfoDeclaration
 {
 public:
     static TypeInfoVectorDeclaration* create(Type* tinfo);
@@ -2799,28 +2642,28 @@ public:
     ~TypeInfoVectorDeclaration();
 };
 
-class ThisDeclaration : public VarDeclaration
+class ThisDeclaration final : public VarDeclaration
 {
 public:
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    ThisDeclaration* syntaxCopy(Dsymbol* s);
     ThisDeclaration* isThisDeclaration();
     void accept(Visitor* v);
     ~ThisDeclaration();
 };
 
-class EnumDeclaration : public ScopeDsymbol
+class EnumDeclaration final : public ScopeDsymbol
 {
 public:
     Type* type;
     Type* memtype;
-    Prot protection;
+    Visibility visibility;
     Expression* maxval;
     Expression* minval;
     Expression* defaultval;
     bool isdeprecated;
     bool added;
     int32_t inuse;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    EnumDeclaration* syntaxCopy(Dsymbol* s);
     void addMember(Scope* sc, ScopeDsymbol* sds);
     void setScope(Scope* sc);
     bool oneMember(Dsymbol** ps, Identifier* ident);
@@ -2828,7 +2671,7 @@ public:
     const char* kind() const;
     Dsymbol* search(const Loc& loc, Identifier* ident, int32_t flags = 8);
     bool isDeprecated() const;
-    Prot prot();
+    Visibility visible();
     Expression* getMaxMinValue(const Loc& loc, Identifier* id);
     bool isSpecial() const;
     Expression* getDefaultValue(const Loc& loc);
@@ -2839,14 +2682,14 @@ public:
     ~EnumDeclaration();
 };
 
-class EnumMember : public VarDeclaration
+class EnumMember final : public VarDeclaration
 {
 public:
     Expression*& value();
     Expression* origValue;
     Type* origType;
     EnumDeclaration* ed;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    EnumMember* syntaxCopy(Dsymbol* s);
     const char* kind() const;
     Expression* getVarExp(const Loc& loc, Scope* sc);
     EnumMember* isEnumMember();
@@ -2854,22 +2697,22 @@ public:
     ~EnumMember();
 };
 
-class Import : public Dsymbol
+class Import final : public Dsymbol
 {
 public:
-    Array<Identifier*>* packages;
+    _d_dynamicArray< Identifier* > packages;
     Identifier* id;
     Identifier* aliasId;
     int32_t isstatic;
-    Prot protection;
-    Array<Identifier*> names;
-    Array<Identifier*> aliases;
+    Visibility visibility;
+    Array<Identifier* > names;
+    Array<Identifier* > aliases;
     Module* mod;
     Package* pkg;
-    Array<AliasDeclaration*> aliasdecls;
+    Array<AliasDeclaration* > aliasdecls;
     const char* kind() const;
-    Prot prot();
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    Visibility visible();
+    Import* syntaxCopy(Dsymbol* s);
     bool load(Scope* sc);
     void importAll(Scope* sc);
     Dsymbol* toAlias();
@@ -2888,7 +2731,9 @@ extern void printCtfePerformanceStats();
 
 struct MacroTable
 {
+private:
     Macro* mactab;
+public:
     MacroTable()
     {
     }
@@ -2904,11 +2749,12 @@ extern void mangleToBuffer(Dsymbol* s, OutBuffer* buf);
 
 extern void mangleToBuffer(TemplateInstance* ti, OutBuffer* buf);
 
-BEGIN_ENUM(PKG, PKG, pkg)
-    ENUM_KEY(int32_t, unknown, 0, PKG, PKG, pkg, PKG)
-    ENUM_KEY(int32_t, module_, 1, PKG, PKG, pkg, PKG)
-    ENUM_KEY(int32_t, package_, 2, PKG, PKG, pkg, PKG)
-END_ENUM(PKG, PKG, pkg)
+enum class PKG
+{
+    unknown = 0,
+    module_ = 1,
+    package_ = 2,
+};
 
 class Package : public ScopeDsymbol
 {
@@ -2927,24 +2773,24 @@ public:
     ~Package();
 };
 
-class Module : public Package
+class Module final : public Package
 {
 public:
     static Module* rootModule;
     static DsymbolTable* modules;
-    static Array<Module*> amodules;
-    static Array<Dsymbol*> deferred;
-    static Array<Dsymbol*> deferred2;
-    static Array<Dsymbol*> deferred3;
+    static Array<Module* > amodules;
+    static Array<Dsymbol* > deferred;
+    static Array<Dsymbol* > deferred2;
+    static Array<Dsymbol* > deferred3;
     static uint32_t dprogress;
     static void _init();
     static void deinitialize();
     static AggregateDeclaration* moduleinfo;
-    DArray< char > arg;
+    _d_dynamicArray< const char > arg;
     ModuleDeclaration* md;
-    FileName srcfile;
-    FileName objfile;
-    FileName hdrfile;
+    const FileName srcfile;
+    const FileName objfile;
+    const FileName hdrfile;
     FileName docfile;
     FileBuffer* srcBuffer;
     uint32_t errors;
@@ -2954,7 +2800,7 @@ public:
     bool hasAlwaysInlines;
     bool isPackageFile;
     Package* pkg;
-    Array<char*> contentImportedFiles;
+    Array<const char* > contentImportedFiles;
     int32_t needmoduleinfo;
     int32_t selfimports;
     bool selfImports();
@@ -2965,20 +2811,20 @@ public:
     Dsymbol* searchCacheSymbol;
     int32_t searchCacheFlags;
     Module* importedFrom;
-    Array<Dsymbol*>* decldefs;
-    Array<Module*> aimports;
+    Array<Dsymbol* >* decldefs;
+    Array<Module* > aimports;
     uint32_t debuglevel;
-    Array<Identifier*>* debugids;
-    Array<Identifier*>* debugidsNot;
+    Array<Identifier* >* debugids;
+    Array<Identifier* >* debugidsNot;
     uint32_t versionlevel;
-    Array<Identifier*>* versionids;
-    Array<Identifier*>* versionidsNot;
+    Array<Identifier* >* versionids;
+    Array<Identifier* >* versionidsNot;
     MacroTable macrotable;
     Escape* escapetable;
     size_t nameoffset;
     size_t namelen;
     static Module* create(const char* filename, Identifier* ident, int32_t doDocComment, int32_t doHdrGen);
-    static Module* load(Loc loc, Array<Identifier*>* packages, Identifier* ident);
+    static Module* load(Loc loc, Array<Identifier* >* packages, Identifier* ident);
     const char* kind() const;
     bool loadSourceBuffer(const Loc& loc, ReadResult& readResult);
     bool read(const Loc& loc);
@@ -2987,7 +2833,7 @@ public:
     int32_t needModuleInfo();
     void checkImportDeprecation(const Loc& loc, Scope* sc);
     Dsymbol* search(const Loc& loc, Identifier* ident, int32_t flags = 8);
-    bool isPackageAccessible(Package* p, Prot protection, int32_t flags = 0);
+    bool isPackageAccessible(Package* p, Visibility visibility, int32_t flags = 0);
     Dsymbol* symtabInsert(Dsymbol* s);
     void deleteObjFile();
     static void runDeferredSemantic();
@@ -3017,7 +2863,7 @@ struct ModuleDeclaration
 {
     Loc loc;
     Identifier* id;
-    Array<Identifier*>* packages;
+    _d_dynamicArray< Identifier* > packages;
     bool isdeprecated;
     Expression* msg;
     const char* toChars() const;
@@ -3033,43 +2879,44 @@ struct ModuleDeclaration
 
 extern void gendocfile(Module* m);
 
-BEGIN_ENUM(SCOPE, SCOPE, scope)
-    ENUM_KEY(int32_t, ctor, 1, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, noaccesscheck, 2, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, condition, 4, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, debug_, 8, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, constraint, 16, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, invariant_, 32, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, require, 64, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, ensure, 96, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, contract, 96, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, ctfe, 128, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, compile, 256, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, ignoresymbolvisibility, 512, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, onlysafeaccess, 1024, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, free, 32768, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, fullinst, 65536, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, alias_, 131072, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, printf, 262144, SCOPE, SCOPE, scope, SCOPE)
-    ENUM_KEY(int32_t, scanf, 524288, SCOPE, SCOPE, scope, SCOPE)
-END_ENUM(SCOPE, SCOPE, scope)
-
-ENUM_CONSTANT(SCOPE, SCOPEpush, (SCOPE)788474)
+enum class SCOPE
+{
+    ctor = 1,
+    noaccesscheck = 2,
+    condition = 4,
+    debug_ = 8,
+    constraint = 16,
+    invariant_ = 32,
+    require = 64,
+    ensure = 96,
+    contract = 96,
+    ctfe = 128,
+    compile = 256,
+    ignoresymbolvisibility = 512,
+    onlysafeaccess = 1024,
+    free = 32768,
+    fullinst = 65536,
+    alias_ = 131072,
+    printf = 262144,
+    scanf = 524288,
+};
 
 extern FuncDeclaration* search_toString(StructDeclaration* sd);
 
 extern void semanticTypeInfo(Scope* sc, Type* t);
 
-BEGIN_ENUM(StructFlags, STRUCTFLAGS, structflags)
-    ENUM_KEY(int32_t, none, 0, StructFlags, STRUCTFLAGS, structflags, SF)
-    ENUM_KEY(int32_t, hasPointers, 1, StructFlags, STRUCTFLAGS, structflags, SF)
-END_ENUM(StructFlags, STRUCTFLAGS, structflags)
+enum class StructFlags
+{
+    none = 0,
+    hasPointers = 1,
+};
 
-BEGIN_ENUM(StructPOD, STRUCTPOD, structpod)
-    ENUM_KEY(int32_t, no, 0, StructPOD, STRUCTPOD, structpod, SPOD)
-    ENUM_KEY(int32_t, yes, 1, StructPOD, STRUCTPOD, structpod, SPOD)
-    ENUM_KEY(int32_t, fwd, 2, StructPOD, STRUCTPOD, structpod, SPOD)
-END_ENUM(StructPOD, STRUCTPOD, structpod)
+enum class StructPOD
+{
+    no = 0,
+    yes = 1,
+    fwd = 2,
+};
 
 class StructDeclaration : public AggregateDeclaration
 {
@@ -3081,7 +2928,7 @@ public:
     bool hasNoFields;
     bool hasCopyCtor;
     bool requestTypeInfo;
-    Array<FuncDeclaration*> postblits;
+    Array<FuncDeclaration* > postblits;
     FuncDeclaration* postblit;
     FuncDeclaration* xeq;
     FuncDeclaration* xcmp;
@@ -3092,43 +2939,44 @@ public:
     StructPOD ispod;
     TypeTuple* argTypes;
     static StructDeclaration* create(Loc loc, Identifier* id, bool inObject);
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    StructDeclaration* syntaxCopy(Dsymbol* s);
     void semanticTypeInfoMembers();
     Dsymbol* search(const Loc& loc, Identifier* ident, int32_t flags = 8);
     const char* kind() const;
     void finalizeSize();
-    bool fit(const Loc& loc, Scope* sc, Array<Expression*>* elements, Type* stype);
+    bool fit(const Loc& loc, Scope* sc, Array<Expression* >* elements, Type* stype);
     bool isPOD();
     StructDeclaration* isStructDeclaration();
     void accept(Visitor* v);
     uint32_t numArgTypes() const;
     Type* argType(uint32_t index);
-    bool hasNonDisabledCtor();
+    bool hasRegularCtor(bool checkDisabled = false);
     ~StructDeclaration();
 };
 
-class UnionDeclaration : public StructDeclaration
+class UnionDeclaration final : public StructDeclaration
 {
 public:
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    UnionDeclaration* syntaxCopy(Dsymbol* s);
     const char* kind() const;
     UnionDeclaration* isUnionDeclaration();
     void accept(Visitor* v);
     ~UnionDeclaration();
 };
 
-BEGIN_ANON_ENUM()
-    ANON_ENUM_KEY(int32_t, IgnoreNone, 0)
-    ANON_ENUM_KEY(int32_t, IgnorePrivateImports, 1)
-    ANON_ENUM_KEY(int32_t, IgnoreErrors, 2)
-    ANON_ENUM_KEY(int32_t, IgnoreAmbiguous, 4)
-    ANON_ENUM_KEY(int32_t, SearchLocalsOnly, 8)
-    ANON_ENUM_KEY(int32_t, SearchImportsOnly, 16)
-    ANON_ENUM_KEY(int32_t, SearchUnqualifiedModule, 32)
-    ANON_ENUM_KEY(int32_t, IgnoreSymbolVisibility, 128)
-END_ANON_ENUM()
+enum
+{
+    IgnoreNone = 0,
+    IgnorePrivateImports = 1,
+    IgnoreErrors = 2,
+    IgnoreAmbiguous = 4,
+    SearchLocalsOnly = 8,
+    SearchImportsOnly = 16,
+    SearchUnqualifiedModule = 32,
+    IgnoreSymbolVisibility = 128,
+};
 
-class WithScopeSymbol : public ScopeDsymbol
+class WithScopeSymbol final : public ScopeDsymbol
 {
 public:
     WithStatement* withstate;
@@ -3138,10 +2986,10 @@ public:
     ~WithScopeSymbol();
 };
 
-class ArrayScopeSymbol : public ScopeDsymbol
+class ArrayScopeSymbol final : public ScopeDsymbol
 {
-public:
     RootObject* arrayContent;
+public:
     Scope* sc;
     Dsymbol* search(const Loc& loc, Identifier* ident, int32_t flags = 0);
     ArrayScopeSymbol* isArrayScopeSymbol();
@@ -3149,10 +2997,10 @@ public:
     ~ArrayScopeSymbol();
 };
 
-class OverloadSet : public Dsymbol
+class OverloadSet final : public Dsymbol
 {
 public:
-    Array<Dsymbol*> a;
+    Array<Dsymbol* > a;
     void push(Dsymbol* s);
     OverloadSet* isOverloadSet();
     const char* kind() const;
@@ -3160,19 +3008,19 @@ public:
     ~OverloadSet();
 };
 
-class ForwardingScopeDsymbol : public ScopeDsymbol
+class ForwardingScopeDsymbol final : public ScopeDsymbol
 {
 public:
     ScopeDsymbol* forward;
     Dsymbol* symtabInsert(Dsymbol* s);
     Dsymbol* symtabLookup(Dsymbol* s, Identifier* id);
-    void importScope(Dsymbol* s, Prot protection);
+    void importScope(Dsymbol* s, Visibility visibility);
     const char* kind() const;
     ForwardingScopeDsymbol* isForwardingScopeDsymbol();
     ~ForwardingScopeDsymbol();
 };
 
-class ExpressionDsymbol : public Dsymbol
+class ExpressionDsymbol final : public Dsymbol
 {
 public:
     Expression* exp;
@@ -3180,10 +3028,22 @@ public:
     ExpressionDsymbol* isExpressionDsymbol();
 };
 
-class DsymbolTable : public RootObject
+class AliasAssign final : public Dsymbol
 {
 public:
-    AssocArray<Identifier*, Dsymbol*> tab;
+    Identifier* ident;
+    Type* type;
+    Dsymbol* aliassym;
+    AliasAssign* syntaxCopy(Dsymbol* s);
+    AliasAssign* isAliasAssign();
+    const char* kind() const;
+    void accept(Visitor* v);
+};
+
+class DsymbolTable final : public RootObject
+{
+public:
+    AssocArray<Identifier*, Dsymbol* > tab;
     Dsymbol* lookup(const Identifier* const ident);
     Dsymbol* update(Dsymbol* s);
     Dsymbol* insert(Dsymbol* s);
@@ -3192,11 +3052,7 @@ public:
     DsymbolTable();
 };
 
-ENUM_CONSTANT_NUMERIC(bool, LOG, false)
-
 extern void dsymbolSemantic(Dsymbol* dsym, Scope* sc);
-
-ENUM_CONSTANT_NUMERIC(int32_t, IDX_NOTFOUND, 305419896)
 
 extern Expression* isExpression(RootObject* o);
 
@@ -3212,20 +3068,20 @@ extern TemplateParameter* isTemplateParameter(RootObject* o);
 
 extern bool isError(const RootObject* const o);
 
-class Tuple : public RootObject
+class Tuple final : public RootObject
 {
 public:
-    Array<RootObject*> objects;
+    Array<RootObject* > objects;
     DYNCAST dyncast() const;
     const char* toChars() const;
     ~Tuple();
 };
 
-class TemplateDeclaration : public ScopeDsymbol
+class TemplateDeclaration final : public ScopeDsymbol
 {
 public:
-    Array<TemplateParameter*>* parameters;
-    Array<TemplateParameter*>* origParameters;
+    Array<TemplateParameter* >* parameters;
+    Array<TemplateParameter* >* origParameters;
     Expression* constraint;
     void* instances;
     TemplateDeclaration* overnext;
@@ -3238,24 +3094,25 @@ public:
     bool isTrivialAliasSeq;
     bool isTrivialAlias;
     bool deprecated_;
-    Prot protection;
+    Visibility visibility;
     int32_t inuse;
     TemplatePrevious* previous;
+private:
     Expression* lastConstraint;
-    Array<Expression*> lastConstraintNegs;
-    Array<RootObject*>* lastConstraintTiargs;
-    Dsymbol* syntaxCopy(Dsymbol* _param_0);
+    Array<Expression* > lastConstraintNegs;
+    Array<RootObject* >* lastConstraintTiargs;
+public:
+    TemplateDeclaration* syntaxCopy(Dsymbol* _param_0);
     bool overloadInsert(Dsymbol* s);
     bool hasStaticCtorOrDtor();
     const char* kind() const;
     const char* toChars() const;
     const char* toCharsNoConstraints() const;
     const char* toCharsMaybeConstraints(bool includeConstraints) const;
-    Prot prot();
+    Visibility visible();
     const char* getConstraintEvalError(const char*& tip);
-    void formatParamsWithTiargs(Array<RootObject*>& tiargs, OutBuffer& buf);
     Scope* scopeForTemplateParameters(TemplateInstance* ti, Scope* sc);
-    MATCH leastAsSpecialized(Scope* sc, TemplateDeclaration* td2, Array<Expression*>* fargs);
+    MATCH leastAsSpecialized(Scope* sc, TemplateDeclaration* td2, Array<Expression* >* fargs);
     RootObject* declareParameter(Scope* sc, TemplateParameter* tp, RootObject* o);
     TemplateDeclaration* isTemplateDeclaration();
     TemplateTupleParameter* isVariadic();
@@ -3265,12 +3122,12 @@ public:
     ~TemplateDeclaration();
 };
 
-class TypeDeduced : public Type
+class TypeDeduced final : public Type
 {
 public:
     Type* tded;
-    Array<Expression*> argexps;
-    Array<Type*> tparams;
+    Array<Expression* > argexps;
+    Array<Type* > tparams;
     void update(Expression* e, Type* tparam);
     void update(Type* tt, Expression* e, Type* tparam);
     MATCH matchAll(Type* tt);
@@ -3306,7 +3163,7 @@ public:
     Type* specType;
     Type* defaultType;
     TemplateTypeParameter* isTemplateTypeParameter();
-    TemplateParameter* syntaxCopy();
+    TemplateTypeParameter* syntaxCopy();
     bool declareParameter(Scope* sc);
     void print(RootObject* oarg, RootObject* oded);
     RootObject* specialization();
@@ -3316,22 +3173,22 @@ public:
     void accept(Visitor* v);
 };
 
-class TemplateThisParameter : public TemplateTypeParameter
+class TemplateThisParameter final : public TemplateTypeParameter
 {
 public:
     TemplateThisParameter* isTemplateThisParameter();
-    TemplateParameter* syntaxCopy();
+    TemplateThisParameter* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class TemplateValueParameter : public TemplateParameter
+class TemplateValueParameter final : public TemplateParameter
 {
 public:
     Type* valType;
     Expression* specValue;
     Expression* defaultValue;
     TemplateValueParameter* isTemplateValueParameter();
-    TemplateParameter* syntaxCopy();
+    TemplateValueParameter* syntaxCopy();
     bool declareParameter(Scope* sc);
     void print(RootObject* oarg, RootObject* oded);
     RootObject* specialization();
@@ -3341,14 +3198,14 @@ public:
     void accept(Visitor* v);
 };
 
-class TemplateAliasParameter : public TemplateParameter
+class TemplateAliasParameter final : public TemplateParameter
 {
 public:
     Type* specType;
     RootObject* specAlias;
     RootObject* defaultAlias;
     TemplateAliasParameter* isTemplateAliasParameter();
-    TemplateParameter* syntaxCopy();
+    TemplateAliasParameter* syntaxCopy();
     bool declareParameter(Scope* sc);
     void print(RootObject* oarg, RootObject* oded);
     RootObject* specialization();
@@ -3358,11 +3215,11 @@ public:
     void accept(Visitor* v);
 };
 
-class TemplateTupleParameter : public TemplateParameter
+class TemplateTupleParameter final : public TemplateParameter
 {
 public:
     TemplateTupleParameter* isTemplateTupleParameter();
-    TemplateParameter* syntaxCopy();
+    TemplateTupleParameter* syntaxCopy();
     bool declareParameter(Scope* sc);
     void print(RootObject* oarg, RootObject* oded);
     RootObject* specialization();
@@ -3376,37 +3233,41 @@ class TemplateInstance : public ScopeDsymbol
 {
 public:
     Identifier* name;
-    Array<RootObject*>* tiargs;
-    Array<RootObject*> tdtypes;
-    Array<Module*> importedModules;
+    Array<RootObject* >* tiargs;
+    Array<RootObject* > tdtypes;
+    Array<Module* > importedModules;
     Dsymbol* tempdecl;
     Dsymbol* enclosing;
     Dsymbol* aliasdecl;
     TemplateInstance* inst;
     ScopeDsymbol* argsym;
     size_t hash;
-    Array<Expression*>* fargs;
-    Array<TemplateInstance*>* deferred;
+    Array<Expression* >* fargs;
+    Array<TemplateInstance* >* deferred;
     Module* memberOf;
     TemplateInstance* tinst;
     TemplateInstance* tnext;
     Module* minst;
+private:
     uint16_t _nest;
+public:
     uint8_t inuse;
-    BEGIN_ENUM_NUMERIC(uint32_t, Flag, FLAG, flag)
-        ENUM_KEY_NUMERIC(uint32_t, semantictiargsdone, 32768u, Flag, FLAG, flag, F)
-        ENUM_KEY_NUMERIC(uint32_t, havetempdecl, 16384u, Flag, FLAG, flag, F)
-        ENUM_KEY_NUMERIC(uint32_t, gagged, 8192u, Flag, FLAG, flag, F)
-        ENUM_KEY_NUMERIC(uint32_t, available, 8191u, Flag, FLAG, flag, F)
-    END_ENUM_NUMERIC(uint32_t, Flag, FLAG, flag)
+private:
+    enum class Flag : uint32_t
+    {
+        semantictiargsdone = 32768u,
+        havetempdecl = 16384u,
+        gagged = 8192u,
+        available = 8191u,
+    };
 
-    Dsymbol* syntaxCopy(Dsymbol* s);
+public:
+    TemplateInstance* syntaxCopy(Dsymbol* s);
     Dsymbol* toAlias();
     const char* kind() const;
     bool oneMember(Dsymbol** ps, Identifier* ident);
     const char* toChars() const;
     const char* toPrettyCharsHelper();
-    void printInstantiationTrace();
     Identifier* getIdent();
     bool equalsx(TemplateInstance* ti);
     size_t toHash();
@@ -3417,11 +3278,11 @@ public:
     ~TemplateInstance();
 };
 
-class TemplateMixin : public TemplateInstance
+class TemplateMixin final : public TemplateInstance
 {
 public:
     TypeQualified* tqual;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    TemplateInstance* syntaxCopy(Dsymbol* s);
     const char* kind() const;
     bool oneMember(Dsymbol** ps, Identifier* ident);
     bool hasPointers();
@@ -3432,20 +3293,19 @@ public:
     ~TemplateMixin();
 };
 
-ENUM_CONSTANT_NUMERIC(bool, isBuildingCompiler, false)
+extern void genCppHdrFiles(Array<Module* >& ms);
 
-extern void genCppHdrFiles(Array<Module*>& ms);
-
-class ToCppBuffer : public Visitor
+class ToCppBuffer final : public Visitor
 {
 public:
-    BEGIN_ENUM(EnumKind, ENUMKIND, enumkind)
-        ENUM_KEY(int32_t, Int, 0, EnumKind, ENUMKIND, enumkind, EK)
-        ENUM_KEY(int32_t, Numeric, 1, EnumKind, ENUMKIND, enumkind, EK)
-        ENUM_KEY(int32_t, String, 2, EnumKind, ENUMKIND, enumkind, EK)
-        ENUM_KEY(int32_t, Enum, 3, EnumKind, ENUMKIND, enumkind, EK)
-        ENUM_KEY(int32_t, Other, 4, EnumKind, ENUMKIND, enumkind, EK)
-    END_ENUM(EnumKind, ENUMKIND, enumkind)
+    enum class EnumKind
+    {
+        Int = 0,
+        Numeric = 1,
+        String = 2,
+        Enum = 3,
+        Other = 4,
+    };
 
     typedef ASTCodegen AST;
     void* visited;
@@ -3455,28 +3315,22 @@ public:
     OutBuffer* donebuf;
     OutBuffer* buf;
     AggregateDeclaration* adparent;
-    ClassDeclaration* cdparent;
     TemplateDeclaration* tdparent;
     Identifier* ident;
     LINK linkage;
     bool forwardedAA;
     Type** origType;
+    Kind currentVisibility;
+    STC storageClass;
+    int32_t ignoredCounter;
     bool hasReal;
-    bool hasDefaultEnum;
-    bool hasNumericEnum;
-    bool hasTypedEnum;
-    bool hasAnonEnum;
-    bool hasAnonNumericEnum;
-    bool hasNumericConstant;
-    bool hasTypedConstant;
-    bool printIgnored;
+    const bool printIgnored;
     ToCppBuffer(OutBuffer* checkbuf, OutBuffer* fwdbuf, OutBuffer* donebuf, OutBuffer* buf);
-    EnumKind getEnumKind(Type* type);
-    void writeEnumTypeName(Type* type);
     void writeDeclEnd();
     void visit(Dsymbol* s);
     void visit(Import* i);
     void visit(AttribDeclaration* pd);
+    void visit(StorageClassDeclaration* scd);
     void visit(LinkDeclaration* ld);
     void visit(CPPMangleDeclaration* md);
     void visit(Module* m);
@@ -3487,48 +3341,46 @@ public:
     void visit(AliasDeclaration* ad);
     void visit(Nspace* ns);
     void visit(CPPNamespaceDeclaration* ns);
-    void handleNspace(Identifier* name, Array<Dsymbol*>* members);
+    void handleNspace(Dsymbol* namespace_, Array<Dsymbol* >* members);
     void visit(AnonDeclaration* ad);
-    bool memberField(VarDeclaration* vd);
     void visit(StructDeclaration* sd);
-    void pushAlignToBuffer(uint32_t alignment);
-    void popAlignToBuffer(uint32_t alignment);
-    void includeSymbol(Dsymbol* ds);
     void visit(ClassDeclaration* cd);
     void visit(EnumDeclaration* ed);
     void visit(EnumMember* em);
-    void typeToBuffer(Type* t, Identifier* ident);
     void visit(Type* t);
     void visit(TypeIdentifier* t);
+    void visit(TypeNull* t);
+    void visit(TypeTypeof* t);
     void visit(TypeBasic* t);
     void visit(TypePointer* t);
     void visit(TypeSArray* t);
     void visit(TypeAArray* t);
     void visit(TypeFunction* tf);
-    void enumToBuffer(EnumDeclaration* ed);
     void visit(TypeEnum* t);
     void visit(TypeStruct* t);
     void visit(TypeDArray* t);
-    void visitTi(TemplateInstance* ti);
+    void visit(TypeInstance* t);
     void visit(TemplateDeclaration* td);
     void visit(TypeClass* t);
-    void funcToBuffer(TypeFunction* tf, FuncDeclaration* fd);
     void visit(Parameter* p);
     void visit(Expression* e);
+    void visit(VarExp* e);
+    void visit(CallExp* e);
+    void visit(DotVarExp* e);
+    void visit(DotIdExp* e);
     void visit(NullExp* e);
     void visit(ArrayLiteralExp* e);
     void visit(StringExp* e);
     void visit(RealExp* e);
     void visit(IntegerExp* e);
-    void visitInteger(dinteger_t v, Type* t);
     void visit(StructLiteralExp* sle);
 };
 
-class DebugSymbol : public Dsymbol
+class DebugSymbol final : public Dsymbol
 {
 public:
     uint32_t level;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    DebugSymbol* syntaxCopy(Dsymbol* s);
     const char* toChars() const;
     void addMember(Scope* sc, ScopeDsymbol* sds);
     const char* kind() const;
@@ -3536,11 +3388,11 @@ public:
     void accept(Visitor* v);
 };
 
-class VersionSymbol : public Dsymbol
+class VersionSymbol final : public Dsymbol
 {
 public:
     uint32_t level;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    VersionSymbol* syntaxCopy(Dsymbol* s);
     const char* toChars() const;
     void addMember(Scope* sc, ScopeDsymbol* sds);
     const char* kind() const;
@@ -3548,15 +3400,14 @@ public:
     void accept(Visitor* v);
 };
 
-ENUM_CONSTANT_NUMERIC(bool, LOGSEMANTIC, false)
-
-extern void expandTuples(Array<Expression*>* exps);
+extern void expandTuples(Array<Expression* >* exps);
 
 struct UnionExp
 {
     Expression* exp();
     Expression* copy();
     #pragma pack(push, 8)
+private:
     union __AnonStruct__u
     {
         char exp[40LLU];
@@ -3575,33 +3426,28 @@ struct UnionExp
         char indexexp[82LLU];
         char sliceexp[83LLU];
         char vectorexp[69LLU];
-        __AnonStruct__u()
-        {
-        }
     };
     #pragma pack(pop)
 
     // Ignoring var u alignment 8
     __AnonStruct__u u;
+public:
     UnionExp()
     {
     }
 };
 
-BEGIN_ENUM_NUMERIC(uint8_t, OwnedBy, OWNEDBY, ownedby)
-    ENUM_KEY_NUMERIC(uint8_t, code, 0u, OwnedBy, OWNEDBY, ownedby, OB)
-    ENUM_KEY_NUMERIC(uint8_t, ctfe, 1u, OwnedBy, OWNEDBY, ownedby, OB)
-    ENUM_KEY_NUMERIC(uint8_t, cache, 2u, OwnedBy, OWNEDBY, ownedby, OB)
-END_ENUM_NUMERIC(uint8_t, OwnedBy, OWNEDBY, ownedby)
-
-ENUM_CONSTANT_NUMERIC(int32_t, WANTvalue, 0)
-
-ENUM_CONSTANT_NUMERIC(int32_t, WANTexpand, 1)
-
-class IntegerExp : public Expression
+enum class OwnedBy : uint8_t
 {
-public:
+    code = 0u,
+    ctfe = 1u,
+    cache = 2u,
+};
+
+class IntegerExp final : public Expression
+{
     dinteger_t value;
+public:
     static IntegerExp* create(Loc loc, dinteger_t value, Type* type);
     static void emplace(UnionExp* pue, Loc loc, dinteger_t value, Type* type);
     bool equals(const RootObject* const o) const;
@@ -3614,11 +3460,11 @@ public:
     void accept(Visitor* v);
     dinteger_t getInteger();
     void setInteger(dinteger_t value);
-    Expression* syntaxCopy();
+    IntegerExp* syntaxCopy();
     static IntegerExp* createBool(bool b);
 };
 
-class ErrorExp : public Expression
+class ErrorExp final : public Expression
 {
 public:
     static ErrorExp* get();
@@ -3627,7 +3473,7 @@ public:
     static ErrorExp* errorexp;
 };
 
-class VoidInitExp : public Expression
+class VoidInitExp final : public Expression
 {
 public:
     VarDeclaration* var;
@@ -3635,7 +3481,7 @@ public:
     void accept(Visitor* v);
 };
 
-class RealExp : public Expression
+class RealExp final : public Expression
 {
 public:
     _d_real value;
@@ -3651,7 +3497,7 @@ public:
     void accept(Visitor* v);
 };
 
-class ComplexExp : public Expression
+class ComplexExp final : public Expression
 {
 public:
     complex_t value;
@@ -3677,13 +3523,13 @@ public:
     void accept(Visitor* v);
 };
 
-class DollarExp : public IdentifierExp
+class DollarExp final : public IdentifierExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class DsymbolExp : public Expression
+class DsymbolExp final : public Expression
 {
 public:
     Dsymbol* s;
@@ -3698,20 +3544,20 @@ class ThisExp : public Expression
 public:
     VarDeclaration* var;
     ThisExp(const Loc& loc, const TOK tok);
-    Expression* syntaxCopy();
+    ThisExp* syntaxCopy();
     bool isBool(bool result);
     bool isLvalue();
     Expression* toLvalue(Scope* sc, Expression* e);
     void accept(Visitor* v);
 };
 
-class SuperExp : public ThisExp
+class SuperExp final : public ThisExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class NullExp : public Expression
+class NullExp final : public Expression
 {
 public:
     bool equals(const RootObject* const o) const;
@@ -3720,19 +3566,19 @@ public:
     void accept(Visitor* v);
 };
 
-class StringExp : public Expression
+class StringExp final : public Expression
 {
-public:
     union
     {
         char* string;
         char16_t* wstring;
         char32_t* dstring;
     };
+public:
     size_t len;
     uint8_t sz;
     uint8_t committed;
-    ENUM_CONSTANT_NUMERIC(char, NoPostfix, 0u)
+    enum : char { NoPostfix = 0u };
 
     char postfix;
     OwnedBy ownedByCtfe;
@@ -3755,27 +3601,27 @@ public:
     void accept(Visitor* v);
 };
 
-class TupleExp : public Expression
+class TupleExp final : public Expression
 {
 public:
     Expression* e0;
-    Array<Expression*>* exps;
-    static TupleExp* create(Loc loc, Array<Expression*>* exps);
+    Array<Expression* >* exps;
+    static TupleExp* create(Loc loc, Array<Expression* >* exps);
     TupleExp* toTupleExp();
-    Expression* syntaxCopy();
+    TupleExp* syntaxCopy();
     bool equals(const RootObject* const o) const;
     void accept(Visitor* v);
 };
 
-class ArrayLiteralExp : public Expression
+class ArrayLiteralExp final : public Expression
 {
 public:
     Expression* basis;
-    Array<Expression*>* elements;
+    Array<Expression* >* elements;
     OwnedBy ownedByCtfe;
-    static ArrayLiteralExp* create(Loc loc, Array<Expression*>* elements);
-    static void emplace(UnionExp* pue, Loc loc, Array<Expression*>* elements);
-    Expression* syntaxCopy();
+    static ArrayLiteralExp* create(Loc loc, Array<Expression* >* elements);
+    static void emplace(UnionExp* pue, Loc loc, Array<Expression* >* elements);
+    ArrayLiteralExp* syntaxCopy();
     bool equals(const RootObject* const o) const;
     Expression* getElement(size_t i);
     Expression* opIndex(size_t i);
@@ -3784,35 +3630,23 @@ public:
     void accept(Visitor* v);
 };
 
-class AssocArrayLiteralExp : public Expression
+class AssocArrayLiteralExp final : public Expression
 {
 public:
-    Array<Expression*>* keys;
-    Array<Expression*>* values;
+    Array<Expression* >* keys;
+    Array<Expression* >* values;
     OwnedBy ownedByCtfe;
     bool equals(const RootObject* const o) const;
-    Expression* syntaxCopy();
+    AssocArrayLiteralExp* syntaxCopy();
     bool isBool(bool result);
     void accept(Visitor* v);
 };
 
-ENUM_CONSTANT_NUMERIC(int32_t, stageScrub, 1)
-
-ENUM_CONSTANT_NUMERIC(int32_t, stageSearchPointers, 2)
-
-ENUM_CONSTANT_NUMERIC(int32_t, stageOptimize, 4)
-
-ENUM_CONSTANT_NUMERIC(int32_t, stageApply, 8)
-
-ENUM_CONSTANT_NUMERIC(int32_t, stageInlineScan, 16)
-
-ENUM_CONSTANT_NUMERIC(int32_t, stageToCBuffer, 32)
-
-class StructLiteralExp : public Expression
+class StructLiteralExp final : public Expression
 {
 public:
     StructDeclaration* sd;
-    Array<Expression*>* elements;
+    Array<Expression* >* elements;
     Type* stype;
     Symbol* sym;
     StructLiteralExp* origin;
@@ -3821,35 +3655,35 @@ public:
     bool useStaticInit;
     bool isOriginal;
     OwnedBy ownedByCtfe;
-    static StructLiteralExp* create(Loc loc, StructDeclaration* sd, void* elements, Type* stype);
+    static StructLiteralExp* create(Loc loc, StructDeclaration* sd, void* elements, Type* stype = nullptr);
     bool equals(const RootObject* const o) const;
-    Expression* syntaxCopy();
+    StructLiteralExp* syntaxCopy();
     Expression* getField(Type* type, uint32_t offset);
     int32_t getFieldIndex(Type* type, uint32_t offset);
     Expression* addDtorHook(Scope* sc);
     void accept(Visitor* v);
 };
 
-class TypeExp : public Expression
+class TypeExp final : public Expression
 {
 public:
-    Expression* syntaxCopy();
+    TypeExp* syntaxCopy();
     bool checkType();
     bool checkValue();
     void accept(Visitor* v);
 };
 
-class ScopeExp : public Expression
+class ScopeExp final : public Expression
 {
 public:
     ScopeDsymbol* sds;
-    Expression* syntaxCopy();
+    ScopeExp* syntaxCopy();
     bool checkType();
     bool checkValue();
     void accept(Visitor* v);
 };
 
-class TemplateExp : public Expression
+class TemplateExp final : public Expression
 {
 public:
     TemplateDeclaration* td;
@@ -3861,31 +3695,31 @@ public:
     void accept(Visitor* v);
 };
 
-class NewExp : public Expression
+class NewExp final : public Expression
 {
 public:
     Expression* thisexp;
-    Array<Expression*>* newargs;
+    Array<Expression* >* newargs;
     Type* newtype;
-    Array<Expression*>* arguments;
+    Array<Expression* >* arguments;
     Expression* argprefix;
     CtorDeclaration* member;
     NewDeclaration* allocator;
     bool onstack;
     bool thrownew;
-    static NewExp* create(Loc loc, Expression* thisexp, Array<Expression*>* newargs, Type* newtype, Array<Expression*>* arguments);
-    Expression* syntaxCopy();
+    static NewExp* create(Loc loc, Expression* thisexp, Array<Expression* >* newargs, Type* newtype, Array<Expression* >* arguments);
+    NewExp* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class NewAnonClassExp : public Expression
+class NewAnonClassExp final : public Expression
 {
 public:
     Expression* thisexp;
-    Array<Expression*>* newargs;
+    Array<Expression* >* newargs;
     ClassDeclaration* cd;
-    Array<Expression*>* arguments;
-    Expression* syntaxCopy();
+    Array<Expression* >* arguments;
+    NewAnonClassExp* syntaxCopy();
     void accept(Visitor* v);
 };
 
@@ -3898,7 +3732,7 @@ public:
     void accept(Visitor* v);
 };
 
-class SymOffExp : public SymbolExp
+class SymOffExp final : public SymbolExp
 {
 public:
     dinteger_t offset;
@@ -3906,7 +3740,7 @@ public:
     void accept(Visitor* v);
 };
 
-class VarExp : public SymbolExp
+class VarExp final : public SymbolExp
 {
 public:
     bool delegateWasExtracted;
@@ -3917,10 +3751,9 @@ public:
     Expression* toLvalue(Scope* sc, Expression* e);
     Expression* modifiableLvalue(Scope* sc, Expression* e);
     void accept(Visitor* v);
-    Expression* syntaxCopy();
 };
 
-class OverExp : public Expression
+class OverExp final : public Expression
 {
 public:
     OverloadSet* vars;
@@ -3929,62 +3762,62 @@ public:
     void accept(Visitor* v);
 };
 
-class FuncExp : public Expression
+class FuncExp final : public Expression
 {
 public:
     FuncLiteralDeclaration* fd;
     TemplateDeclaration* td;
     TOK tok;
     bool equals(const RootObject* const o) const;
-    Expression* syntaxCopy();
+    FuncExp* syntaxCopy();
     const char* toChars() const;
     bool checkType();
     bool checkValue();
     void accept(Visitor* v);
 };
 
-class DeclarationExp : public Expression
+class DeclarationExp final : public Expression
 {
 public:
     Dsymbol* declaration;
-    Expression* syntaxCopy();
+    DeclarationExp* syntaxCopy();
     bool hasCode();
     void accept(Visitor* v);
 };
 
-class TypeidExp : public Expression
+class TypeidExp final : public Expression
 {
 public:
     RootObject* obj;
-    Expression* syntaxCopy();
+    TypeidExp* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class TraitsExp : public Expression
+class TraitsExp final : public Expression
 {
 public:
     Identifier* ident;
-    Array<RootObject*>* args;
-    Expression* syntaxCopy();
+    Array<RootObject* >* args;
+    TraitsExp* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class HaltExp : public Expression
+class HaltExp final : public Expression
 {
 public:
     void accept(Visitor* v);
 };
 
-class IsExp : public Expression
+class IsExp final : public Expression
 {
 public:
     Type* targ;
     Identifier* id;
     Type* tspec;
-    Array<TemplateParameter*>* parameters;
+    Array<TemplateParameter* >* parameters;
     TOK tok;
     TOK tok2;
-    Expression* syntaxCopy();
+    IsExp* syntaxCopy();
     void accept(Visitor* v);
 };
 
@@ -3993,7 +3826,7 @@ class UnaExp : public Expression
 public:
     Expression* e1;
     Type* att1;
-    Expression* syntaxCopy();
+    UnaExp* syntaxCopy();
     Expression* incompatibleTypes();
     void setNoderefOperand();
     Expression* resolveLoc(const Loc& loc, Scope* sc);
@@ -4011,7 +3844,7 @@ public:
     Expression* e2;
     Type* att1;
     Type* att2;
-    Expression* syntaxCopy();
+    BinExp* syntaxCopy();
     Expression* incompatibleTypes();
     void setNoderefOperands();
     Expression* reorderSettingAAElem(Scope* sc);
@@ -4024,33 +3857,34 @@ public:
     bool isLvalue();
     Expression* toLvalue(Scope* sc, Expression* ex);
     Expression* modifiableLvalue(Scope* sc, Expression* e);
+    BinAssignExp* isBinAssignExp();
     void accept(Visitor* v);
 };
 
-class CompileExp : public Expression
+class MixinExp final : public Expression
 {
 public:
-    Array<Expression*>* exps;
-    Expression* syntaxCopy();
+    Array<Expression* >* exps;
+    MixinExp* syntaxCopy();
     bool equals(const RootObject* const o) const;
     void accept(Visitor* v);
 };
 
-class ImportExp : public UnaExp
+class ImportExp final : public UnaExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class AssertExp : public UnaExp
+class AssertExp final : public UnaExp
 {
 public:
     Expression* msg;
-    Expression* syntaxCopy();
+    AssertExp* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class DotIdExp : public UnaExp
+class DotIdExp final : public UnaExp
 {
 public:
     Identifier* ident;
@@ -4060,14 +3894,14 @@ public:
     void accept(Visitor* v);
 };
 
-class DotTemplateExp : public UnaExp
+class DotTemplateExp final : public UnaExp
 {
 public:
     TemplateDeclaration* td;
     void accept(Visitor* v);
 };
 
-class DotVarExp : public UnaExp
+class DotVarExp final : public UnaExp
 {
 public:
     Declaration* var;
@@ -4079,16 +3913,16 @@ public:
     void accept(Visitor* v);
 };
 
-class DotTemplateInstanceExp : public UnaExp
+class DotTemplateInstanceExp final : public UnaExp
 {
 public:
     TemplateInstance* ti;
-    Expression* syntaxCopy();
+    DotTemplateInstanceExp* syntaxCopy();
     bool findTempDecl(Scope* sc);
     void accept(Visitor* v);
 };
 
-class DelegateExp : public UnaExp
+class DelegateExp final : public UnaExp
 {
 public:
     FuncDeclaration* func;
@@ -4097,39 +3931,40 @@ public:
     void accept(Visitor* v);
 };
 
-class DotTypeExp : public UnaExp
+class DotTypeExp final : public UnaExp
 {
 public:
     Dsymbol* sym;
     void accept(Visitor* v);
 };
 
-class CallExp : public UnaExp
+class CallExp final : public UnaExp
 {
 public:
-    Array<Expression*>* arguments;
+    Array<Expression* >* arguments;
     FuncDeclaration* f;
     bool directcall;
     bool inDebugStatement;
+    bool ignoreAttributes;
     VarDeclaration* vthis2;
-    static CallExp* create(Loc loc, Expression* e, Array<Expression*>* exps);
+    static CallExp* create(Loc loc, Expression* e, Array<Expression* >* exps);
     static CallExp* create(Loc loc, Expression* e);
     static CallExp* create(Loc loc, Expression* e, Expression* earg1);
     static CallExp* create(Loc loc, FuncDeclaration* fd, Expression* earg1);
-    Expression* syntaxCopy();
+    CallExp* syntaxCopy();
     bool isLvalue();
     Expression* toLvalue(Scope* sc, Expression* e);
     Expression* addDtorHook(Scope* sc);
     void accept(Visitor* v);
 };
 
-class AddrExp : public UnaExp
+class AddrExp final : public UnaExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class PtrExp : public UnaExp
+class PtrExp final : public UnaExp
 {
 public:
     Modifiable checkModifiable(Scope* sc, int32_t flag);
@@ -4139,31 +3974,31 @@ public:
     void accept(Visitor* v);
 };
 
-class NegExp : public UnaExp
+class NegExp final : public UnaExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class UAddExp : public UnaExp
+class UAddExp final : public UnaExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class ComExp : public UnaExp
+class ComExp final : public UnaExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class NotExp : public UnaExp
+class NotExp final : public UnaExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class DeleteExp : public UnaExp
+class DeleteExp final : public UnaExp
 {
 public:
     bool isRAII;
@@ -4171,17 +4006,19 @@ public:
     void accept(Visitor* v);
 };
 
-class CastExp : public UnaExp
+class CastExp final : public UnaExp
 {
 public:
     Type* to;
     uint8_t mod;
-    Expression* syntaxCopy();
+    CastExp* syntaxCopy();
+    bool isLvalue();
+    Expression* toLvalue(Scope* sc, Expression* e);
     Expression* addDtorHook(Scope* sc);
     void accept(Visitor* v);
 };
 
-class VectorExp : public UnaExp
+class VectorExp final : public UnaExp
 {
 public:
     TypeVector* to;
@@ -4189,11 +4026,11 @@ public:
     OwnedBy ownedByCtfe;
     static VectorExp* create(Loc loc, Expression* e, Type* t);
     static void emplace(UnionExp* pue, Loc loc, Expression* e, Type* type);
-    Expression* syntaxCopy();
+    VectorExp* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class VectorArrayExp : public UnaExp
+class VectorArrayExp final : public UnaExp
 {
 public:
     bool isLvalue();
@@ -4201,7 +4038,7 @@ public:
     void accept(Visitor* v);
 };
 
-class SliceExp : public UnaExp
+class SliceExp final : public UnaExp
 {
 public:
     Expression* upr;
@@ -4210,7 +4047,7 @@ public:
     bool upperIsInBounds;
     bool lowerIsLessThanUpper;
     bool arrayop;
-    Expression* syntaxCopy();
+    SliceExp* syntaxCopy();
     Modifiable checkModifiable(Scope* sc, int32_t flag);
     bool isLvalue();
     Expression* toLvalue(Scope* sc, Expression* e);
@@ -4219,34 +4056,34 @@ public:
     void accept(Visitor* v);
 };
 
-class ArrayLengthExp : public UnaExp
+class ArrayLengthExp final : public UnaExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class ArrayExp : public UnaExp
+class ArrayExp final : public UnaExp
 {
 public:
-    Array<Expression*>* arguments;
+    Array<Expression* >* arguments;
     size_t currentDimension;
     VarDeclaration* lengthVar;
-    Expression* syntaxCopy();
+    ArrayExp* syntaxCopy();
     bool isLvalue();
     Expression* toLvalue(Scope* sc, Expression* e);
     void accept(Visitor* v);
 };
 
-class DotExp : public BinExp
+class DotExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class CommaExp : public BinExp
+class CommaExp final : public BinExp
 {
 public:
-    bool isGenerated;
+    const bool isGenerated;
     bool allowCommaExp;
     Modifiable checkModifiable(Scope* sc, int32_t flag);
     bool isLvalue();
@@ -4259,7 +4096,7 @@ public:
     static void allow(Expression* exp);
 };
 
-class IntervalExp : public Expression
+class IntervalExp final : public Expression
 {
 public:
     Expression* lwr;
@@ -4268,7 +4105,7 @@ public:
     void accept(Visitor* v);
 };
 
-class DelegatePtrExp : public UnaExp
+class DelegatePtrExp final : public UnaExp
 {
 public:
     bool isLvalue();
@@ -4277,7 +4114,7 @@ public:
     void accept(Visitor* v);
 };
 
-class DelegateFuncptrExp : public UnaExp
+class DelegateFuncptrExp final : public UnaExp
 {
 public:
     bool isLvalue();
@@ -4286,13 +4123,13 @@ public:
     void accept(Visitor* v);
 };
 
-class IndexExp : public BinExp
+class IndexExp final : public BinExp
 {
 public:
     VarDeclaration* lengthVar;
     bool modifiable;
     bool indexIsInBounds;
-    Expression* syntaxCopy();
+    IndexExp* syntaxCopy();
     Modifiable checkModifiable(Scope* sc, int32_t flag);
     bool isLvalue();
     Expression* toLvalue(Scope* sc, Expression* e);
@@ -4300,23 +4137,24 @@ public:
     void accept(Visitor* v);
 };
 
-class PostExp : public BinExp
+class PostExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class PreExp : public UnaExp
+class PreExp final : public UnaExp
 {
 public:
     void accept(Visitor* v);
 };
 
-BEGIN_ENUM(MemorySet, MEMORYSET, memoryset)
-    ENUM_KEY(int32_t, none, 0, MemorySet, MEMORYSET, memoryset, MS)
-    ENUM_KEY(int32_t, blockAssign, 1, MemorySet, MEMORYSET, memoryset, MS)
-    ENUM_KEY(int32_t, referenceInit, 2, MemorySet, MEMORYSET, memoryset, MS)
-END_ENUM(MemorySet, MEMORYSET, memoryset)
+enum class MemorySet
+{
+    none = 0,
+    blockAssign = 1,
+    referenceInit = 2,
+};
 
 class AssignExp : public BinExp
 {
@@ -4329,85 +4167,85 @@ public:
     void accept(Visitor* v);
 };
 
-class ConstructExp : public AssignExp
+class ConstructExp final : public AssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class BlitExp : public AssignExp
+class BlitExp final : public AssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class AddAssignExp : public BinAssignExp
+class AddAssignExp final : public BinAssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class MinAssignExp : public BinAssignExp
+class MinAssignExp final : public BinAssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class MulAssignExp : public BinAssignExp
+class MulAssignExp final : public BinAssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class DivAssignExp : public BinAssignExp
+class DivAssignExp final : public BinAssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class ModAssignExp : public BinAssignExp
+class ModAssignExp final : public BinAssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class AndAssignExp : public BinAssignExp
+class AndAssignExp final : public BinAssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class OrAssignExp : public BinAssignExp
+class OrAssignExp final : public BinAssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class XorAssignExp : public BinAssignExp
+class XorAssignExp final : public BinAssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class PowAssignExp : public BinAssignExp
+class PowAssignExp final : public BinAssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class ShlAssignExp : public BinAssignExp
+class ShlAssignExp final : public BinAssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class ShrAssignExp : public BinAssignExp
+class ShrAssignExp final : public BinAssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class UshrAssignExp : public BinAssignExp
+class UshrAssignExp final : public BinAssignExp
 {
 public:
     void accept(Visitor* v);
@@ -4419,139 +4257,139 @@ public:
     void accept(Visitor* v);
 };
 
-class CatElemAssignExp : public CatAssignExp
+class CatElemAssignExp final : public CatAssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class CatDcharAssignExp : public CatAssignExp
+class CatDcharAssignExp final : public CatAssignExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class AddExp : public BinExp
+class AddExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class MinExp : public BinExp
+class MinExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class CatExp : public BinExp
+class CatExp final : public BinExp
 {
 public:
     Expression* resolveLoc(const Loc& loc, Scope* sc);
     void accept(Visitor* v);
 };
 
-class MulExp : public BinExp
+class MulExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class DivExp : public BinExp
+class DivExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class ModExp : public BinExp
+class ModExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class PowExp : public BinExp
+class PowExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class ShlExp : public BinExp
+class ShlExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class ShrExp : public BinExp
+class ShrExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class UshrExp : public BinExp
+class UshrExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class AndExp : public BinExp
+class AndExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class OrExp : public BinExp
+class OrExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class XorExp : public BinExp
+class XorExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class LogicalExp : public BinExp
+class LogicalExp final : public BinExp
 {
 public:
     Expression* toBoolean(Scope* sc);
     void accept(Visitor* v);
 };
 
-class CmpExp : public BinExp
+class CmpExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class InExp : public BinExp
+class InExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class RemoveExp : public BinExp
+class RemoveExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class EqualExp : public BinExp
+class EqualExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class IdentityExp : public BinExp
+class IdentityExp final : public BinExp
 {
 public:
     void accept(Visitor* v);
 };
 
-class CondExp : public BinExp
+class CondExp final : public BinExp
 {
 public:
     Expression* econd;
-    Expression* syntaxCopy();
+    CondExp* syntaxCopy();
     Modifiable checkModifiable(Scope* sc, int32_t flag);
     bool isLvalue();
     Expression* toLvalue(Scope* sc, Expression* ex);
@@ -4567,61 +4405,60 @@ public:
     void accept(Visitor* v);
 };
 
-class FileInitExp : public DefaultInitExp
+class FileInitExp final : public DefaultInitExp
 {
 public:
     Expression* resolveLoc(const Loc& loc, Scope* sc);
     void accept(Visitor* v);
 };
 
-class LineInitExp : public DefaultInitExp
+class LineInitExp final : public DefaultInitExp
 {
 public:
     Expression* resolveLoc(const Loc& loc, Scope* sc);
     void accept(Visitor* v);
 };
 
-class ModuleInitExp : public DefaultInitExp
+class ModuleInitExp final : public DefaultInitExp
 {
 public:
     Expression* resolveLoc(const Loc& loc, Scope* sc);
     void accept(Visitor* v);
 };
 
-class FuncInitExp : public DefaultInitExp
+class FuncInitExp final : public DefaultInitExp
 {
 public:
     Expression* resolveLoc(const Loc& loc, Scope* sc);
     void accept(Visitor* v);
 };
 
-class PrettyFuncInitExp : public DefaultInitExp
+class PrettyFuncInitExp final : public DefaultInitExp
 {
 public:
     Expression* resolveLoc(const Loc& loc, Scope* sc);
     void accept(Visitor* v);
 };
 
-class ObjcClassReferenceExp : public Expression
+class ObjcClassReferenceExp final : public Expression
 {
 public:
     ClassDeclaration* classDeclaration;
     void accept(Visitor* v);
 };
 
-ENUM_CONSTANT_NUMERIC(bool, LOGSEMANTIC, false)
-
 extern Expression* resolveProperties(Scope* sc, Expression* e);
 
 extern Expression* expressionSemantic(Expression* e, Scope* sc);
 
-BEGIN_ENUM(ILS, ILS, ils)
-    ENUM_KEY(int32_t, uninitialized, 0, ILS, ILS, ils, ILS)
-    ENUM_KEY(int32_t, no, 1, ILS, ILS, ils, ILS)
-    ENUM_KEY(int32_t, yes, 2, ILS, ILS, ils, ILS)
-END_ENUM(ILS, ILS, ils)
+enum class ILS : uint8_t
+{
+    uninitialized = 0u,
+    no = 1u,
+    yes = 2u,
+};
 
-class NrvoWalker : public StatementRewriteWalker
+class NrvoWalker final : public StatementRewriteWalker
 {
 public:
     FuncDeclaration* fd;
@@ -4630,47 +4467,52 @@ public:
     void visit(TryFinallyStatement* s);
 };
 
-BEGIN_ENUM_NUMERIC(uint32_t, FUNCFLAG, FUNCFLAG, funcflag)
-    ENUM_KEY_NUMERIC(uint32_t, purityInprocess, 1u, FUNCFLAG, FUNCFLAG, funcflag, FUNCFLAG)
-    ENUM_KEY_NUMERIC(uint32_t, safetyInprocess, 2u, FUNCFLAG, FUNCFLAG, funcflag, FUNCFLAG)
-    ENUM_KEY_NUMERIC(uint32_t, nothrowInprocess, 4u, FUNCFLAG, FUNCFLAG, funcflag, FUNCFLAG)
-    ENUM_KEY_NUMERIC(uint32_t, nogcInprocess, 8u, FUNCFLAG, FUNCFLAG, funcflag, FUNCFLAG)
-    ENUM_KEY_NUMERIC(uint32_t, returnInprocess, 16u, FUNCFLAG, FUNCFLAG, funcflag, FUNCFLAG)
-    ENUM_KEY_NUMERIC(uint32_t, inlineScanned, 32u, FUNCFLAG, FUNCFLAG, funcflag, FUNCFLAG)
-    ENUM_KEY_NUMERIC(uint32_t, inferScope, 64u, FUNCFLAG, FUNCFLAG, funcflag, FUNCFLAG)
-    ENUM_KEY_NUMERIC(uint32_t, hasCatches, 128u, FUNCFLAG, FUNCFLAG, funcflag, FUNCFLAG)
-    ENUM_KEY_NUMERIC(uint32_t, compileTimeOnly, 256u, FUNCFLAG, FUNCFLAG, funcflag, FUNCFLAG)
-    ENUM_KEY_NUMERIC(uint32_t, printf, 512u, FUNCFLAG, FUNCFLAG, funcflag, FUNCFLAG)
-    ENUM_KEY_NUMERIC(uint32_t, scanf, 1024u, FUNCFLAG, FUNCFLAG, funcflag, FUNCFLAG)
-END_ENUM_NUMERIC(uint32_t, FUNCFLAG, FUNCFLAG, funcflag)
+enum class FUNCFLAG : uint32_t
+{
+    purityInprocess = 1u,
+    safetyInprocess = 2u,
+    nothrowInprocess = 4u,
+    nogcInprocess = 8u,
+    returnInprocess = 16u,
+    inlineScanned = 32u,
+    inferScope = 64u,
+    hasCatches = 128u,
+    compileTimeOnly = 256u,
+    printf = 512u,
+    scanf = 1024u,
+};
 
 struct Ensure
 {
     Identifier* id;
     Statement* ensure;
     Ensure syntaxCopy();
-    static Array<Ensure>* arraySyntaxCopy(Array<Ensure>* a);
+    static Array<Ensure >* arraySyntaxCopy(Array<Ensure >* a);
     Ensure() :
         id(),
         ensure()
     {
     }
+    Ensure(Identifier* id, Statement* ensure = nullptr) :
+        id(id),
+        ensure(ensure)
+        {}
 };
 
 class FuncDeclaration : public Declaration
 {
 public:
-    Array<Statement*>* frequires;
-    Array<Ensure>* fensures;
+    Array<Statement* >* frequires;
+    Array<Ensure >* fensures;
     Statement* frequire;
     Statement* fensure;
     Statement* fbody;
-    Array<FuncDeclaration*> foverrides;
+    Array<FuncDeclaration* > foverrides;
     FuncDeclaration* fdrequire;
     FuncDeclaration* fdensure;
-    Array<Expression*>* fdrequireParams;
-    Array<Expression*>* fdensureParams;
-    char* mangleString;
+    Array<Expression* >* fdrequireParams;
+    Array<Expression* >* fdensureParams;
+    const char* mangleString;
     VarDeclaration* vresult;
     LabelDsymbol* returnLabel;
     DsymbolTable* localsymtab;
@@ -4678,7 +4520,7 @@ public:
     bool isThis2;
     VarDeclaration* v_arguments;
     VarDeclaration* v_argptr;
-    Array<VarDeclaration*>* parameters;
+    Array<VarDeclaration* >* parameters;
     DsymbolTable* labtab;
     Dsymbol* overnext;
     FuncDeclaration* overnext0;
@@ -4704,24 +4546,24 @@ public:
     bool nrvo_can;
     VarDeclaration* nrvo_var;
     Symbol* shidden;
-    Array<ReturnStatement*>* returns;
-    Array<GotoStatement*>* gotos;
+    Array<ReturnStatement* >* returns;
+    Array<GotoStatement* >* gotos;
     BUILTIN builtin;
     int32_t tookAddressOf;
     bool requiresClosure;
-    Array<VarDeclaration*> closureVars;
-    Array<VarDeclaration*> outerVars;
-    Array<FuncDeclaration*> siblingCallers;
-    Array<FuncDeclaration*>* inlinedNestedCallees;
+    Array<VarDeclaration* > closureVars;
+    Array<VarDeclaration* > outerVars;
+    Array<FuncDeclaration* > siblingCallers;
+    Array<FuncDeclaration* >* inlinedNestedCallees;
     uint32_t flags;
     ObjcFuncDeclaration objc;
     static FuncDeclaration* create(const Loc& loc, const Loc& endloc, Identifier* id, StorageClass storage_class, Type* type);
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    FuncDeclaration* syntaxCopy(Dsymbol* s);
     bool functionSemantic();
     bool functionSemantic3();
     bool equals(const RootObject* const o) const;
     int32_t overrides(FuncDeclaration* fd);
-    int32_t findVtblIndex(Array<Dsymbol*>* vtbl, int32_t dim);
+    int32_t findVtblIndex(Array<Dsymbol* >* vtbl, int32_t dim);
     BaseClass* overrideInterface();
     bool overloadInsert(Dsymbol* s);
     bool inUnittest();
@@ -4729,7 +4571,7 @@ public:
     LabelDsymbol* searchLabel(Identifier* ident);
     int32_t getLevel(FuncDeclaration* fd, int32_t intypeof);
     int32_t getLevelAndCheck(const Loc& loc, Scope* sc, FuncDeclaration* fd, Declaration* decl);
-    ENUM_CONSTANT_NUMERIC(int32_t, LevelError, -2)
+    enum : int32_t { LevelError = -2 };
 
     const char* toPrettyChars(bool QualifyTypes = false);
     const char* toFullSignature();
@@ -4752,7 +4594,6 @@ public:
     bool isTrusted();
     bool isNogc();
     bool isNogcBypassingInference();
-    bool isTypeIsolatedIndirect(Type* t);
     virtual bool isNested() const;
     AggregateDeclaration* isThis();
     bool needThis();
@@ -4768,22 +4609,23 @@ public:
     static bool needsFensure(FuncDeclaration* fd);
     void buildEnsureRequire();
     ParameterList getParameterList();
-    static FuncDeclaration* genCfunc(Array<Parameter*>* fparams, Type* treturn, const char* name, StorageClass stc = 0);
-    static FuncDeclaration* genCfunc(Array<Parameter*>* fparams, Type* treturn, Identifier* id, StorageClass stc = 0);
-    bool checkNrvo();
+    static FuncDeclaration* genCfunc(Array<Parameter* >* fparams, Type* treturn, const char* name, StorageClass stc = 0);
+    static FuncDeclaration* genCfunc(Array<Parameter* >* fparams, Type* treturn, Identifier* id, StorageClass stc = 0);
+    bool checkNRVO();
     FuncDeclaration* isFuncDeclaration();
     virtual FuncDeclaration* toAliasFunc();
     void accept(Visitor* v);
     ~FuncDeclaration();
 };
 
-BEGIN_ENUM_NUMERIC(uint8_t, FuncResolveFlag, FUNCRESOLVEFLAG, funcresolveflag)
-    ENUM_KEY_NUMERIC(uint8_t, standard, 0u, FuncResolveFlag, FUNCRESOLVEFLAG, funcresolveflag, FRF)
-    ENUM_KEY_NUMERIC(uint8_t, quiet, 1u, FuncResolveFlag, FUNCRESOLVEFLAG, funcresolveflag, FRF)
-    ENUM_KEY_NUMERIC(uint8_t, overloadOnly, 2u, FuncResolveFlag, FUNCRESOLVEFLAG, funcresolveflag, FRF)
-END_ENUM_NUMERIC(uint8_t, FuncResolveFlag, FUNCRESOLVEFLAG, funcresolveflag)
+enum class FuncResolveFlag : uint8_t
+{
+    standard = 0u,
+    quiet = 1u,
+    overloadOnly = 2u,
+};
 
-class FuncAliasDeclaration : public FuncDeclaration
+class FuncAliasDeclaration final : public FuncDeclaration
 {
 public:
     FuncDeclaration* funcalias;
@@ -4795,13 +4637,13 @@ public:
     ~FuncAliasDeclaration();
 };
 
-class FuncLiteralDeclaration : public FuncDeclaration
+class FuncLiteralDeclaration final : public FuncDeclaration
 {
 public:
     TOK tok;
     Type* treq;
     bool deferToObj;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    FuncLiteralDeclaration* syntaxCopy(Dsymbol* s);
     bool isNested() const;
     AggregateDeclaration* isThis();
     bool isVirtual() const;
@@ -4815,11 +4657,11 @@ public:
     ~FuncLiteralDeclaration();
 };
 
-class CtorDeclaration : public FuncDeclaration
+class CtorDeclaration final : public FuncDeclaration
 {
 public:
     bool isCpCtor;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    CtorDeclaration* syntaxCopy(Dsymbol* s);
     const char* kind() const;
     const char* toChars() const;
     bool isVirtual() const;
@@ -4830,10 +4672,10 @@ public:
     ~CtorDeclaration();
 };
 
-class PostBlitDeclaration : public FuncDeclaration
+class PostBlitDeclaration final : public FuncDeclaration
 {
 public:
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    PostBlitDeclaration* syntaxCopy(Dsymbol* s);
     bool isVirtual() const;
     bool addPreInvariant();
     bool addPostInvariant();
@@ -4843,10 +4685,10 @@ public:
     ~PostBlitDeclaration();
 };
 
-class DtorDeclaration : public FuncDeclaration
+class DtorDeclaration final : public FuncDeclaration
 {
 public:
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    DtorDeclaration* syntaxCopy(Dsymbol* s);
     const char* kind() const;
     const char* toChars() const;
     bool isVirtual() const;
@@ -4861,7 +4703,7 @@ public:
 class StaticCtorDeclaration : public FuncDeclaration
 {
 public:
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    StaticCtorDeclaration* syntaxCopy(Dsymbol* s);
     AggregateDeclaration* isThis();
     bool isVirtual() const;
     bool addPreInvariant();
@@ -4872,10 +4714,10 @@ public:
     ~StaticCtorDeclaration();
 };
 
-class SharedStaticCtorDeclaration : public StaticCtorDeclaration
+class SharedStaticCtorDeclaration final : public StaticCtorDeclaration
 {
 public:
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    SharedStaticCtorDeclaration* syntaxCopy(Dsymbol* s);
     SharedStaticCtorDeclaration* isSharedStaticCtorDeclaration();
     void accept(Visitor* v);
     ~SharedStaticCtorDeclaration();
@@ -4885,7 +4727,7 @@ class StaticDtorDeclaration : public FuncDeclaration
 {
 public:
     VarDeclaration* vgate;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    StaticDtorDeclaration* syntaxCopy(Dsymbol* s);
     AggregateDeclaration* isThis();
     bool isVirtual() const;
     bool hasStaticCtorOrDtor();
@@ -4896,19 +4738,19 @@ public:
     ~StaticDtorDeclaration();
 };
 
-class SharedStaticDtorDeclaration : public StaticDtorDeclaration
+class SharedStaticDtorDeclaration final : public StaticDtorDeclaration
 {
 public:
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    SharedStaticDtorDeclaration* syntaxCopy(Dsymbol* s);
     SharedStaticDtorDeclaration* isSharedStaticDtorDeclaration();
     void accept(Visitor* v);
     ~SharedStaticDtorDeclaration();
 };
 
-class InvariantDeclaration : public FuncDeclaration
+class InvariantDeclaration final : public FuncDeclaration
 {
 public:
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    InvariantDeclaration* syntaxCopy(Dsymbol* s);
     bool isVirtual() const;
     bool addPreInvariant();
     bool addPostInvariant();
@@ -4917,12 +4759,12 @@ public:
     ~InvariantDeclaration();
 };
 
-class UnitTestDeclaration : public FuncDeclaration
+class UnitTestDeclaration final : public FuncDeclaration
 {
 public:
     char* codedoc;
-    Array<FuncDeclaration*> deferredNested;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    Array<FuncDeclaration* > deferredNested;
+    UnitTestDeclaration* syntaxCopy(Dsymbol* s);
     AggregateDeclaration* isThis();
     bool isVirtual() const;
     bool addPreInvariant();
@@ -4932,11 +4774,11 @@ public:
     ~UnitTestDeclaration();
 };
 
-class NewDeclaration : public FuncDeclaration
+class NewDeclaration final : public FuncDeclaration
 {
 public:
     ParameterList parameterList;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    NewDeclaration* syntaxCopy(Dsymbol* s);
     const char* kind() const;
     bool isVirtual() const;
     bool addPreInvariant();
@@ -4946,32 +4788,26 @@ public:
     ~NewDeclaration();
 };
 
-class ObjcGlue
-{
-public:
-    static void initialize();
-};
-
-ENUM_CONSTANT_NUMERIC(int32_t, TEST_EMIT_ALL, 0)
-
 extern void genhdrfile(Module* m);
 
 extern void moduleToBuffer(OutBuffer* buf, Module* m);
 
 extern const char* parametersTypeToChars(ParameterList pl);
 
-BEGIN_ENUM(NeedInterpret, NEEDINTERPRET, needinterpret)
-    ENUM_KEY(int32_t, INITnointerpret, 0, NeedInterpret, NEEDINTERPRET, needinterpret, NI)
-    ENUM_KEY(int32_t, INITinterpret, 1, NeedInterpret, NEEDINTERPRET, needinterpret, NI)
-END_ENUM(NeedInterpret, NEEDINTERPRET, needinterpret)
+enum class NeedInterpret
+{
+    INITnointerpret = 0,
+    INITinterpret = 1,
+};
 
-BEGIN_ENUM_NUMERIC(uint8_t, InitKind, INITKIND, initkind)
-    ENUM_KEY_NUMERIC(uint8_t, void_, 0u, InitKind, INITKIND, initkind, IK)
-    ENUM_KEY_NUMERIC(uint8_t, error, 1u, InitKind, INITKIND, initkind, IK)
-    ENUM_KEY_NUMERIC(uint8_t, struct_, 2u, InitKind, INITKIND, initkind, IK)
-    ENUM_KEY_NUMERIC(uint8_t, array, 3u, InitKind, INITKIND, initkind, IK)
-    ENUM_KEY_NUMERIC(uint8_t, exp, 4u, InitKind, INITKIND, initkind, IK)
-END_ENUM_NUMERIC(uint8_t, InitKind, INITKIND, initkind)
+enum class InitKind : uint8_t
+{
+    void_ = 0u,
+    error = 1u,
+    struct_ = 2u,
+    array = 3u,
+    exp = 4u,
+};
 
 class Initializer : public ASTNode
 {
@@ -4987,33 +4823,33 @@ public:
     void accept(Visitor* v);
 };
 
-class VoidInitializer : public Initializer
+class VoidInitializer final : public Initializer
 {
 public:
     Type* type;
     void accept(Visitor* v);
 };
 
-class ErrorInitializer : public Initializer
+class ErrorInitializer final : public Initializer
 {
 public:
     void accept(Visitor* v);
 };
 
-class StructInitializer : public Initializer
+class StructInitializer final : public Initializer
 {
 public:
-    Array<Identifier*> field;
-    Array<Initializer*> value;
+    Array<Identifier* > field;
+    Array<Initializer* > value;
     void accept(Visitor* v);
     ~StructInitializer();
 };
 
-class ArrayInitializer : public Initializer
+class ArrayInitializer final : public Initializer
 {
 public:
-    Array<Expression*> index;
-    Array<Initializer*> value;
+    Array<Expression* > index;
+    Array<Initializer* > value;
     uint32_t dim;
     Type* type;
     bool sem;
@@ -5022,7 +4858,7 @@ public:
     ~ArrayInitializer();
 };
 
-class ExpInitializer : public Initializer
+class ExpInitializer final : public Initializer
 {
 public:
     bool expandTuples;
@@ -5034,115 +4870,89 @@ extern bool hasNonConstPointers(Expression* e);
 
 extern Initializer* initializerSemantic(Initializer* init, Scope* sc, Type* t, NeedInterpret needInterpret);
 
-extern Expression* initializerToExpression(Initializer* init, Type* itype);
+extern Expression* initializerToExpression(Initializer* init, Type* itype = nullptr);
 
-ENUM_CONSTANT_NUMERIC(int32_t, COST_MAX, 250)
-
-extern void json_generate(OutBuffer* buf, Array<Module*>* modules);
-
-ENUM_CONSTANT(const char*, jsonFieldNames, "`compilerInfo`, `buildInfo`, `modules`, `semantics`")
+extern void json_generate(OutBuffer* buf, Array<Module* >* modules);
 
 extern JsonFieldFlags tryParseJsonField(const char* fieldName);
 
-ENUM_CONSTANT_NUMERIC(bool, LOG, false)
-
-extern Library* LibElf_factory();
-
-extern "C" void printInternalFailure(_IO_FILE* stream);
-
-extern void generateJson(Array<Module*>* modules);
-
-typedef int32_t(*MainFunc)(DArray< DArray< char > > args);
-
-extern "C" DArray< DArray< char > > rt_options;
-
-extern "C" int32_t main(int32_t argc, char** argv);
-
-extern "C" int32_t _Dmain(DArray< DArray< char > > _param_0);
-
-extern "C" void printGlobalConfigs(_IO_FILE* stream);
-
-extern "C" void flushMixins();
-
-ENUM_CONSTANT_NUMERIC(int32_t, LOGDOTEXP, 0)
-
-ENUM_CONSTANT_NUMERIC(int32_t, LOGDEFAULTINIT, 0)
-
-ENUM_CONSTANT_NUMERIC(uint64_t, SIZE_INVALID, 18446744073709551615LLU)
-
-BEGIN_ENUM(ENUMTY, ENUMTY, enumty)
-    ENUM_KEY(int32_t, Tarray, 0, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tsarray, 1, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Taarray, 2, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tpointer, 3, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Treference, 4, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tfunction, 5, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tident, 6, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tclass, 7, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tstruct, 8, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tenum, 9, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tdelegate, 10, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tnone, 11, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tvoid, 12, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tint8, 13, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tuns8, 14, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tint16, 15, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tuns16, 16, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tint32, 17, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tuns32, 18, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tint64, 19, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tuns64, 20, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tfloat32, 21, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tfloat64, 22, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tfloat80, 23, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Timaginary32, 24, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Timaginary64, 25, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Timaginary80, 26, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tcomplex32, 27, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tcomplex64, 28, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tcomplex80, 29, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tbool, 30, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tchar, 31, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Twchar, 32, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tdchar, 33, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Terror, 34, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tinstance, 35, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Ttypeof, 36, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Ttuple, 37, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tslice, 38, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Treturn, 39, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tnull, 40, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tvector, 41, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tint128, 42, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tuns128, 43, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Ttraits, 44, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, Tmixin, 45, ENUMTY, ENUMTY, enumty, ENUMTY)
-    ENUM_KEY(int32_t, TMAX, 46, ENUMTY, ENUMTY, enumty, ENUMTY)
-END_ENUM(ENUMTY, ENUMTY, enumty)
+enum class ENUMTY
+{
+    Tarray = 0,
+    Tsarray = 1,
+    Taarray = 2,
+    Tpointer = 3,
+    Treference = 4,
+    Tfunction = 5,
+    Tident = 6,
+    Tclass = 7,
+    Tstruct = 8,
+    Tenum = 9,
+    Tdelegate = 10,
+    Tnone = 11,
+    Tvoid = 12,
+    Tint8 = 13,
+    Tuns8 = 14,
+    Tint16 = 15,
+    Tuns16 = 16,
+    Tint32 = 17,
+    Tuns32 = 18,
+    Tint64 = 19,
+    Tuns64 = 20,
+    Tfloat32 = 21,
+    Tfloat64 = 22,
+    Tfloat80 = 23,
+    Timaginary32 = 24,
+    Timaginary64 = 25,
+    Timaginary80 = 26,
+    Tcomplex32 = 27,
+    Tcomplex64 = 28,
+    Tcomplex80 = 29,
+    Tbool = 30,
+    Tchar = 31,
+    Twchar = 32,
+    Tdchar = 33,
+    Terror = 34,
+    Tinstance = 35,
+    Ttypeof = 36,
+    Ttuple = 37,
+    Tslice = 38,
+    Treturn = 39,
+    Tnull = 40,
+    Tvector = 41,
+    Tint128 = 42,
+    Tuns128 = 43,
+    Ttraits = 44,
+    Tmixin = 45,
+    Tnoreturn = 46,
+    TMAX = 47,
+};
 
 typedef uint8_t TY;
 
-BEGIN_ENUM(MODFlags, MODFLAGS, modflags)
-    ENUM_KEY(int32_t, const_, 1, MODFlags, MODFLAGS, modflags, MODF)
-    ENUM_KEY(int32_t, immutable_, 4, MODFlags, MODFLAGS, modflags, MODF)
-    ENUM_KEY(int32_t, shared_, 2, MODFlags, MODFLAGS, modflags, MODF)
-    ENUM_KEY(int32_t, wild, 8, MODFlags, MODFLAGS, modflags, MODF)
-    ENUM_KEY(int32_t, wildconst, 9, MODFlags, MODFLAGS, modflags, MODF)
-    ENUM_KEY(int32_t, mutable, 16, MODFlags, MODFLAGS, modflags, MODF)
-END_ENUM(MODFlags, MODFLAGS, modflags)
+enum class MODFlags
+{
+    const_ = 1,
+    immutable_ = 4,
+    shared_ = 2,
+    wild = 8,
+    wildconst = 9,
+    mutable_ = 16,
+};
 
 typedef uint8_t MOD;
 
-BEGIN_ENUM(DotExpFlag, DOTEXPFLAG, dotexpflag)
-    ENUM_KEY(int32_t, gag, 1, DotExpFlag, DOTEXPFLAG, dotexpflag, DEF)
-    ENUM_KEY(int32_t, noDeref, 2, DotExpFlag, DOTEXPFLAG, dotexpflag, DEF)
-END_ENUM(DotExpFlag, DOTEXPFLAG, dotexpflag)
+enum class DotExpFlag
+{
+    gag = 1,
+    noDeref = 2,
+};
 
-class TypeError : public Type
+class TypeError final : public Type
 {
 public:
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeError* syntaxCopy();
     d_uns64 size(const Loc& loc);
     Expression* defaultInitLiteral(const Loc& loc);
     void accept(Visitor* v);
@@ -5170,13 +4980,13 @@ public:
     void accept(Visitor* v);
 };
 
-class TypeBasic : public Type
+class TypeBasic final : public Type
 {
 public:
-    char* dstring;
+    const char* dstring;
     uint32_t flags;
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeBasic* syntaxCopy();
     d_uns64 size(const Loc& loc) /* const */;
     uint32_t alignsize();
     bool isintegral();
@@ -5192,13 +5002,13 @@ public:
     void accept(Visitor* v);
 };
 
-class TypeVector : public Type
+class TypeVector final : public Type
 {
 public:
     Type* basetype;
     static TypeVector* create(Type* basetype);
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeVector* syntaxCopy();
     d_uns64 size(const Loc& loc);
     uint32_t alignsize();
     bool isintegral();
@@ -5219,12 +5029,12 @@ public:
     void accept(Visitor* v);
 };
 
-class TypeSArray : public TypeArray
+class TypeSArray final : public TypeArray
 {
 public:
     Expression* dim;
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeSArray* syntaxCopy();
     d_uns64 size(const Loc& loc);
     uint32_t alignsize();
     bool isString();
@@ -5240,11 +5050,11 @@ public:
     void accept(Visitor* v);
 };
 
-class TypeDArray : public TypeArray
+class TypeDArray final : public TypeArray
 {
 public:
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeDArray* syntaxCopy();
     d_uns64 size(const Loc& loc) /* const */;
     uint32_t alignsize() /* const */;
     bool isString();
@@ -5255,14 +5065,14 @@ public:
     void accept(Visitor* v);
 };
 
-class TypeAArray : public TypeArray
+class TypeAArray final : public TypeArray
 {
 public:
     Type* index;
     Loc loc;
     static TypeAArray* create(Type* t, Type* index);
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeAArray* syntaxCopy();
     d_uns64 size(const Loc& loc) /* const */;
     bool isZeroInit(const Loc& loc) /* const */;
     bool isBoolean() /* const */;
@@ -5272,12 +5082,12 @@ public:
     void accept(Visitor* v);
 };
 
-class TypePointer : public TypeNext
+class TypePointer final : public TypeNext
 {
 public:
     static TypePointer* create(Type* t);
     const char* kind() const;
-    Type* syntaxCopy();
+    TypePointer* syntaxCopy();
     d_uns64 size(const Loc& loc) /* const */;
     MATCH implicitConvTo(Type* to);
     MATCH constConv(Type* to);
@@ -5287,62 +5097,68 @@ public:
     void accept(Visitor* v);
 };
 
-class TypeReference : public TypeNext
+class TypeReference final : public TypeNext
 {
 public:
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeReference* syntaxCopy();
     d_uns64 size(const Loc& loc) /* const */;
     bool isZeroInit(const Loc& loc) /* const */;
     void accept(Visitor* v);
 };
 
-BEGIN_ENUM(RET, RET, ret)
-    ENUM_KEY(int32_t, regs, 1, RET, RET, ret, RET)
-    ENUM_KEY(int32_t, stack, 2, RET, RET, ret, RET)
-END_ENUM(RET, RET, ret)
+enum class RET
+{
+    regs = 1,
+    stack = 2,
+};
 
-BEGIN_ENUM_NUMERIC(uint8_t, TRUST, TRUST, trust)
-    ENUM_KEY_NUMERIC(uint8_t, default_, 0u, TRUST, TRUST, trust, TRUST)
-    ENUM_KEY_NUMERIC(uint8_t, system, 1u, TRUST, TRUST, trust, TRUST)
-    ENUM_KEY_NUMERIC(uint8_t, trusted, 2u, TRUST, TRUST, trust, TRUST)
-    ENUM_KEY_NUMERIC(uint8_t, safe, 3u, TRUST, TRUST, trust, TRUST)
-END_ENUM_NUMERIC(uint8_t, TRUST, TRUST, trust)
+enum class TRUST : uint8_t
+{
+    default_ = 0u,
+    system = 1u,
+    trusted = 2u,
+    safe = 3u,
+};
 
-BEGIN_ENUM(TRUSTformat, TRUSTFORMAT, trustformat)
-    ENUM_KEY(int32_t, TRUSTformatDefault, 0, TRUSTformat, TRUSTFORMAT, trustformat, TRUST)
-    ENUM_KEY(int32_t, TRUSTformatSystem, 1, TRUSTformat, TRUSTFORMAT, trustformat, TRUST)
-END_ENUM(TRUSTformat, TRUSTFORMAT, trustformat)
+enum class TRUSTformat
+{
+    TRUSTformatDefault = 0,
+    TRUSTformatSystem = 1,
+};
 
-class TypeFunction : public TypeNext
+class TypeFunction final : public TypeNext
 {
 public:
     ParameterList parameterList;
-    BEGIN_ENUM_NUMERIC(uint32_t, FunctionFlag, FUNCTIONFLAG, functionflag)
-        ENUM_KEY_NUMERIC(uint32_t, none, 0u, FunctionFlag, FUNCTIONFLAG, functionflag, FF)
-        ENUM_KEY_NUMERIC(uint32_t, isnothrow, 1u, FunctionFlag, FUNCTIONFLAG, functionflag, FF)
-        ENUM_KEY_NUMERIC(uint32_t, isnogc, 2u, FunctionFlag, FUNCTIONFLAG, functionflag, FF)
-        ENUM_KEY_NUMERIC(uint32_t, isproperty, 4u, FunctionFlag, FUNCTIONFLAG, functionflag, FF)
-        ENUM_KEY_NUMERIC(uint32_t, isref, 8u, FunctionFlag, FUNCTIONFLAG, functionflag, FF)
-        ENUM_KEY_NUMERIC(uint32_t, isreturn, 16u, FunctionFlag, FUNCTIONFLAG, functionflag, FF)
-        ENUM_KEY_NUMERIC(uint32_t, isscope, 32u, FunctionFlag, FUNCTIONFLAG, functionflag, FF)
-        ENUM_KEY_NUMERIC(uint32_t, isreturninferred, 64u, FunctionFlag, FUNCTIONFLAG, functionflag, FF)
-        ENUM_KEY_NUMERIC(uint32_t, isscopeinferred, 128u, FunctionFlag, FUNCTIONFLAG, functionflag, FF)
-        ENUM_KEY_NUMERIC(uint32_t, islive, 256u, FunctionFlag, FUNCTIONFLAG, functionflag, FF)
-        ENUM_KEY_NUMERIC(uint32_t, incomplete, 512u, FunctionFlag, FUNCTIONFLAG, functionflag, FF)
-        ENUM_KEY_NUMERIC(uint32_t, inoutParam, 1024u, FunctionFlag, FUNCTIONFLAG, functionflag, FF)
-        ENUM_KEY_NUMERIC(uint32_t, inoutQual, 2048u, FunctionFlag, FUNCTIONFLAG, functionflag, FF)
-    END_ENUM_NUMERIC(uint32_t, FunctionFlag, FUNCTIONFLAG, functionflag)
+private:
+    enum class FunctionFlag : uint32_t
+    {
+        none = 0u,
+        isnothrow = 1u,
+        isnogc = 2u,
+        isproperty = 4u,
+        isref = 8u,
+        isreturn = 16u,
+        isscope = 32u,
+        isreturninferred = 64u,
+        isscopeinferred = 128u,
+        islive = 256u,
+        incomplete = 512u,
+        inoutParam = 1024u,
+        inoutQual = 2048u,
+    };
 
+public:
     LINK linkage;
     FunctionFlag funcFlags;
     TRUST trust;
     PURE purity;
     int8_t inuse;
-    Array<Expression*>* fargs;
-    static TypeFunction* create(Array<Parameter*>* parameters, Type* treturn, uint8_t varargs, LINK linkage, StorageClass stc = 0);
+    Array<Expression* >* fargs;
+    static TypeFunction* create(Array<Parameter* >* parameters, Type* treturn, uint8_t varargs, LINK linkage, StorageClass stc = 0);
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeFunction* syntaxCopy();
     void purityLevel();
     bool hasLazyParameters();
     bool isDstyleVariadic() const;
@@ -5350,7 +5166,7 @@ public:
     StorageClass parameterStorageClass(Type* tthis, Parameter* p);
     Type* addStorageClass(StorageClass stc);
     Type* substWildTo(uint32_t _param_0);
-    const char* getParamError(Expression* arg, Parameter* par);
+    MATCH constConv(Type* to);
     bool isnothrow() const;
     void isnothrow(bool v);
     bool isnogc() const;
@@ -5376,15 +5192,16 @@ public:
     bool isInOutQual() const;
     void isInOutQual(bool v);
     bool iswild() const;
+    bool attributesEqual(const TypeFunction* const other) const;
     void accept(Visitor* v);
 };
 
-class TypeDelegate : public TypeNext
+class TypeDelegate final : public TypeNext
 {
 public:
     static TypeDelegate* create(Type* t);
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeDelegate* syntaxCopy();
     Type* addStorageClass(StorageClass stc);
     d_uns64 size(const Loc& loc) /* const */;
     uint32_t alignsize() /* const */;
@@ -5395,26 +5212,27 @@ public:
     void accept(Visitor* v);
 };
 
-class TypeTraits : public Type
+class TypeTraits final : public Type
 {
 public:
     Loc loc;
     TraitsExp* exp;
     Dsymbol* sym;
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeTraits* syntaxCopy();
     Dsymbol* toDsymbol(Scope* sc);
     void accept(Visitor* v);
     d_uns64 size(const Loc& loc);
 };
 
-class TypeMixin : public Type
+class TypeMixin final : public Type
 {
 public:
     Loc loc;
-    Array<Expression*>* exps;
+    Array<Expression* >* exps;
+    RootObject* obj;
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeMixin* syntaxCopy();
     Dsymbol* toDsymbol(Scope* sc);
     void accept(Visitor* v);
 };
@@ -5423,7 +5241,8 @@ class TypeQualified : public Type
 {
 public:
     Loc loc;
-    Array<RootObject*> idents;
+    Array<RootObject* > idents;
+    TypeQualified* syntaxCopy() = 0;
     void syntaxCopyHelper(TypeQualified* t);
     void addIdent(Identifier* ident);
     void addInst(TemplateInstance* inst);
@@ -5433,62 +5252,63 @@ public:
     ~TypeQualified();
 };
 
-class TypeIdentifier : public TypeQualified
+class TypeIdentifier final : public TypeQualified
 {
 public:
     Identifier* ident;
     Dsymbol* originalSymbol;
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeIdentifier* syntaxCopy();
     Dsymbol* toDsymbol(Scope* sc);
     void accept(Visitor* v);
     ~TypeIdentifier();
 };
 
-class TypeInstance : public TypeQualified
+class TypeInstance final : public TypeQualified
 {
 public:
     TemplateInstance* tempinst;
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeInstance* syntaxCopy();
     Dsymbol* toDsymbol(Scope* sc);
     void accept(Visitor* v);
     ~TypeInstance();
 };
 
-class TypeTypeof : public TypeQualified
+class TypeTypeof final : public TypeQualified
 {
 public:
     Expression* exp;
     int32_t inuse;
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeTypeof* syntaxCopy();
     Dsymbol* toDsymbol(Scope* sc);
     d_uns64 size(const Loc& loc);
     void accept(Visitor* v);
     ~TypeTypeof();
 };
 
-class TypeReturn : public TypeQualified
+class TypeReturn final : public TypeQualified
 {
 public:
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeReturn* syntaxCopy();
     Dsymbol* toDsymbol(Scope* sc);
     void accept(Visitor* v);
     ~TypeReturn();
 };
 
-BEGIN_ENUM(AliasThisRec, ALIASTHISREC, aliasthisrec)
-    ENUM_KEY(int32_t, no, 0, AliasThisRec, ALIASTHISREC, aliasthisrec, ATR)
-    ENUM_KEY(int32_t, yes, 1, AliasThisRec, ALIASTHISREC, aliasthisrec, ATR)
-    ENUM_KEY(int32_t, fwdref, 2, AliasThisRec, ALIASTHISREC, aliasthisrec, ATR)
-    ENUM_KEY(int32_t, typeMask, 3, AliasThisRec, ALIASTHISREC, aliasthisrec, ATR)
-    ENUM_KEY(int32_t, tracing, 4, AliasThisRec, ALIASTHISREC, aliasthisrec, ATR)
-    ENUM_KEY(int32_t, tracingDT, 8, AliasThisRec, ALIASTHISREC, aliasthisrec, ATR)
-END_ENUM(AliasThisRec, ALIASTHISREC, aliasthisrec)
+enum class AliasThisRec
+{
+    no = 0,
+    yes = 1,
+    fwdref = 2,
+    typeMask = 3,
+    tracing = 4,
+    tracingDT = 8,
+};
 
-class TypeStruct : public Type
+class TypeStruct final : public Type
 {
 public:
     StructDeclaration* sym;
@@ -5498,7 +5318,7 @@ public:
     const char* kind() const;
     d_uns64 size(const Loc& loc);
     uint32_t alignsize();
-    Type* syntaxCopy();
+    TypeStruct* syntaxCopy();
     Dsymbol* toDsymbol(Scope* sc);
     uint32_t alignment();
     Expression* defaultInitLiteral(const Loc& loc);
@@ -5517,14 +5337,14 @@ public:
     void accept(Visitor* v);
 };
 
-class TypeEnum : public Type
+class TypeEnum final : public Type
 {
 public:
     EnumDeclaration* sym;
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeEnum* syntaxCopy();
     d_uns64 size(const Loc& loc);
-    Type* memType(const Loc& loc);
+    Type* memType(const Loc& loc = Loc::initial);
     uint32_t alignsize();
     Dsymbol* toDsymbol(Scope* sc);
     bool isintegral();
@@ -5549,7 +5369,7 @@ public:
     void accept(Visitor* v);
 };
 
-class TypeClass : public Type
+class TypeClass final : public Type
 {
 public:
     ClassDeclaration* sym;
@@ -5557,7 +5377,7 @@ public:
     CPPMANGLE cppmangle;
     const char* kind() const;
     d_uns64 size(const Loc& loc) /* const */;
-    Type* syntaxCopy();
+    TypeClass* syntaxCopy();
     Dsymbol* toDsymbol(Scope* sc);
     ClassDeclaration* isClassHandle();
     bool isBaseOf(Type* t, int32_t* poffset);
@@ -5572,36 +5392,36 @@ public:
     void accept(Visitor* v);
 };
 
-class TypeTuple : public Type
+class TypeTuple final : public Type
 {
 public:
     static TypeTuple* empty;
-    Array<Parameter*>* arguments;
-    static TypeTuple* create(Array<Parameter*>* arguments);
+    Array<Parameter* >* arguments;
+    static TypeTuple* create(Array<Parameter* >* arguments);
     static TypeTuple* create();
     static TypeTuple* create(Type* t1);
     static TypeTuple* create(Type* t1, Type* t2);
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeTuple* syntaxCopy();
     bool equals(const RootObject* const o) const;
     void accept(Visitor* v);
 };
 
-class TypeSlice : public TypeNext
+class TypeSlice final : public TypeNext
 {
 public:
     Expression* lwr;
     Expression* upr;
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeSlice* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class TypeNull : public Type
+class TypeNull final : public Type
 {
 public:
     const char* kind() const;
-    Type* syntaxCopy();
+    TypeNull* syntaxCopy();
     MATCH implicitConvTo(Type* to);
     bool hasPointers();
     bool isBoolean() /* const */;
@@ -5609,7 +5429,19 @@ public:
     void accept(Visitor* v);
 };
 
-class Parameter : public ASTNode
+class TypeNoreturn final : public Type
+{
+public:
+    const char* kind() const;
+    TypeNoreturn* syntaxCopy();
+    MATCH implicitConvTo(Type* to);
+    bool isBoolean() /* const */;
+    d_uns64 size(const Loc& loc) /* const */;
+    uint32_t alignsize();
+    void accept(Visitor* v);
+};
+
+class Parameter final : public ASTNode
 {
 public:
     StorageClass storageClass;
@@ -5623,26 +5455,28 @@ public:
     bool isReference() const;
     DYNCAST dyncast() const;
     void accept(Visitor* v);
-    static size_t dim(Array<Parameter*>* parameters);
-    static Parameter* getNth(Array<Parameter*>* parameters, size_t nth);
+    static size_t dim(Array<Parameter* >* parameters);
+    static Parameter* getNth(Array<Parameter* >* parameters, size_t nth);
     const char* toChars() const;
-    bool isCovariant(bool returnByRef, const Parameter* const p, bool previewIn) const;
-    BEGIN_ENUM(SR, SR, sr)
-        ENUM_KEY(int32_t, None, 0, SR, SR, sr, SR)
-        ENUM_KEY(int32_t, Scope, 1, SR, SR, sr, SR)
-        ENUM_KEY(int32_t, ReturnScope, 2, SR, SR, sr, SR)
-        ENUM_KEY(int32_t, Ref, 3, SR, SR, sr, SR)
-        ENUM_KEY(int32_t, ReturnRef, 4, SR, SR, sr, SR)
-        ENUM_KEY(int32_t, RefScope, 5, SR, SR, sr, SR)
-        ENUM_KEY(int32_t, ReturnRef_Scope, 6, SR, SR, sr, SR)
-        ENUM_KEY(int32_t, Ref_ReturnScope, 7, SR, SR, sr, SR)
-    END_ENUM(SR, SR, sr)
+    bool isCovariant(bool returnByRef, const Parameter* const p, bool previewIn = global.params.previewIn) const;
+private:
+    enum class SR
+    {
+        None = 0,
+        Scope = 1,
+        ReturnScope = 2,
+        Ref = 3,
+        ReturnRef = 4,
+        RefScope = 5,
+        ReturnRef_Scope = 6,
+        Ref_ReturnScope = 7,
+    };
 
 };
 
 extern AggregateDeclaration* isAggregate(Type* t);
 
-class NOGCVisitor : public StoppableVisitor
+class NOGCVisitor final : public StoppableVisitor
 {
 public:
     FuncDeclaration* f;
@@ -5661,11 +5495,11 @@ public:
     void visit(CatExp* e);
 };
 
-class Nspace : public ScopeDsymbol
+class Nspace final : public ScopeDsymbol
 {
 public:
     Expression* identExp;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    Nspace* syntaxCopy(Dsymbol* s);
     void addMember(Scope* sc, ScopeDsymbol* sds);
     void setScope(Scope* sc);
     Dsymbol* search(const Loc& loc, Identifier* ident, int32_t flags = 8);
@@ -5677,28 +5511,30 @@ public:
     ~Nspace();
 };
 
-typedef Array<ObNode*> ObNodes;
+typedef Array<ObNode* > ObNodes;
 
-typedef StmtState<ObNode> StmtState;
+typedef StmtState<ObNode > StmtState;
 
-BEGIN_ENUM_NUMERIC(uint8_t, ObType, OBTYPE, obtype)
-    ENUM_KEY_NUMERIC(uint8_t, goto_, 0u, ObType, OBTYPE, obtype, OT)
-    ENUM_KEY_NUMERIC(uint8_t, return_, 1u, ObType, OBTYPE, obtype, OT)
-    ENUM_KEY_NUMERIC(uint8_t, retexp, 2u, ObType, OBTYPE, obtype, OT)
-    ENUM_KEY_NUMERIC(uint8_t, throw_, 3u, ObType, OBTYPE, obtype, OT)
-    ENUM_KEY_NUMERIC(uint8_t, exit, 4u, ObType, OBTYPE, obtype, OT)
-    ENUM_KEY_NUMERIC(uint8_t, try_, 5u, ObType, OBTYPE, obtype, OT)
-    ENUM_KEY_NUMERIC(uint8_t, finally_, 6u, ObType, OBTYPE, obtype, OT)
-    ENUM_KEY_NUMERIC(uint8_t, fend, 7u, ObType, OBTYPE, obtype, OT)
-END_ENUM_NUMERIC(uint8_t, ObType, OBTYPE, obtype)
+enum class ObType : uint8_t
+{
+    goto_ = 0u,
+    return_ = 1u,
+    retexp = 2u,
+    throw_ = 3u,
+    exit = 4u,
+    try_ = 5u,
+    finally_ = 6u,
+    fend = 7u,
+};
 
-BEGIN_ENUM_NUMERIC(uint8_t, PtrState, PTRSTATE, ptrstate)
-    ENUM_KEY_NUMERIC(uint8_t, Initial, 0u, PtrState, PTRSTATE, ptrstate, PS)
-    ENUM_KEY_NUMERIC(uint8_t, Undefined, 1u, PtrState, PTRSTATE, ptrstate, PS)
-    ENUM_KEY_NUMERIC(uint8_t, Owner, 2u, PtrState, PTRSTATE, ptrstate, PS)
-    ENUM_KEY_NUMERIC(uint8_t, Borrowed, 3u, PtrState, PTRSTATE, ptrstate, PS)
-    ENUM_KEY_NUMERIC(uint8_t, Readonly, 4u, PtrState, PTRSTATE, ptrstate, PS)
-END_ENUM_NUMERIC(uint8_t, PtrState, PTRSTATE, ptrstate)
+enum class PtrState : uint8_t
+{
+    Initial = 0u,
+    Undefined = 1u,
+    Owner = 2u,
+    Borrowed = 3u,
+    Readonly = 4u,
+};
 
 class Objc
 {
@@ -5707,11 +5543,13 @@ public:
     static void deinitialize();
     virtual void setObjc(ClassDeclaration* cd) = 0;
     virtual void setObjc(InterfaceDeclaration* ) = 0;
-    virtual void deprecate(InterfaceDeclaration* interfaceDeclaration) const = 0;
+    virtual const char* toPrettyChars(ClassDeclaration* classDeclaration, bool qualifyTypes) const = 0;
     virtual void setSelector(FuncDeclaration* , Scope* sc) = 0;
     virtual void validateSelector(FuncDeclaration* fd) = 0;
     virtual void checkLinkage(FuncDeclaration* fd) = 0;
     virtual bool isVirtual(const FuncDeclaration* const fd) const = 0;
+    virtual void setAsOptional(FuncDeclaration* functionDeclaration, Scope* sc) const = 0;
+    virtual void validateOptional(FuncDeclaration* functionDeclaration) const = 0;
     virtual ClassDeclaration* getParent(FuncDeclaration* fd, ClassDeclaration* cd) const = 0;
     virtual void addToClassMethodList(FuncDeclaration* fd, ClassDeclaration* cd) const = 0;
     virtual AggregateDeclaration* isThis(FuncDeclaration* funcDeclaration) const = 0;
@@ -5719,41 +5557,284 @@ public:
     virtual void setMetaclass(InterfaceDeclaration* interfaceDeclaration, Scope* sc) const = 0;
     virtual void setMetaclass(ClassDeclaration* classDeclaration, Scope* sc) const = 0;
     virtual ClassDeclaration* getRuntimeMetaclass(ClassDeclaration* classDeclaration) const = 0;
-    virtual void addSymbols(AttribDeclaration* attribDeclaration, Array<ClassDeclaration*>* classes, Array<ClassDeclaration*>* categories) const = 0;
-    virtual void addSymbols(ClassDeclaration* classDeclaration, Array<ClassDeclaration*>* classes, Array<ClassDeclaration*>* categories) const = 0;
+    virtual void addSymbols(AttribDeclaration* attribDeclaration, Array<ClassDeclaration* >* classes, Array<ClassDeclaration* >* categories) const = 0;
+    virtual void addSymbols(ClassDeclaration* classDeclaration, Array<ClassDeclaration* >* classes, Array<ClassDeclaration* >* categories) const = 0;
     virtual void checkOffsetof(Expression* expression, AggregateDeclaration* aggregateDeclaration) const = 0;
     virtual void checkTupleof(Expression* expression, TypeClass* type) const = 0;
 };
 
-BEGIN_ENUM(ParseStatementFlags, PARSESTATEMENTFLAGS, parsestatementflags)
-    ENUM_KEY(int32_t, semi, 1, ParseStatementFlags, PARSESTATEMENTFLAGS, parsestatementflags, PSF)
-    ENUM_KEY(int32_t, scope_, 2, ParseStatementFlags, PARSESTATEMENTFLAGS, parsestatementflags, PSF)
-    ENUM_KEY(int32_t, curly, 4, ParseStatementFlags, PARSESTATEMENTFLAGS, parsestatementflags, PSF)
-    ENUM_KEY(int32_t, curlyScope, 8, ParseStatementFlags, PARSESTATEMENTFLAGS, parsestatementflags, PSF)
-    ENUM_KEY(int32_t, semiOk, 16, ParseStatementFlags, PARSESTATEMENTFLAGS, parsestatementflags, PSF)
-END_ENUM(ParseStatementFlags, PARSESTATEMENTFLAGS, parsestatementflags)
+enum class ParseStatementFlags
+{
+    semi = 1,
+    scope_ = 2,
+    curly = 4,
+    curlyScope = 8,
+    semiOk = 16,
+};
 
-BEGIN_ENUM(PREC, PREC, prec)
-    ENUM_KEY(int32_t, zero, 0, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, expr, 1, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, assign, 2, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, cond, 3, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, oror, 4, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, andand, 5, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, or, 6, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, xor, 7, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, and, 8, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, equal, 9, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, rel, 10, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, shift, 11, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, add, 12, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, mul, 13, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, pow, 14, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, unary, 15, PREC, PREC, prec, PREC)
-    ENUM_KEY(int32_t, primary, 16, PREC, PREC, prec, PREC)
-END_ENUM(PREC, PREC, prec)
+enum class PREC
+{
+    zero = 0,
+    expr = 1,
+    assign = 2,
+    cond = 3,
+    oror = 4,
+    andand = 5,
+    or_ = 6,
+    xor_ = 7,
+    and_ = 8,
+    equal = 9,
+    rel = 10,
+    shift = 11,
+    add = 12,
+    mul = 13,
+    pow = 14,
+    unary = 15,
+    primary = 16,
+};
 
-class PostorderStatementVisitor : public StoppableVisitor
+template <typename AST>
+class ParseTimeVisitor
+{
+public:
+    virtual void visit(typename AST::Dsymbol );
+    virtual void visit(typename AST::Parameter );
+    virtual void visit(typename AST::Statement );
+    virtual void visit(typename AST::Type );
+    virtual void visit(typename AST::Expression );
+    virtual void visit(typename AST::TemplateParameter );
+    virtual void visit(typename AST::Condition );
+    virtual void visit(typename AST::Initializer );
+    virtual void visit(typename AST::AliasThis s);
+    virtual void visit(typename AST::Declaration s);
+    virtual void visit(typename AST::ScopeDsymbol s);
+    virtual void visit(typename AST::Import s);
+    virtual void visit(typename AST::AttribDeclaration s);
+    virtual void visit(typename AST::StaticAssert s);
+    virtual void visit(typename AST::DebugSymbol s);
+    virtual void visit(typename AST::VersionSymbol s);
+    virtual void visit(typename AST::AliasAssign s);
+    virtual void visit(typename AST::Package s);
+    virtual void visit(typename AST::EnumDeclaration s);
+    virtual void visit(typename AST::AggregateDeclaration s);
+    virtual void visit(typename AST::TemplateDeclaration s);
+    virtual void visit(typename AST::TemplateInstance s);
+    virtual void visit(typename AST::Nspace s);
+    virtual void visit(typename AST::VarDeclaration s);
+    virtual void visit(typename AST::FuncDeclaration s);
+    virtual void visit(typename AST::AliasDeclaration s);
+    virtual void visit(typename AST::TupleDeclaration s);
+    virtual void visit(typename AST::FuncLiteralDeclaration s);
+    virtual void visit(typename AST::PostBlitDeclaration s);
+    virtual void visit(typename AST::CtorDeclaration s);
+    virtual void visit(typename AST::DtorDeclaration s);
+    virtual void visit(typename AST::InvariantDeclaration s);
+    virtual void visit(typename AST::UnitTestDeclaration s);
+    virtual void visit(typename AST::NewDeclaration s);
+    virtual void visit(typename AST::StaticCtorDeclaration s);
+    virtual void visit(typename AST::StaticDtorDeclaration s);
+    virtual void visit(typename AST::SharedStaticCtorDeclaration s);
+    virtual void visit(typename AST::SharedStaticDtorDeclaration s);
+    virtual void visit(typename AST::CompileDeclaration s);
+    virtual void visit(typename AST::UserAttributeDeclaration s);
+    virtual void visit(typename AST::LinkDeclaration s);
+    virtual void visit(typename AST::AnonDeclaration s);
+    virtual void visit(typename AST::AlignDeclaration s);
+    virtual void visit(typename AST::CPPMangleDeclaration s);
+    virtual void visit(typename AST::CPPNamespaceDeclaration s);
+    virtual void visit(typename AST::VisibilityDeclaration s);
+    virtual void visit(typename AST::PragmaDeclaration s);
+    virtual void visit(typename AST::StorageClassDeclaration s);
+    virtual void visit(typename AST::ConditionalDeclaration s);
+    virtual void visit(typename AST::StaticForeachDeclaration s);
+    virtual void visit(typename AST::DeprecatedDeclaration s);
+    virtual void visit(typename AST::StaticIfDeclaration s);
+    virtual void visit(typename AST::EnumMember s);
+    virtual void visit(typename AST::Module s);
+    virtual void visit(typename AST::StructDeclaration s);
+    virtual void visit(typename AST::UnionDeclaration s);
+    virtual void visit(typename AST::ClassDeclaration s);
+    virtual void visit(typename AST::InterfaceDeclaration s);
+    virtual void visit(typename AST::TemplateMixin s);
+    virtual void visit(typename AST::ImportStatement s);
+    virtual void visit(typename AST::ScopeStatement s);
+    virtual void visit(typename AST::ReturnStatement s);
+    virtual void visit(typename AST::LabelStatement s);
+    virtual void visit(typename AST::StaticAssertStatement s);
+    virtual void visit(typename AST::CompileStatement s);
+    virtual void visit(typename AST::WhileStatement s);
+    virtual void visit(typename AST::ForStatement s);
+    virtual void visit(typename AST::DoStatement s);
+    virtual void visit(typename AST::ForeachRangeStatement s);
+    virtual void visit(typename AST::ForeachStatement s);
+    virtual void visit(typename AST::IfStatement s);
+    virtual void visit(typename AST::ScopeGuardStatement s);
+    virtual void visit(typename AST::ConditionalStatement s);
+    virtual void visit(typename AST::StaticForeachStatement s);
+    virtual void visit(typename AST::PragmaStatement s);
+    virtual void visit(typename AST::SwitchStatement s);
+    virtual void visit(typename AST::CaseRangeStatement s);
+    virtual void visit(typename AST::CaseStatement s);
+    virtual void visit(typename AST::DefaultStatement s);
+    virtual void visit(typename AST::BreakStatement s);
+    virtual void visit(typename AST::ContinueStatement s);
+    virtual void visit(typename AST::GotoDefaultStatement s);
+    virtual void visit(typename AST::GotoCaseStatement s);
+    virtual void visit(typename AST::GotoStatement s);
+    virtual void visit(typename AST::SynchronizedStatement s);
+    virtual void visit(typename AST::WithStatement s);
+    virtual void visit(typename AST::TryCatchStatement s);
+    virtual void visit(typename AST::TryFinallyStatement s);
+    virtual void visit(typename AST::ThrowStatement s);
+    virtual void visit(typename AST::AsmStatement s);
+    virtual void visit(typename AST::ExpStatement s);
+    virtual void visit(typename AST::CompoundStatement s);
+    virtual void visit(typename AST::CompoundDeclarationStatement s);
+    virtual void visit(typename AST::CompoundAsmStatement s);
+    virtual void visit(typename AST::InlineAsmStatement s);
+    virtual void visit(typename AST::GccAsmStatement s);
+    virtual void visit(typename AST::TypeBasic t);
+    virtual void visit(typename AST::TypeError t);
+    virtual void visit(typename AST::TypeNull t);
+    virtual void visit(typename AST::TypeNoreturn t);
+    virtual void visit(typename AST::TypeVector t);
+    virtual void visit(typename AST::TypeEnum t);
+    virtual void visit(typename AST::TypeTuple t);
+    virtual void visit(typename AST::TypeClass t);
+    virtual void visit(typename AST::TypeStruct t);
+    virtual void visit(typename AST::TypeNext t);
+    virtual void visit(typename AST::TypeQualified t);
+    virtual void visit(typename AST::TypeTraits t);
+    virtual void visit(typename AST::TypeMixin t);
+    virtual void visit(typename AST::TypeReference t);
+    virtual void visit(typename AST::TypeSlice t);
+    virtual void visit(typename AST::TypeDelegate t);
+    virtual void visit(typename AST::TypePointer t);
+    virtual void visit(typename AST::TypeFunction t);
+    virtual void visit(typename AST::TypeArray t);
+    virtual void visit(typename AST::TypeDArray t);
+    virtual void visit(typename AST::TypeAArray t);
+    virtual void visit(typename AST::TypeSArray t);
+    virtual void visit(typename AST::TypeIdentifier t);
+    virtual void visit(typename AST::TypeReturn t);
+    virtual void visit(typename AST::TypeTypeof t);
+    virtual void visit(typename AST::TypeInstance t);
+    virtual void visit(typename AST::DeclarationExp e);
+    virtual void visit(typename AST::IntegerExp e);
+    virtual void visit(typename AST::NewAnonClassExp e);
+    virtual void visit(typename AST::IsExp e);
+    virtual void visit(typename AST::RealExp e);
+    virtual void visit(typename AST::NullExp e);
+    virtual void visit(typename AST::TypeidExp e);
+    virtual void visit(typename AST::TraitsExp e);
+    virtual void visit(typename AST::StringExp e);
+    virtual void visit(typename AST::NewExp e);
+    virtual void visit(typename AST::AssocArrayLiteralExp e);
+    virtual void visit(typename AST::ArrayLiteralExp e);
+    virtual void visit(typename AST::MixinExp e);
+    virtual void visit(typename AST::FuncExp e);
+    virtual void visit(typename AST::IntervalExp e);
+    virtual void visit(typename AST::TypeExp e);
+    virtual void visit(typename AST::ScopeExp e);
+    virtual void visit(typename AST::IdentifierExp e);
+    virtual void visit(typename AST::UnaExp e);
+    virtual void visit(typename AST::DefaultInitExp e);
+    virtual void visit(typename AST::BinExp e);
+    virtual void visit(typename AST::DsymbolExp e);
+    virtual void visit(typename AST::TemplateExp e);
+    virtual void visit(typename AST::SymbolExp e);
+    virtual void visit(typename AST::TupleExp e);
+    virtual void visit(typename AST::ThisExp e);
+    virtual void visit(typename AST::VarExp e);
+    virtual void visit(typename AST::DollarExp e);
+    virtual void visit(typename AST::SuperExp e);
+    virtual void visit(typename AST::AddrExp e);
+    virtual void visit(typename AST::PreExp e);
+    virtual void visit(typename AST::PtrExp e);
+    virtual void visit(typename AST::NegExp e);
+    virtual void visit(typename AST::UAddExp e);
+    virtual void visit(typename AST::NotExp e);
+    virtual void visit(typename AST::ComExp e);
+    virtual void visit(typename AST::DeleteExp e);
+    virtual void visit(typename AST::CastExp e);
+    virtual void visit(typename AST::CallExp e);
+    virtual void visit(typename AST::DotIdExp e);
+    virtual void visit(typename AST::AssertExp e);
+    virtual void visit(typename AST::ImportExp e);
+    virtual void visit(typename AST::DotTemplateInstanceExp e);
+    virtual void visit(typename AST::ArrayExp e);
+    virtual void visit(typename AST::FuncInitExp e);
+    virtual void visit(typename AST::PrettyFuncInitExp e);
+    virtual void visit(typename AST::FileInitExp e);
+    virtual void visit(typename AST::LineInitExp e);
+    virtual void visit(typename AST::ModuleInitExp e);
+    virtual void visit(typename AST::CommaExp e);
+    virtual void visit(typename AST::PostExp e);
+    virtual void visit(typename AST::PowExp e);
+    virtual void visit(typename AST::MulExp e);
+    virtual void visit(typename AST::DivExp e);
+    virtual void visit(typename AST::ModExp e);
+    virtual void visit(typename AST::AddExp e);
+    virtual void visit(typename AST::MinExp e);
+    virtual void visit(typename AST::CatExp e);
+    virtual void visit(typename AST::ShlExp e);
+    virtual void visit(typename AST::ShrExp e);
+    virtual void visit(typename AST::UshrExp e);
+    virtual void visit(typename AST::EqualExp e);
+    virtual void visit(typename AST::InExp e);
+    virtual void visit(typename AST::IdentityExp e);
+    virtual void visit(typename AST::CmpExp e);
+    virtual void visit(typename AST::AndExp e);
+    virtual void visit(typename AST::XorExp e);
+    virtual void visit(typename AST::OrExp e);
+    virtual void visit(typename AST::LogicalExp e);
+    virtual void visit(typename AST::CondExp e);
+    virtual void visit(typename AST::AssignExp e);
+    virtual void visit(typename AST::BinAssignExp e);
+    virtual void visit(typename AST::AddAssignExp e);
+    virtual void visit(typename AST::MinAssignExp e);
+    virtual void visit(typename AST::MulAssignExp e);
+    virtual void visit(typename AST::DivAssignExp e);
+    virtual void visit(typename AST::ModAssignExp e);
+    virtual void visit(typename AST::PowAssignExp e);
+    virtual void visit(typename AST::AndAssignExp e);
+    virtual void visit(typename AST::OrAssignExp e);
+    virtual void visit(typename AST::XorAssignExp e);
+    virtual void visit(typename AST::ShlAssignExp e);
+    virtual void visit(typename AST::ShrAssignExp e);
+    virtual void visit(typename AST::UshrAssignExp e);
+    virtual void visit(typename AST::CatAssignExp e);
+    virtual void visit(typename AST::TemplateAliasParameter tp);
+    virtual void visit(typename AST::TemplateTypeParameter tp);
+    virtual void visit(typename AST::TemplateTupleParameter tp);
+    virtual void visit(typename AST::TemplateValueParameter tp);
+    virtual void visit(typename AST::TemplateThisParameter tp);
+    virtual void visit(typename AST::StaticIfCondition c);
+    virtual void visit(typename AST::DVCondition c);
+    virtual void visit(typename AST::DebugCondition c);
+    virtual void visit(typename AST::VersionCondition c);
+    virtual void visit(typename AST::ExpInitializer i);
+    virtual void visit(typename AST::StructInitializer i);
+    virtual void visit(typename AST::ArrayInitializer i);
+    virtual void visit(typename AST::VoidInitializer i);
+};
+
+template <typename AST>
+class PermissiveVisitor : public ParseTimeVisitor<AST >
+{
+public:
+    typedef ParseTimeVisitor<AST > visit;
+    virtual void visit(typename AST::Dsymbol );
+    virtual void visit(typename AST::Parameter );
+    virtual void visit(typename AST::Statement );
+    virtual void visit(typename AST::Type );
+    virtual void visit(typename AST::Expression );
+    virtual void visit(typename AST::TemplateParameter );
+    virtual void visit(typename AST::Condition );
+    virtual void visit(typename AST::Initializer );
+};
+
+class PostorderStatementVisitor final : public StoppableVisitor
 {
 public:
     StoppableVisitor* v;
@@ -5783,75 +5864,70 @@ public:
     void visit(LabelStatement* s);
 };
 
-ENUM_CONSTANT_NUMERIC(bool, LOG, false)
-
-ENUM_CONSTANT_NUMERIC(bool, LOG, false)
-
 extern void semantic2(Dsymbol* dsym, Scope* sc);
-
-ENUM_CONSTANT_NUMERIC(bool, LOG, false)
 
 extern void semantic3(Dsymbol* dsym, Scope* sc);
 
 extern bool isTrivialExp(Expression* e);
 
-extern bool hasSideEffect(Expression* e);
+extern bool hasSideEffect(Expression* e, bool assumeImpureCalls = false);
 
-BEGIN_ENUM_NUMERIC(uint8_t, STMT, STMT, stmt)
-    ENUM_KEY_NUMERIC(uint8_t, Error, 0u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Peel, 1u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Exp, 2u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, DtorExp, 3u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Compile, 4u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Compound, 5u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, CompoundDeclaration, 6u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, CompoundAsm, 7u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, UnrolledLoop, 8u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Scope, 9u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Forwarding, 10u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, While, 11u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Do, 12u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, For, 13u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Foreach, 14u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, ForeachRange, 15u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, If, 16u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Conditional, 17u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, StaticForeach, 18u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Pragma, 19u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, StaticAssert, 20u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Switch, 21u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Case, 22u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, CaseRange, 23u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Default, 24u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, GotoDefault, 25u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, GotoCase, 26u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, SwitchError, 27u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Return, 28u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Break, 29u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Continue, 30u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Synchronized, 31u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, With, 32u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, TryCatch, 33u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, TryFinally, 34u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, ScopeGuard, 35u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Throw, 36u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Debug, 37u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Goto, 38u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Label, 39u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Asm, 40u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, InlineAsm, 41u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, GccAsm, 42u, STMT, STMT, stmt, STMT)
-    ENUM_KEY_NUMERIC(uint8_t, Import, 43u, STMT, STMT, stmt, STMT)
-END_ENUM_NUMERIC(uint8_t, STMT, STMT, stmt)
+enum class STMT : uint8_t
+{
+    Error = 0u,
+    Peel = 1u,
+    Exp = 2u,
+    DtorExp = 3u,
+    Compile = 4u,
+    Compound = 5u,
+    CompoundDeclaration = 6u,
+    CompoundAsm = 7u,
+    UnrolledLoop = 8u,
+    Scope = 9u,
+    Forwarding = 10u,
+    While = 11u,
+    Do = 12u,
+    For = 13u,
+    Foreach = 14u,
+    ForeachRange = 15u,
+    If = 16u,
+    Conditional = 17u,
+    StaticForeach = 18u,
+    Pragma = 19u,
+    StaticAssert = 20u,
+    Switch = 21u,
+    Case = 22u,
+    CaseRange = 23u,
+    Default = 24u,
+    GotoDefault = 25u,
+    GotoCase = 26u,
+    SwitchError = 27u,
+    Return = 28u,
+    Break = 29u,
+    Continue = 30u,
+    Synchronized = 31u,
+    With = 32u,
+    TryCatch = 33u,
+    TryFinally = 34u,
+    ScopeGuard = 35u,
+    Throw = 36u,
+    Debug = 37u,
+    Goto = 38u,
+    Label = 39u,
+    Asm = 40u,
+    InlineAsm = 41u,
+    GccAsm = 42u,
+    Import = 43u,
+};
 
 class Statement : public ASTNode
 {
 public:
-    Loc loc;
-    STMT stmt;
+    const Loc loc;
+    const STMT stmt;
     DYNCAST dyncast() const;
     virtual Statement* syntaxCopy();
-    static Array<Statement*>* arraySyntaxCopy(Array<Statement*>* a);
+    static Array<Statement* >* arraySyntaxCopy(Array<Statement* >* a);
     const char* toChars() const;
     void error(const char* format, ...);
     void warning(const char* format, ...);
@@ -5863,7 +5939,7 @@ public:
     bool comeFrom();
     bool hasCode();
     virtual Statement* scopeCode(Scope* sc, Statement** sentry, Statement** sexception, Statement** sfinally);
-    virtual Array<Statement*>* flatten(Scope* sc);
+    virtual Array<Statement* >* flatten(Scope* sc);
     virtual Statement* last();
     void accept(Visitor* v);
     virtual ReturnStatement* endsWithReturnStatement();
@@ -5898,14 +5974,14 @@ public:
     CompoundDeclarationStatement* isCompoundDeclarationStatement();
 };
 
-class ErrorStatement : public Statement
+class ErrorStatement final : public Statement
 {
 public:
-    Statement* syntaxCopy();
+    ErrorStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class PeelStatement : public Statement
+class PeelStatement final : public Statement
 {
 public:
     Statement* s;
@@ -5917,54 +5993,53 @@ class ExpStatement : public Statement
 public:
     Expression* exp;
     static ExpStatement* create(Loc loc, Expression* exp);
-    Statement* syntaxCopy();
+    ExpStatement* syntaxCopy();
     Statement* scopeCode(Scope* sc, Statement** sentry, Statement** sexception, Statement** sfinally);
-    Array<Statement*>* flatten(Scope* sc);
+    Array<Statement* >* flatten(Scope* sc);
     void accept(Visitor* v);
 };
 
-class DtorExpStatement : public ExpStatement
+class DtorExpStatement final : public ExpStatement
 {
 public:
     VarDeclaration* var;
-    Statement* syntaxCopy();
+    DtorExpStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class CompileStatement : public Statement
+class CompileStatement final : public Statement
 {
 public:
-    Array<Expression*>* exps;
-    Statement* syntaxCopy();
-    Array<Statement*>* compileIt(Scope* sc);
-    Array<Statement*>* flatten(Scope* sc);
+    Array<Expression* >* exps;
+    CompileStatement* syntaxCopy();
+    Array<Statement* >* flatten(Scope* sc);
     void accept(Visitor* v);
 };
 
 class CompoundStatement : public Statement
 {
 public:
-    Array<Statement*>* statements;
+    Array<Statement* >* statements;
     static CompoundStatement* create(Loc loc, Statement* s1, Statement* s2);
-    Statement* syntaxCopy();
-    Array<Statement*>* flatten(Scope* sc);
+    CompoundStatement* syntaxCopy();
+    Array<Statement* >* flatten(Scope* sc);
     ReturnStatement* endsWithReturnStatement();
     Statement* last();
     void accept(Visitor* v);
 };
 
-class CompoundDeclarationStatement : public CompoundStatement
+class CompoundDeclarationStatement final : public CompoundStatement
 {
 public:
-    Statement* syntaxCopy();
+    CompoundDeclarationStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class UnrolledLoopStatement : public Statement
+class UnrolledLoopStatement final : public Statement
 {
 public:
-    Array<Statement*>* statements;
-    Statement* syntaxCopy();
+    Array<Statement* >* statements;
+    UnrolledLoopStatement* syntaxCopy();
     bool hasBreak() const;
     bool hasContinue() const;
     void accept(Visitor* v);
@@ -5975,48 +6050,48 @@ class ScopeStatement : public Statement
 public:
     Statement* statement;
     Loc endloc;
-    Statement* syntaxCopy();
+    ScopeStatement* syntaxCopy();
     ReturnStatement* endsWithReturnStatement();
     bool hasBreak() const;
     bool hasContinue() const;
     void accept(Visitor* v);
 };
 
-class ForwardingStatement : public Statement
+class ForwardingStatement final : public Statement
 {
 public:
     ForwardingScopeDsymbol* sym;
     Statement* statement;
-    Statement* syntaxCopy();
-    Array<Statement*>* flatten(Scope* sc);
+    ForwardingStatement* syntaxCopy();
+    Array<Statement* >* flatten(Scope* sc);
     void accept(Visitor* v);
 };
 
-class WhileStatement : public Statement
+class WhileStatement final : public Statement
 {
 public:
     Expression* condition;
     Statement* _body;
     Loc endloc;
-    Statement* syntaxCopy();
+    WhileStatement* syntaxCopy();
     bool hasBreak() const;
     bool hasContinue() const;
     void accept(Visitor* v);
 };
 
-class DoStatement : public Statement
+class DoStatement final : public Statement
 {
 public:
     Statement* _body;
     Expression* condition;
     Loc endloc;
-    Statement* syntaxCopy();
+    DoStatement* syntaxCopy();
     bool hasBreak() const;
     bool hasContinue() const;
     void accept(Visitor* v);
 };
 
-class ForStatement : public Statement
+class ForStatement final : public Statement
 {
 public:
     Statement* _init;
@@ -6025,7 +6100,7 @@ public:
     Statement* _body;
     Loc endloc;
     Statement* relatedLabeled;
-    Statement* syntaxCopy();
+    ForStatement* syntaxCopy();
     Statement* scopeCode(Scope* sc, Statement** sentry, Statement** sexception, Statement** sfinally);
     Statement* getRelatedLabeled();
     bool hasBreak() const;
@@ -6033,26 +6108,26 @@ public:
     void accept(Visitor* v);
 };
 
-class ForeachStatement : public Statement
+class ForeachStatement final : public Statement
 {
 public:
     TOK op;
-    Array<Parameter*>* parameters;
+    Array<Parameter* >* parameters;
     Expression* aggr;
     Statement* _body;
     Loc endloc;
     VarDeclaration* key;
     VarDeclaration* value;
     FuncDeclaration* func;
-    Array<Statement*>* cases;
-    Array<ScopeStatement*>* gotos;
-    Statement* syntaxCopy();
+    Array<Statement* >* cases;
+    Array<ScopeStatement* >* gotos;
+    ForeachStatement* syntaxCopy();
     bool hasBreak() const;
     bool hasContinue() const;
     void accept(Visitor* v);
 };
 
-class ForeachRangeStatement : public Statement
+class ForeachRangeStatement final : public Statement
 {
 public:
     TOK op;
@@ -6062,13 +6137,13 @@ public:
     Statement* _body;
     Loc endloc;
     VarDeclaration* key;
-    Statement* syntaxCopy();
+    ForeachRangeStatement* syntaxCopy();
     bool hasBreak() const;
     bool hasContinue() const;
     void accept(Visitor* v);
 };
 
-class IfStatement : public Statement
+class IfStatement final : public Statement
 {
 public:
     Parameter* prm;
@@ -6077,49 +6152,49 @@ public:
     Statement* elsebody;
     VarDeclaration* match;
     Loc endloc;
-    Statement* syntaxCopy();
+    IfStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class ConditionalStatement : public Statement
+class ConditionalStatement final : public Statement
 {
 public:
     Condition* condition;
     Statement* ifbody;
     Statement* elsebody;
-    Statement* syntaxCopy();
-    Array<Statement*>* flatten(Scope* sc);
+    ConditionalStatement* syntaxCopy();
+    Array<Statement* >* flatten(Scope* sc);
     void accept(Visitor* v);
 };
 
-class StaticForeachStatement : public Statement
+class StaticForeachStatement final : public Statement
 {
 public:
     StaticForeach* sfe;
-    Statement* syntaxCopy();
-    Array<Statement*>* flatten(Scope* sc);
+    StaticForeachStatement* syntaxCopy();
+    Array<Statement* >* flatten(Scope* sc);
     void accept(Visitor* v);
 };
 
-class PragmaStatement : public Statement
+class PragmaStatement final : public Statement
 {
 public:
-    Identifier* ident;
-    Array<Expression*>* args;
+    const Identifier* const ident;
+    Array<Expression* >* args;
     Statement* _body;
-    Statement* syntaxCopy();
+    PragmaStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class StaticAssertStatement : public Statement
+class StaticAssertStatement final : public Statement
 {
 public:
     StaticAssert* sa;
-    Statement* syntaxCopy();
+    StaticAssertStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class SwitchStatement : public Statement
+class SwitchStatement final : public Statement
 {
 public:
     Expression* condition;
@@ -6128,18 +6203,18 @@ public:
     DefaultStatement* sdefault;
     Statement* tryBody;
     TryFinallyStatement* tf;
-    Array<GotoCaseStatement*> gotoCases;
-    Array<CaseStatement*>* cases;
+    Array<GotoCaseStatement* > gotoCases;
+    Array<CaseStatement* >* cases;
     int32_t hasNoDefault;
     int32_t hasVars;
     VarDeclaration* lastVar;
-    Statement* syntaxCopy();
+    SwitchStatement* syntaxCopy();
     bool hasBreak() const;
     void accept(Visitor* v);
     ~SwitchStatement();
 };
 
-class CaseStatement : public Statement
+class CaseStatement final : public Statement
 {
 public:
     Expression* exp;
@@ -6147,116 +6222,116 @@ public:
     int32_t index;
     VarDeclaration* lastVar;
     void* extra;
-    Statement* syntaxCopy();
+    CaseStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class CaseRangeStatement : public Statement
+class CaseRangeStatement final : public Statement
 {
 public:
     Expression* first;
     Expression* last;
     Statement* statement;
-    Statement* syntaxCopy();
+    CaseRangeStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class DefaultStatement : public Statement
+class DefaultStatement final : public Statement
 {
 public:
     Statement* statement;
     VarDeclaration* lastVar;
-    Statement* syntaxCopy();
+    DefaultStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class GotoDefaultStatement : public Statement
+class GotoDefaultStatement final : public Statement
 {
 public:
     SwitchStatement* sw;
-    Statement* syntaxCopy();
+    GotoDefaultStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class GotoCaseStatement : public Statement
+class GotoCaseStatement final : public Statement
 {
 public:
     Expression* exp;
     CaseStatement* cs;
-    Statement* syntaxCopy();
+    GotoCaseStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class SwitchErrorStatement : public Statement
+class SwitchErrorStatement final : public Statement
 {
 public:
     Expression* exp;
     void accept(Visitor* v);
 };
 
-class ReturnStatement : public Statement
+class ReturnStatement final : public Statement
 {
 public:
     Expression* exp;
     size_t caseDim;
-    Statement* syntaxCopy();
+    ReturnStatement* syntaxCopy();
     ReturnStatement* endsWithReturnStatement();
     void accept(Visitor* v);
 };
 
-class BreakStatement : public Statement
+class BreakStatement final : public Statement
 {
 public:
     Identifier* ident;
-    Statement* syntaxCopy();
+    BreakStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class ContinueStatement : public Statement
+class ContinueStatement final : public Statement
 {
 public:
     Identifier* ident;
-    Statement* syntaxCopy();
+    ContinueStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class SynchronizedStatement : public Statement
+class SynchronizedStatement final : public Statement
 {
 public:
     Expression* exp;
     Statement* _body;
-    Statement* syntaxCopy();
+    SynchronizedStatement* syntaxCopy();
     bool hasBreak() const;
     bool hasContinue() const;
     void accept(Visitor* v);
 };
 
-class WithStatement : public Statement
+class WithStatement final : public Statement
 {
 public:
     Expression* exp;
     Statement* _body;
     VarDeclaration* wthis;
     Loc endloc;
-    Statement* syntaxCopy();
+    WithStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class TryCatchStatement : public Statement
+class TryCatchStatement final : public Statement
 {
 public:
     Statement* _body;
-    Array<Catch*>* catches;
+    Array<Catch* >* catches;
     Statement* tryBody;
-    Statement* syntaxCopy();
+    TryCatchStatement* syntaxCopy();
     bool hasBreak() const;
     void accept(Visitor* v);
 };
 
-class Catch : public RootObject
+class Catch final : public RootObject
 {
 public:
-    Loc loc;
+    const Loc loc;
     Type* type;
     Identifier* ident;
     Statement* handler;
@@ -6266,7 +6341,7 @@ public:
     Catch* syntaxCopy();
 };
 
-class TryFinallyStatement : public Statement
+class TryFinallyStatement final : public Statement
 {
 public:
     Statement* _body;
@@ -6274,41 +6349,41 @@ public:
     Statement* tryBody;
     bool bodyFallsThru;
     static TryFinallyStatement* create(Loc loc, Statement* _body, Statement* finalbody);
-    Statement* syntaxCopy();
+    TryFinallyStatement* syntaxCopy();
     bool hasBreak() const;
     bool hasContinue() const;
     void accept(Visitor* v);
 };
 
-class ScopeGuardStatement : public Statement
+class ScopeGuardStatement final : public Statement
 {
 public:
     TOK tok;
     Statement* statement;
-    Statement* syntaxCopy();
+    ScopeGuardStatement* syntaxCopy();
     Statement* scopeCode(Scope* sc, Statement** sentry, Statement** sexception, Statement** sfinally);
     void accept(Visitor* v);
 };
 
-class ThrowStatement : public Statement
+class ThrowStatement final : public Statement
 {
 public:
     Expression* exp;
     bool internalThrow;
-    Statement* syntaxCopy();
+    ThrowStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class DebugStatement : public Statement
+class DebugStatement final : public Statement
 {
 public:
     Statement* statement;
-    Statement* syntaxCopy();
-    Array<Statement*>* flatten(Scope* sc);
+    DebugStatement* syntaxCopy();
+    Array<Statement* >* flatten(Scope* sc);
     void accept(Visitor* v);
 };
 
-class GotoStatement : public Statement
+class GotoStatement final : public Statement
 {
 public:
     Identifier* ident;
@@ -6317,11 +6392,11 @@ public:
     TryFinallyStatement* tf;
     ScopeGuardStatement* os;
     VarDeclaration* lastVar;
-    Statement* syntaxCopy();
+    GotoStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class LabelStatement : public Statement
+class LabelStatement final : public Statement
 {
 public:
     Identifier* ident;
@@ -6333,13 +6408,13 @@ public:
     Statement* gotoTarget;
     void* extra;
     bool breaks;
-    Statement* syntaxCopy();
-    Array<Statement*>* flatten(Scope* sc);
+    LabelStatement* syntaxCopy();
+    Array<Statement* >* flatten(Scope* sc);
     Statement* scopeCode(Scope* sc, Statement** sentry, Statement** sexit, Statement** sfinally);
     void accept(Visitor* v);
 };
 
-class LabelDsymbol : public Dsymbol
+class LabelDsymbol final : public Dsymbol
 {
 public:
     LabelStatement* statement;
@@ -6354,11 +6429,11 @@ class AsmStatement : public Statement
 {
 public:
     Token* tokens;
-    Statement* syntaxCopy();
+    AsmStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class InlineAsmStatement : public AsmStatement
+class InlineAsmStatement final : public AsmStatement
 {
 public:
     code* asmcode;
@@ -6366,51 +6441,51 @@ public:
     uint32_t regs;
     bool refparam;
     bool naked;
-    Statement* syntaxCopy();
+    InlineAsmStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class GccAsmStatement : public AsmStatement
+class GccAsmStatement final : public AsmStatement
 {
 public:
     StorageClass stc;
     Expression* insn;
-    Array<Expression*>* args;
+    Array<Expression* >* args;
     uint32_t outputargs;
-    Array<Identifier*>* names;
-    Array<Expression*>* constraints;
-    Array<Expression*>* clobbers;
-    Array<Identifier*>* labels;
-    Array<GotoStatement*>* gotos;
-    Statement* syntaxCopy();
+    Array<Identifier* >* names;
+    Array<Expression* >* constraints;
+    Array<Expression* >* clobbers;
+    Array<Identifier* >* labels;
+    Array<GotoStatement* >* gotos;
+    GccAsmStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
-class CompoundAsmStatement : public CompoundStatement
+class CompoundAsmStatement final : public CompoundStatement
 {
 public:
     StorageClass stc;
     CompoundAsmStatement* syntaxCopy();
-    Array<Statement*>* flatten(Scope* sc);
+    Array<Statement* >* flatten(Scope* sc);
     void accept(Visitor* v);
 };
 
-class ImportStatement : public Statement
+class ImportStatement final : public Statement
 {
 public:
-    Array<Dsymbol*>* imports;
-    Statement* syntaxCopy();
+    Array<Dsymbol* >* imports;
+    ImportStatement* syntaxCopy();
     void accept(Visitor* v);
 };
 
 extern Statement* statementSemantic(Statement* s, Scope* sc);
 
-class StaticAssert : public Dsymbol
+class StaticAssert final : public Dsymbol
 {
 public:
     Expression* exp;
     Expression* msg;
-    Dsymbol* syntaxCopy(Dsymbol* s);
+    StaticAssert* syntaxCopy(Dsymbol* s);
     void addMember(Scope* sc, ScopeDsymbol* sds);
     bool oneMember(Dsymbol** ps, Identifier* ident);
     const char* kind() const;
@@ -6428,7 +6503,7 @@ struct Target
     TargetC c;
     TargetCPP cpp;
     TargetObjC objc;
-    DArray< const char > architectureName;
+    _d_dynamicArray< const char > architectureName;
     template <typename T>
     struct FPTypeProperties
     {
@@ -6454,33 +6529,42 @@ struct Target
         d_int64 max_10_exp;
         // Ignoring var min_10_exp alignment 0
         d_int64 min_10_exp;
+        FPTypeProperties()
+        {
+        }
     };
 
-    FPTypeProperties<float> FloatProperties;
-    FPTypeProperties<double> DoubleProperties;
-    FPTypeProperties<_d_real> RealProperties;
+    FPTypeProperties<float > FloatProperties;
+    FPTypeProperties<double > DoubleProperties;
+    FPTypeProperties<_d_real > RealProperties;
+private:
     Type* tvalist;
+    const Param* params;
+public:
     void _init(const Param& params);
     void deinitialize();
     uint32_t alignsize(Type* type);
     uint32_t fieldalign(Type* type);
-    uint32_t critsecsize();
     Type* va_listType(const Loc& loc, Scope* sc);
     int32_t isVectorTypeSupported(int32_t sz, Type* type);
-    bool isVectorOpSupported(Type* type, uint8_t op, Type* t2);
+    bool isVectorOpSupported(Type* type, uint8_t op, Type* t2 = nullptr);
     LINK systemLinkage();
     TypeTuple* toArgTypes(Type* t);
     bool isReturnOnStack(TypeFunction* tf, bool needsThis);
     uint64_t parameterSize(const Loc& loc, Type* t);
-    void applyInRefParams(TypeFunction* tf);
-    BEGIN_ENUM(TargetInfoKeys, TARGETINFOKEYS, targetinfokeys)
-        ENUM_KEY(int32_t, cppRuntimeLibrary, 0, TargetInfoKeys, TARGETINFOKEYS, targetinfokeys, TIK)
-        ENUM_KEY(int32_t, cppStd, 1, TargetInfoKeys, TARGETINFOKEYS, targetinfokeys, TIK)
-        ENUM_KEY(int32_t, floatAbi, 2, TargetInfoKeys, TARGETINFOKEYS, targetinfokeys, TIK)
-        ENUM_KEY(int32_t, objectFormat, 3, TargetInfoKeys, TARGETINFOKEYS, targetinfokeys, TIK)
-    END_ENUM(TargetInfoKeys, TARGETINFOKEYS, targetinfokeys)
+    bool preferPassByRef(Type* t);
+private:
+    enum class TargetInfoKeys
+    {
+        cppRuntimeLibrary = 0,
+        cppStd = 1,
+        floatAbi = 2,
+        objectFormat = 3,
+    };
 
+public:
     Expression* getTargetInfo(const char* name, const Loc& loc);
+    bool isCalleeDestroyingArgs(TypeFunction* tf);
     Target() :
         ptrsize(),
         realsize(),
@@ -6497,13 +6581,33 @@ struct Target
         RealProperties()
     {
     }
+    Target(uint32_t ptrsize, uint32_t realsize = 0u, uint32_t realpad = 0u, uint32_t realalignsize = 0u, uint32_t classinfosize = 0u, uint64_t maxStaticDataSize = 0LLU, TargetC c = TargetC(0u, 0u), TargetCPP cpp = TargetCPP(false, false, false), TargetObjC objc = TargetObjC(false), _d_dynamicArray< const char > architectureName = {}, FPTypeProperties<float > FloatProperties = FPTypeProperties<float >(NAN, NAN, NAN, NAN, NAN, 6LL, 24LL, 128LL, -125LL, 38LL, -37LL), FPTypeProperties<double > DoubleProperties = FPTypeProperties<double >(NAN, NAN, NAN, NAN, NAN, 15LL, 53LL, 1024LL, -1021LL, 308LL, -307LL), FPTypeProperties<_d_real > RealProperties = FPTypeProperties<_d_real >(NAN, NAN, NAN, NAN, NAN, 18LL, 64LL, 16384LL, -16381LL, 4932LL, -4931LL)) :
+        ptrsize(ptrsize),
+        realsize(realsize),
+        realpad(realpad),
+        realalignsize(realalignsize),
+        classinfosize(classinfosize),
+        maxStaticDataSize(maxStaticDataSize),
+        c(c),
+        cpp(cpp),
+        objc(objc),
+        architectureName(architectureName),
+        FloatProperties(FloatProperties),
+        DoubleProperties(DoubleProperties),
+        RealProperties(RealProperties)
+        {}
 };
 
 extern Target target;
 
-extern bool tpsemantic(TemplateParameter* tp, Scope* sc, Array<TemplateParameter*>* parameters);
+extern bool tpsemantic(TemplateParameter* tp, Scope* sc, Array<TemplateParameter* >* parameters);
 
-ENUM_CONSTANT_NUMERIC(bool, LOGSEMANTIC, false)
+template <typename AST>
+class ParseTimeTransitiveVisitor : public PermissiveVisitor<AST >
+{
+public:
+    typedef PermissiveVisitor<AST > visit;
+};
 
 extern Type* typeSemantic(Type* type, const Loc& loc, Scope* sc);
 
@@ -6536,39 +6640,41 @@ typedef void* Key;
 
 typedef void* Value;
 
-typedef KeyValueTemplate<void*, void*> KeyValue;
+typedef KeyValueTemplate<void*, void* > KeyValue;
 
 typedef _d_real longdouble;
 
 extern void browse(const char* url);
 
-BEGIN_ENUM(Color, COLOR, color)
-    ENUM_KEY(int32_t, black, 0, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, red, 1, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, green, 2, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, blue, 4, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, yellow, 3, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, magenta, 5, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, cyan, 6, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, lightGray, 7, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, bright, 8, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, darkGray, 8, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, brightRed, 9, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, brightGreen, 10, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, brightBlue, 12, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, brightYellow, 11, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, brightMagenta, 13, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, brightCyan, 14, Color, COLOR, color, C)
-    ENUM_KEY(int32_t, white, 15, Color, COLOR, color, C)
-END_ENUM(Color, COLOR, color)
+enum class Color
+{
+    black = 0,
+    red = 1,
+    green = 2,
+    blue = 4,
+    yellow = 3,
+    magenta = 5,
+    cyan = 6,
+    lightGray = 7,
+    bright = 8,
+    darkGray = 8,
+    brightRed = 9,
+    brightGreen = 10,
+    brightBlue = 12,
+    brightYellow = 11,
+    brightMagenta = 13,
+    brightCyan = 14,
+    white = 15,
+};
 
-BEGIN_ENUM_TYPE(Color, Classification, CLASSIFICATION, classification)
-    ENUM_KEY_TYPE(Color, error, (Classification)(Color)9, Classification, CLASSIFICATION, classification, C)
-    ENUM_KEY_TYPE(Color, gagged, (Classification)(Color)12, Classification, CLASSIFICATION, classification, C)
-    ENUM_KEY_TYPE(Color, warning, (Classification)(Color)11, Classification, CLASSIFICATION, classification, C)
-    ENUM_KEY_TYPE(Color, deprecation, (Classification)(Color)14, Classification, CLASSIFICATION, classification, C)
-    ENUM_KEY_TYPE(Color, tip, (Classification)(Color)10, Classification, CLASSIFICATION, classification, C)
-END_ENUM_TYPE(Color, Classification, CLASSIFICATION, classification)
+namespace Classification
+{
+    static Color const error = (Color)9;
+    static Color const gagged = (Color)12;
+    static Color const warning = (Color)11;
+    static Color const deprecation = (Color)14;
+    static Color const tip = (Color)10;
+};
 
 extern void error(const Loc& loc, const char* format, ...);
 
@@ -6590,7 +6696,7 @@ extern void message(const char* format, ...);
 
 extern void tip(const char* format, ...);
 
-extern void verror(const Loc& loc, const char* format, va_list ap, const char* p1, const char* p2, const char* header = "Error: ");
+extern void verror(const Loc& loc, const char* format, va_list ap, const char* p1 = nullptr, const char* p2 = nullptr, const char* header = "Error: ");
 
 extern void verrorSupplemental(const Loc& loc, const char* format, va_list ap);
 
@@ -6598,7 +6704,7 @@ extern void vwarning(const Loc& loc, const char* format, va_list ap);
 
 extern void vwarningSupplemental(const Loc& loc, const char* format, va_list ap);
 
-extern void vdeprecation(const Loc& loc, const char* format, va_list ap, const char* p1, const char* p2);
+extern void vdeprecation(const Loc& loc, const char* format, va_list ap, const char* p1 = nullptr, const char* p2 = nullptr);
 
 extern void vmessage(const Loc& loc, const char* format, va_list ap);
 
@@ -6610,85 +6716,116 @@ extern void fatal();
 
 extern void halt();
 
-BEGIN_ENUM_NUMERIC(uint8_t, HIGHLIGHT, HIGHLIGHT, highlight)
-    ENUM_KEY_NUMERIC(uint8_t, Default, 0u, HIGHLIGHT, HIGHLIGHT, highlight, HIGHLIGHT)
-    ENUM_KEY_NUMERIC(uint8_t, Escape, 255u, HIGHLIGHT, HIGHLIGHT, highlight, HIGHLIGHT)
-    ENUM_KEY_NUMERIC(uint8_t, Identifier, 15u, HIGHLIGHT, HIGHLIGHT, highlight, HIGHLIGHT)
-    ENUM_KEY_NUMERIC(uint8_t, Keyword, 15u, HIGHLIGHT, HIGHLIGHT, highlight, HIGHLIGHT)
-    ENUM_KEY_NUMERIC(uint8_t, Literal, 15u, HIGHLIGHT, HIGHLIGHT, highlight, HIGHLIGHT)
-    ENUM_KEY_NUMERIC(uint8_t, Comment, 8u, HIGHLIGHT, HIGHLIGHT, highlight, HIGHLIGHT)
-    ENUM_KEY_NUMERIC(uint8_t, Other, 6u, HIGHLIGHT, HIGHLIGHT, highlight, HIGHLIGHT)
-END_ENUM_NUMERIC(uint8_t, HIGHLIGHT, HIGHLIGHT, highlight)
+enum class HIGHLIGHT : uint8_t
+{
+    Default = 0u,
+    Escape = 255u,
+    Identifier = 15u,
+    Keyword = 15u,
+    Literal = 15u,
+    Comment = 8u,
+    Other = 6u,
+};
 
-BEGIN_ENUM_NUMERIC(bool, TARGET, TARGET, target)
-    ENUM_KEY_NUMERIC(bool, Linux, true, TARGET, TARGET, target, TARGET)
-    ENUM_KEY_NUMERIC(bool, OSX, false, TARGET, TARGET, target, TARGET)
-    ENUM_KEY_NUMERIC(bool, FreeBSD, false, TARGET, TARGET, target, TARGET)
-    ENUM_KEY_NUMERIC(bool, OpenBSD, false, TARGET, TARGET, target, TARGET)
-    ENUM_KEY_NUMERIC(bool, Solaris, false, TARGET, TARGET, target, TARGET)
-    ENUM_KEY_NUMERIC(bool, Windows, false, TARGET, TARGET, target, TARGET)
-    ENUM_KEY_NUMERIC(bool, DragonFlyBSD, false, TARGET, TARGET, target, TARGET)
-END_ENUM_NUMERIC(bool, TARGET, TARGET, target)
+enum class TargetOS : uint8_t
+{
+    linux = 1u,
+    Windows = 2u,
+    OSX = 4u,
+    OpenBSD = 8u,
+    FreeBSD = 16u,
+    Solaris = 32u,
+    DragonFlyBSD = 64u,
+    all = 119u,
+    Posix = 117u,
+};
 
-BEGIN_ENUM_NUMERIC(uint8_t, DiagnosticReporting, DIAGNOSTICREPORTING, diagnosticreporting)
-    ENUM_KEY_NUMERIC(uint8_t, error, 0u, DiagnosticReporting, DIAGNOSTICREPORTING, diagnosticreporting, DR)
-    ENUM_KEY_NUMERIC(uint8_t, inform, 1u, DiagnosticReporting, DIAGNOSTICREPORTING, diagnosticreporting, DR)
-    ENUM_KEY_NUMERIC(uint8_t, off, 2u, DiagnosticReporting, DIAGNOSTICREPORTING, diagnosticreporting, DR)
-END_ENUM_NUMERIC(uint8_t, DiagnosticReporting, DIAGNOSTICREPORTING, diagnosticreporting)
+enum class TARGET : bool
+{
+    Linux = true,
+    OSX = false,
+    FreeBSD = false,
+    OpenBSD = false,
+    Solaris = false,
+    Windows = false,
+    DragonFlyBSD = false,
+};
 
-BEGIN_ENUM_NUMERIC(uint8_t, MessageStyle, MESSAGESTYLE, messagestyle)
-    ENUM_KEY_NUMERIC(uint8_t, digitalmars, 0u, MessageStyle, MESSAGESTYLE, messagestyle, MS)
-    ENUM_KEY_NUMERIC(uint8_t, gnu, 1u, MessageStyle, MESSAGESTYLE, messagestyle, MS)
-END_ENUM_NUMERIC(uint8_t, MessageStyle, MESSAGESTYLE, messagestyle)
+enum class DiagnosticReporting : uint8_t
+{
+    error = 0u,
+    inform = 1u,
+    off = 2u,
+};
 
-BEGIN_ENUM_NUMERIC(uint8_t, CHECKENABLE, CHECKENABLE, checkenable)
-    ENUM_KEY_NUMERIC(uint8_t, _default, 0u, CHECKENABLE, CHECKENABLE, checkenable, CHECKENABLE)
-    ENUM_KEY_NUMERIC(uint8_t, off, 1u, CHECKENABLE, CHECKENABLE, checkenable, CHECKENABLE)
-    ENUM_KEY_NUMERIC(uint8_t, on, 2u, CHECKENABLE, CHECKENABLE, checkenable, CHECKENABLE)
-    ENUM_KEY_NUMERIC(uint8_t, safeonly, 3u, CHECKENABLE, CHECKENABLE, checkenable, CHECKENABLE)
-END_ENUM_NUMERIC(uint8_t, CHECKENABLE, CHECKENABLE, checkenable)
+enum class MessageStyle : uint8_t
+{
+    digitalmars = 0u,
+    gnu = 1u,
+};
 
-BEGIN_ENUM_NUMERIC(uint8_t, CHECKACTION, CHECKACTION, checkaction)
-    ENUM_KEY_NUMERIC(uint8_t, D, 0u, CHECKACTION, CHECKACTION, checkaction, CHECKACTION)
-    ENUM_KEY_NUMERIC(uint8_t, C, 1u, CHECKACTION, CHECKACTION, checkaction, CHECKACTION)
-    ENUM_KEY_NUMERIC(uint8_t, halt, 2u, CHECKACTION, CHECKACTION, checkaction, CHECKACTION)
-    ENUM_KEY_NUMERIC(uint8_t, context, 3u, CHECKACTION, CHECKACTION, checkaction, CHECKACTION)
-END_ENUM_NUMERIC(uint8_t, CHECKACTION, CHECKACTION, checkaction)
+enum class CHECKENABLE : uint8_t
+{
+    _default = 0u,
+    off = 1u,
+    on = 2u,
+    safeonly = 3u,
+};
 
-BEGIN_ENUM(CPU, CPU, cpu)
-    ENUM_KEY(int32_t, x87, 0, CPU, CPU, cpu, CPU)
-    ENUM_KEY(int32_t, mmx, 1, CPU, CPU, cpu, CPU)
-    ENUM_KEY(int32_t, sse, 2, CPU, CPU, cpu, CPU)
-    ENUM_KEY(int32_t, sse2, 3, CPU, CPU, cpu, CPU)
-    ENUM_KEY(int32_t, sse3, 4, CPU, CPU, cpu, CPU)
-    ENUM_KEY(int32_t, ssse3, 5, CPU, CPU, cpu, CPU)
-    ENUM_KEY(int32_t, sse4_1, 6, CPU, CPU, cpu, CPU)
-    ENUM_KEY(int32_t, sse4_2, 7, CPU, CPU, cpu, CPU)
-    ENUM_KEY(int32_t, avx, 8, CPU, CPU, cpu, CPU)
-    ENUM_KEY(int32_t, avx2, 9, CPU, CPU, cpu, CPU)
-    ENUM_KEY(int32_t, avx512, 10, CPU, CPU, cpu, CPU)
-    ENUM_KEY(int32_t, baseline, 11, CPU, CPU, cpu, CPU)
-    ENUM_KEY(int32_t, native, 12, CPU, CPU, cpu, CPU)
-END_ENUM(CPU, CPU, cpu)
+enum class CHECKACTION : uint8_t
+{
+    D = 0u,
+    C = 1u,
+    halt = 2u,
+    context = 3u,
+};
 
-BEGIN_ENUM_NUMERIC(uint8_t, PIC, PIC, pic)
-    ENUM_KEY_NUMERIC(uint8_t, fixed, 0u, PIC, PIC, pic, PIC)
-    ENUM_KEY_NUMERIC(uint8_t, pic, 1u, PIC, PIC, pic, PIC)
-    ENUM_KEY_NUMERIC(uint8_t, pie, 2u, PIC, PIC, pic, PIC)
-END_ENUM_NUMERIC(uint8_t, PIC, PIC, pic)
+enum class CPU
+{
+    x87 = 0,
+    mmx = 1,
+    sse = 2,
+    sse2 = 3,
+    sse3 = 4,
+    ssse3 = 5,
+    sse4_1 = 6,
+    sse4_2 = 7,
+    avx = 8,
+    avx2 = 9,
+    avx512 = 10,
+    baseline = 11,
+    native = 12,
+};
 
-BEGIN_ENUM_NUMERIC(uint32_t, CppStdRevision, CPPSTDREVISION, cppstdrevision)
-    ENUM_KEY_NUMERIC(uint32_t, cpp98, 199711u, CppStdRevision, CPPSTDREVISION, cppstdrevision, CSR)
-    ENUM_KEY_NUMERIC(uint32_t, cpp11, 201103u, CppStdRevision, CPPSTDREVISION, cppstdrevision, CSR)
-    ENUM_KEY_NUMERIC(uint32_t, cpp14, 201402u, CppStdRevision, CPPSTDREVISION, cppstdrevision, CSR)
-    ENUM_KEY_NUMERIC(uint32_t, cpp17, 201703u, CppStdRevision, CPPSTDREVISION, cppstdrevision, CSR)
-END_ENUM_NUMERIC(uint32_t, CppStdRevision, CPPSTDREVISION, cppstdrevision)
+enum class PIC : uint8_t
+{
+    fixed = 0u,
+    pic = 1u,
+    pie = 2u,
+};
 
-BEGIN_ENUM_NUMERIC(uint32_t, CxxHeaderMode, CXXHEADERMODE, cxxheadermode)
-    ENUM_KEY_NUMERIC(uint32_t, none, 0u, CxxHeaderMode, CXXHEADERMODE, cxxheadermode, CHM)
-    ENUM_KEY_NUMERIC(uint32_t, silent, 1u, CxxHeaderMode, CXXHEADERMODE, cxxheadermode, CHM)
-    ENUM_KEY_NUMERIC(uint32_t, verbose, 2u, CxxHeaderMode, CXXHEADERMODE, cxxheadermode, CHM)
-END_ENUM_NUMERIC(uint32_t, CxxHeaderMode, CXXHEADERMODE, cxxheadermode)
+enum class CppStdRevision : uint32_t
+{
+    cpp98 = 199711u,
+    cpp11 = 201103u,
+    cpp14 = 201402u,
+    cpp17 = 201703u,
+    cpp20 = 202002u,
+};
+
+enum class CxxHeaderMode : uint32_t
+{
+    none = 0u,
+    silent = 1u,
+    verbose = 2u,
+};
+
+enum class FeatureState : int8_t
+{
+    default_ = -1,
+    disabled = 0,
+    enabled = 1,
+};
 
 struct Param
 {
@@ -6711,26 +6848,17 @@ struct Param
     bool vcomplex;
     uint8_t symdebug;
     bool symdebugref;
-    bool alwaysframe;
     bool optimize;
-    bool map;
     bool is64bit;
     bool isLP64;
-    bool isLinux;
-    bool isOSX;
-    bool isWindows;
-    bool isFreeBSD;
-    bool isOpenBSD;
-    bool isDragonFlyBSD;
-    bool isSolaris;
+    TargetOS targetOS;
     bool hasObjectiveC;
     bool mscoff;
     DiagnosticReporting useDeprecated;
     bool stackstomp;
     bool useUnitTests;
     bool useInline;
-    bool useDIP25;
-    bool noDIP25;
+    FeatureState useDIP25;
     bool useDIP1021;
     bool release;
     bool preservePaths;
@@ -6747,14 +6875,16 @@ struct Param
     bool useExceptions;
     bool noSharedAccess;
     bool previewIn;
+    bool shortenedMethods;
     bool betterC;
     bool addMain;
     bool allInst;
     bool fix16997;
     bool fixAliasThis;
+    bool inclusiveInContracts;
     bool vsafe;
     bool ehnogc;
-    bool dtorFields;
+    FeatureState dtorFields;
     bool fieldwise;
     bool rvalueRefParam;
     CppStdRevision cplusplus;
@@ -6783,57 +6913,54 @@ struct Param
     CHECKENABLE boundscheck;
     CHECKACTION checkAction;
     uint32_t errorLimit;
-    DArray< const char > argv0;
-    Array<const char*> modFileAliasStrings;
-    Array<const char*>* imppath;
-    Array<const char*>* fileImppath;
-    DArray< const char > objdir;
-    DArray< const char > objname;
-    DArray< const char > libname;
+    _d_dynamicArray< const char > argv0;
+    Array<const char* > modFileAliasStrings;
+    Array<const char* >* imppath;
+    Array<const char* >* fileImppath;
+    _d_dynamicArray< const char > objdir;
+    _d_dynamicArray< const char > objname;
+    _d_dynamicArray< const char > libname;
     bool doDocComments;
-    DArray< const char > docdir;
-    DArray< const char > docname;
-    Array<const char*> ddocfiles;
+    _d_dynamicArray< const char > docdir;
+    _d_dynamicArray< const char > docname;
+    Array<const char* > ddocfiles;
     bool doHdrGeneration;
-    DArray< const char > hdrdir;
-    DArray< const char > hdrname;
+    _d_dynamicArray< const char > hdrdir;
+    _d_dynamicArray< const char > hdrname;
     bool hdrStripPlainFunctions;
     CxxHeaderMode doCxxHdrGeneration;
-    DArray< const char > cxxhdrdir;
-    DArray< const char > cxxhdrname;
+    _d_dynamicArray< const char > cxxhdrdir;
+    _d_dynamicArray< const char > cxxhdrname;
     bool doJsonGeneration;
-    DArray< const char > jsonfilename;
+    _d_dynamicArray< const char > jsonfilename;
     JsonFieldFlags jsonFieldFlags;
     OutBuffer* mixinOut;
     const char* mixinFile;
     int32_t mixinLines;
     uint32_t debuglevel;
-    Array<const char*>* debugids;
+    Array<const char* >* debugids;
     uint32_t versionlevel;
-    Array<const char*>* versionids;
-    DArray< const char > defaultlibname;
-    DArray< const char > debuglibname;
-    DArray< const char > mscrtlib;
-    DArray< const char > moduleDepsFile;
+    Array<const char* >* versionids;
+    _d_dynamicArray< const char > defaultlibname;
+    _d_dynamicArray< const char > debuglibname;
+    _d_dynamicArray< const char > mscrtlib;
+    _d_dynamicArray< const char > moduleDepsFile;
     OutBuffer* moduleDeps;
+    bool emitMakeDeps;
+    _d_dynamicArray< const char > makeDepsFile;
+    Array<const char* > makeDeps;
     MessageStyle messageStyle;
-    bool debugb;
-    bool debugc;
-    bool debugf;
-    bool debugr;
-    bool debugx;
-    bool debugy;
     bool run;
-    Array<const char*> runargs;
-    Array<const char*> objfiles;
-    Array<const char*> linkswitches;
-    Array<bool> linkswitchIsForCC;
-    Array<const char*> libfiles;
-    Array<const char*> dllfiles;
-    DArray< const char > deffile;
-    DArray< const char > resfile;
-    DArray< const char > exefile;
-    DArray< const char > mapfile;
+    Array<const char* > runargs;
+    Array<const char* > objfiles;
+    Array<const char* > linkswitches;
+    Array<bool > linkswitchIsForCC;
+    Array<const char* > libfiles;
+    Array<const char* > dllfiles;
+    _d_dynamicArray< const char > deffile;
+    _d_dynamicArray< const char > resfile;
+    _d_dynamicArray< const char > exefile;
+    _d_dynamicArray< const char > mapfile;
     ~Param();
     Param() :
         obj(true),
@@ -6855,26 +6982,15 @@ struct Param
         vcomplex(),
         symdebug(),
         symdebugref(),
-        alwaysframe(),
         optimize(),
-        map(),
         is64bit(true),
         isLP64(),
-        isLinux(),
-        isOSX(),
-        isWindows(),
-        isFreeBSD(),
-        isOpenBSD(),
-        isDragonFlyBSD(),
-        isSolaris(),
         hasObjectiveC(),
         mscoff(false),
         useDeprecated((DiagnosticReporting)1u),
         stackstomp(),
         useUnitTests(),
         useInline(false),
-        useDIP25(),
-        noDIP25(),
         useDIP1021(),
         release(),
         preservePaths(),
@@ -6891,17 +7007,18 @@ struct Param
         useExceptions(true),
         noSharedAccess(),
         previewIn(),
+        shortenedMethods(),
         betterC(),
         addMain(),
         allInst(),
         fix16997(),
         fixAliasThis(),
+        inclusiveInContracts(),
         vsafe(),
         ehnogc(),
-        dtorFields(),
         fieldwise(),
         rvalueRefParam(),
-        cplusplus((CppStdRevision)199711u),
+        cplusplus((CppStdRevision)201103u),
         markdown(true),
         vmarkdown(),
         showGaggedErrors(),
@@ -6958,13 +7075,10 @@ struct Param
         mscrtlib(),
         moduleDepsFile(),
         moduleDeps(),
+        emitMakeDeps(),
+        makeDepsFile(),
+        makeDeps(),
         messageStyle((MessageStyle)0u),
-        debugb(),
-        debugc(),
-        debugf(),
-        debugr(),
-        debugx(),
-        debugy(),
         run(),
         runargs(),
         objfiles(),
@@ -6978,31 +7092,163 @@ struct Param
         mapfile()
     {
     }
+    Param(bool obj, bool link = true, bool dll = false, bool lib = false, bool multiobj = false, bool oneobj = false, bool trace = false, bool tracegc = false, bool verbose = false, bool vcg_ast = false, bool showColumns = false, bool vtls = false, bool vtemplates = false, bool vtemplatesListInstances = false, bool vgc = false, bool vfield = false, bool vcomplex = false, uint8_t symdebug = 0u, bool symdebugref = false, bool optimize = false, bool is64bit = true, bool isLP64 = false, TargetOS targetOS = (TargetOS)1u, bool hasObjectiveC = false, bool mscoff = false, DiagnosticReporting useDeprecated = (DiagnosticReporting)1u, bool stackstomp = false, bool useUnitTests = false, bool useInline = false, FeatureState useDIP25 = (FeatureState)-1, bool useDIP1021 = false, bool release = false, bool preservePaths = false, DiagnosticReporting warnings = (DiagnosticReporting)2u, PIC pic = (PIC)0u, bool color = false, bool cov = false, uint8_t covPercent = 0u, bool ctfe_cov = false, bool nofloat = false, bool ignoreUnsupportedPragmas = false, bool useModuleInfo = true, bool useTypeInfo = true, bool useExceptions = true, bool noSharedAccess = false, bool previewIn = false, bool shortenedMethods = false, bool betterC = false, bool addMain = false, bool allInst = false, bool fix16997 = false, bool fixAliasThis = false, bool inclusiveInContracts = false, bool vsafe = false, bool ehnogc = false, FeatureState dtorFields = (FeatureState)-1, bool fieldwise = false, bool rvalueRefParam = false, CppStdRevision cplusplus = (CppStdRevision)201103u, bool markdown = true, bool vmarkdown = false, bool showGaggedErrors = false, bool printErrorContext = false, bool manual = false, bool usage = false, bool mcpuUsage = false, bool transitionUsage = false, bool checkUsage = false, bool checkActionUsage = false, bool revertUsage = false, bool previewUsage = false, bool externStdUsage = false, bool hcUsage = false, bool logo = false, CPU cpu = (CPU)11, CHECKENABLE useInvariants = (CHECKENABLE)0u, CHECKENABLE useIn = (CHECKENABLE)0u, CHECKENABLE useOut = (CHECKENABLE)0u, CHECKENABLE useArrayBounds = (CHECKENABLE)0u, CHECKENABLE useAssert = (CHECKENABLE)0u, CHECKENABLE useSwitchError = (CHECKENABLE)0u, CHECKENABLE boundscheck = (CHECKENABLE)0u, CHECKACTION checkAction = (CHECKACTION)0u, uint32_t errorLimit = 20u, _d_dynamicArray< const char > argv0 = {}, Array<const char* > modFileAliasStrings = Array<const char* >(0LLU, {}, arrayliteral), Array<const char* >* imppath = nullptr, Array<const char* >* fileImppath = nullptr, _d_dynamicArray< const char > objdir = {}, _d_dynamicArray< const char > objname = {}, _d_dynamicArray< const char > libname = {}, bool doDocComments = false, _d_dynamicArray< const char > docdir = {}, _d_dynamicArray< const char > docname = {}, Array<const char* > ddocfiles = Array<const char* >(0LLU, {}, arrayliteral), bool doHdrGeneration = false, _d_dynamicArray< const char > hdrdir = {}, _d_dynamicArray< const char > hdrname = {}, bool hdrStripPlainFunctions = true, CxxHeaderMode doCxxHdrGeneration = (CxxHeaderMode)0u, _d_dynamicArray< const char > cxxhdrdir = {}, _d_dynamicArray< const char > cxxhdrname = {}, bool doJsonGeneration = false, _d_dynamicArray< const char > jsonfilename = {}, JsonFieldFlags jsonFieldFlags = (JsonFieldFlags)0u, OutBuffer* mixinOut = nullptr, const char* mixinFile = nullptr, int32_t mixinLines = 0, uint32_t debuglevel = 0u, Array<const char* >* debugids = nullptr, uint32_t versionlevel = 0u, Array<const char* >* versionids = nullptr, _d_dynamicArray< const char > defaultlibname = {}, _d_dynamicArray< const char > debuglibname = {}, _d_dynamicArray< const char > mscrtlib = {}, _d_dynamicArray< const char > moduleDepsFile = {}, OutBuffer* moduleDeps = nullptr, bool emitMakeDeps = false, _d_dynamicArray< const char > makeDepsFile = {}, Array<const char* > makeDeps = Array<const char* >(0LLU, {}, arrayliteral), MessageStyle messageStyle = (MessageStyle)0u, bool run = false, Array<const char* > runargs = Array<const char* >(0LLU, {}, arrayliteral), Array<const char* > objfiles = Array<const char* >(0LLU, {}, arrayliteral), Array<const char* > linkswitches = Array<const char* >(0LLU, {}, arrayliteral), Array<bool > linkswitchIsForCC = Array<bool >(0LLU, {}, arrayliteral), Array<const char* > libfiles = Array<const char* >(0LLU, {}, arrayliteral), Array<const char* > dllfiles = Array<const char* >(0LLU, {}, arrayliteral), _d_dynamicArray< const char > deffile = {}, _d_dynamicArray< const char > resfile = {}, _d_dynamicArray< const char > exefile = {}, _d_dynamicArray< const char > mapfile = {}) :
+        obj(obj),
+        link(link),
+        dll(dll),
+        lib(lib),
+        multiobj(multiobj),
+        oneobj(oneobj),
+        trace(trace),
+        tracegc(tracegc),
+        verbose(verbose),
+        vcg_ast(vcg_ast),
+        showColumns(showColumns),
+        vtls(vtls),
+        vtemplates(vtemplates),
+        vtemplatesListInstances(vtemplatesListInstances),
+        vgc(vgc),
+        vfield(vfield),
+        vcomplex(vcomplex),
+        symdebug(symdebug),
+        symdebugref(symdebugref),
+        optimize(optimize),
+        is64bit(is64bit),
+        isLP64(isLP64),
+        targetOS(targetOS),
+        hasObjectiveC(hasObjectiveC),
+        mscoff(mscoff),
+        useDeprecated(useDeprecated),
+        stackstomp(stackstomp),
+        useUnitTests(useUnitTests),
+        useInline(useInline),
+        useDIP25(useDIP25),
+        useDIP1021(useDIP1021),
+        release(release),
+        preservePaths(preservePaths),
+        warnings(warnings),
+        pic(pic),
+        color(color),
+        cov(cov),
+        covPercent(covPercent),
+        ctfe_cov(ctfe_cov),
+        nofloat(nofloat),
+        ignoreUnsupportedPragmas(ignoreUnsupportedPragmas),
+        useModuleInfo(useModuleInfo),
+        useTypeInfo(useTypeInfo),
+        useExceptions(useExceptions),
+        noSharedAccess(noSharedAccess),
+        previewIn(previewIn),
+        shortenedMethods(shortenedMethods),
+        betterC(betterC),
+        addMain(addMain),
+        allInst(allInst),
+        fix16997(fix16997),
+        fixAliasThis(fixAliasThis),
+        inclusiveInContracts(inclusiveInContracts),
+        vsafe(vsafe),
+        ehnogc(ehnogc),
+        dtorFields(dtorFields),
+        fieldwise(fieldwise),
+        rvalueRefParam(rvalueRefParam),
+        cplusplus(cplusplus),
+        markdown(markdown),
+        vmarkdown(vmarkdown),
+        showGaggedErrors(showGaggedErrors),
+        printErrorContext(printErrorContext),
+        manual(manual),
+        usage(usage),
+        mcpuUsage(mcpuUsage),
+        transitionUsage(transitionUsage),
+        checkUsage(checkUsage),
+        checkActionUsage(checkActionUsage),
+        revertUsage(revertUsage),
+        previewUsage(previewUsage),
+        externStdUsage(externStdUsage),
+        hcUsage(hcUsage),
+        logo(logo),
+        cpu(cpu),
+        useInvariants(useInvariants),
+        useIn(useIn),
+        useOut(useOut),
+        useArrayBounds(useArrayBounds),
+        useAssert(useAssert),
+        useSwitchError(useSwitchError),
+        boundscheck(boundscheck),
+        checkAction(checkAction),
+        errorLimit(errorLimit),
+        argv0(argv0),
+        modFileAliasStrings(modFileAliasStrings),
+        imppath(imppath),
+        fileImppath(fileImppath),
+        objdir(objdir),
+        objname(objname),
+        libname(libname),
+        doDocComments(doDocComments),
+        docdir(docdir),
+        docname(docname),
+        ddocfiles(ddocfiles),
+        doHdrGeneration(doHdrGeneration),
+        hdrdir(hdrdir),
+        hdrname(hdrname),
+        hdrStripPlainFunctions(hdrStripPlainFunctions),
+        doCxxHdrGeneration(doCxxHdrGeneration),
+        cxxhdrdir(cxxhdrdir),
+        cxxhdrname(cxxhdrname),
+        doJsonGeneration(doJsonGeneration),
+        jsonfilename(jsonfilename),
+        jsonFieldFlags(jsonFieldFlags),
+        mixinOut(mixinOut),
+        mixinFile(mixinFile),
+        mixinLines(mixinLines),
+        debuglevel(debuglevel),
+        debugids(debugids),
+        versionlevel(versionlevel),
+        versionids(versionids),
+        defaultlibname(defaultlibname),
+        debuglibname(debuglibname),
+        mscrtlib(mscrtlib),
+        moduleDepsFile(moduleDepsFile),
+        moduleDeps(moduleDeps),
+        emitMakeDeps(emitMakeDeps),
+        makeDepsFile(makeDepsFile),
+        makeDeps(makeDeps),
+        messageStyle(messageStyle),
+        run(run),
+        runargs(runargs),
+        objfiles(objfiles),
+        linkswitches(linkswitches),
+        linkswitchIsForCC(linkswitchIsForCC),
+        libfiles(libfiles),
+        dllfiles(dllfiles),
+        deffile(deffile),
+        resfile(resfile),
+        exefile(exefile),
+        mapfile(mapfile)
+        {}
 };
 
 typedef uint32_t structalign_t;
 
-ENUM_CONSTANT_NUMERIC(uint32_t, STRUCTALIGN_DEFAULT, 4294967295u)
-
 struct Global
 {
-    DArray< const char > inifilename;
-    DArray< char > mars_ext;
-    DArray< const char > obj_ext;
-    DArray< const char > lib_ext;
-    DArray< const char > dll_ext;
-    DArray< char > doc_ext;
-    DArray< char > ddoc_ext;
-    DArray< char > hdr_ext;
-    DArray< char > cxxhdr_ext;
-    DArray< char > json_ext;
-    DArray< char > map_ext;
+    _d_dynamicArray< const char > inifilename;
+    _d_dynamicArray< const char > mars_ext;
+    _d_dynamicArray< const char > obj_ext;
+    _d_dynamicArray< const char > lib_ext;
+    _d_dynamicArray< const char > dll_ext;
+    _d_dynamicArray< const char > doc_ext;
+    _d_dynamicArray< const char > ddoc_ext;
+    _d_dynamicArray< const char > hdr_ext;
+    _d_dynamicArray< const char > cxxhdr_ext;
+    _d_dynamicArray< const char > json_ext;
+    _d_dynamicArray< const char > map_ext;
     bool run_noext;
-    DArray< char > copyright;
-    DArray< char > written;
-    Array<const char*>* path;
-    Array<const char*>* filePath;
-    DArray< const char > vendor;
+    _d_dynamicArray< const char > copyright;
+    _d_dynamicArray< const char > written;
+    Array<const char* >* path;
+    Array<const char* >* filePath;
+    _d_dynamicArray< const char > vendor;
     Param params;
     uint32_t errors;
     uint32_t warnings;
@@ -7010,9 +7256,9 @@ struct Global
     uint32_t gaggedErrors;
     uint32_t gaggedWarnings;
     void* console;
-    Array<Identifier*>* versionids;
-    Array<Identifier*>* debugids;
-    ENUM_CONSTANT_NUMERIC(int32_t, recursionLimit, 500)
+    Array<Identifier* >* versionids;
+    Array<Identifier* >* debugids;
+    enum : int32_t { recursionLimit = 500 };
 
     uint32_t startGagging();
     bool endGagging(uint32_t oldGagged);
@@ -7023,19 +7269,19 @@ struct Global
     ~Global();
     Global() :
         inifilename(),
-        mars_ext("d"),
+        mars_ext(1, "d"),
         obj_ext(),
         lib_ext(),
         dll_ext(),
-        doc_ext("html"),
-        ddoc_ext("ddoc"),
-        hdr_ext("di"),
-        cxxhdr_ext("h"),
-        json_ext("json"),
-        map_ext("map"),
+        doc_ext(4, "html"),
+        ddoc_ext(4, "ddoc"),
+        hdr_ext(2, "di"),
+        cxxhdr_ext(1, "h"),
+        json_ext(4, "json"),
+        map_ext(3, "map"),
         run_noext(),
-        copyright("Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved"),
-        written("written by Walter Bright"),
+        copyright(73, "Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved"),
+        written(24, "written by Walter Bright"),
         path(),
         filePath(),
         vendor(),
@@ -7050,6 +7296,34 @@ struct Global
         debugids()
     {
     }
+    Global(_d_dynamicArray< const char > inifilename, _d_dynamicArray< const char > mars_ext = { 1, "d" }, _d_dynamicArray< const char > obj_ext = {}, _d_dynamicArray< const char > lib_ext = {}, _d_dynamicArray< const char > dll_ext = {}, _d_dynamicArray< const char > doc_ext = { 4, "html" }, _d_dynamicArray< const char > ddoc_ext = { 4, "ddoc" }, _d_dynamicArray< const char > hdr_ext = { 2, "di" }, _d_dynamicArray< const char > cxxhdr_ext = { 1, "h" }, _d_dynamicArray< const char > json_ext = { 4, "json" }, _d_dynamicArray< const char > map_ext = { 3, "map" }, bool run_noext = false, _d_dynamicArray< const char > copyright = { 73, "Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved" }, _d_dynamicArray< const char > written = { 24, "written by Walter Bright" }, Array<const char* >* path = nullptr, Array<const char* >* filePath = nullptr, _d_dynamicArray< const char > vendor = {}, Param params = Param(true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, 0u, false, false, true, false, (TargetOS)1u, false, false, (DiagnosticReporting)1u, false, false, false, (FeatureState)-1, false, false, false, (DiagnosticReporting)2u, (PIC)0u, false, false, 0u, false, false, false, true, true, true, false, false, false, false, false, false, false, false, false, false, false, (FeatureState)-1, false, false, (CppStdRevision)201103u, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, (CPU)11, (CHECKENABLE)0u, (CHECKENABLE)0u, (CHECKENABLE)0u, (CHECKENABLE)0u, (CHECKENABLE)0u, (CHECKENABLE)0u, (CHECKENABLE)0u, (CHECKACTION)0u, 20u, {}, Array<const char* >(0LLU, {}, arrayliteral), nullptr, nullptr, {}, {}, {}, false, {}, {}, Array<const char* >(0LLU, {}, arrayliteral), false, {}, {}, true, (CxxHeaderMode)0u, {}, {}, false, {}, (JsonFieldFlags)0u, nullptr, nullptr, 0, 0u, nullptr, 0u, nullptr, {}, {}, {}, {}, nullptr, false, {}, Array<const char* >(0LLU, {}, arrayliteral), (MessageStyle)0u, false, Array<const char* >(0LLU, {}, arrayliteral), Array<const char* >(0LLU, {}, arrayliteral), Array<const char* >(0LLU, {}, arrayliteral), Array<bool >(0LLU, {}, arrayliteral), Array<const char* >(0LLU, {}, arrayliteral), Array<const char* >(0LLU, {}, arrayliteral), {}, {}, {}, {}), uint32_t errors = 0u, uint32_t warnings = 0u, uint32_t gag = 0u, uint32_t gaggedErrors = 0u, uint32_t gaggedWarnings = 0u, void* console = nullptr, Array<Identifier* >* versionids = nullptr, Array<Identifier* >* debugids = nullptr) :
+        inifilename(inifilename),
+        mars_ext(mars_ext),
+        obj_ext(obj_ext),
+        lib_ext(lib_ext),
+        dll_ext(dll_ext),
+        doc_ext(doc_ext),
+        ddoc_ext(ddoc_ext),
+        hdr_ext(hdr_ext),
+        cxxhdr_ext(cxxhdr_ext),
+        json_ext(json_ext),
+        map_ext(map_ext),
+        run_noext(run_noext),
+        copyright(copyright),
+        written(written),
+        path(path),
+        filePath(filePath),
+        vendor(vendor),
+        params(params),
+        errors(errors),
+        warnings(warnings),
+        gag(gag),
+        gaggedErrors(gaggedErrors),
+        gaggedWarnings(gaggedWarnings),
+        console(console),
+        versionids(versionids),
+        debugids(debugids)
+        {}
 };
 
 typedef uint64_t dinteger_t;
@@ -7075,8 +7349,6 @@ typedef int64_t d_int64;
 typedef uint64_t d_uns64;
 
 typedef uint64_t StorageClass;
-
-extern Global global;
 
 struct Id
 {
@@ -7147,6 +7419,9 @@ struct Id
     static Identifier* __c_ulonglong;
     static Identifier* __c_long_double;
     static Identifier* __c_wchar_t;
+    static Identifier* __c_complex_float;
+    static Identifier* __c_complex_double;
+    static Identifier* __c_complex_real;
     static Identifier* cpp_type_info_ptr;
     static Identifier* _assert;
     static Identifier* _unittest;
@@ -7204,7 +7479,6 @@ struct Id
     static Identifier* C;
     static Identifier* D;
     static Identifier* Windows;
-    static Identifier* Pascal;
     static Identifier* System;
     static Identifier* Objective;
     static Identifier* exit;
@@ -7433,6 +7707,7 @@ struct Id
     static Identifier* hasMember;
     static Identifier* identifier;
     static Identifier* getProtection;
+    static Identifier* getVisibility;
     static Identifier* parent;
     static Identifier* child;
     static Identifier* getMember;
@@ -7444,7 +7719,6 @@ struct Id
     static Identifier* derivedMembers;
     static Identifier* isSame;
     static Identifier* compiles;
-    static Identifier* parameters;
     static Identifier* getAliasThis;
     static Identifier* getAttributes;
     static Identifier* getFunctionAttributes;
@@ -7454,6 +7728,7 @@ struct Id
     static Identifier* getUnitTests;
     static Identifier* getVirtualIndex;
     static Identifier* getPointerBitmap;
+    static Identifier* getCppNamespaces;
     static Identifier* isReturnOnStack;
     static Identifier* isZeroInit;
     static Identifier* getTargetInfo;
@@ -7469,6 +7744,7 @@ struct Id
     static Identifier* char_traits;
     static Identifier* udaGNUAbiTag;
     static Identifier* udaSelector;
+    static Identifier* udaOptional;
     static Identifier* NULL;
     static Identifier* TRUE;
     static Identifier* FALSE;
@@ -7480,12 +7756,12 @@ struct Id
     }
 };
 
-class Identifier : public RootObject
+class Identifier final : public RootObject
 {
+    const int32_t value;
+    const bool isAnonymous_;
+    const _d_dynamicArray< const char > name;
 public:
-    int32_t value;
-    bool isAnonymous_;
-    DArray< char > name;
     static Identifier* create(const char* name);
     const char* toChars() const;
     int32_t getValue() const;
@@ -7503,8 +7779,8 @@ struct Token
     Loc loc;
     const char* ptr;
     TOK value;
-    DArray< const char > blockComment;
-    DArray< const char > lineComment;
+    _d_dynamicArray< const char > blockComment;
+    _d_dynamicArray< const char > lineComment;
     union
     {
         int64_t intvalue;
@@ -7532,6 +7808,14 @@ struct Token
         lineComment()
     {
     }
+    Token(Token* next, Loc loc = Loc(nullptr, 0u, 0u), const char* ptr = nullptr, TOK value = (TOK)0u, _d_dynamicArray< const char > blockComment = {}, _d_dynamicArray< const char > lineComment = {}) :
+        next(next),
+        loc(loc),
+        ptr(ptr),
+        value(value),
+        blockComment(blockComment),
+        lineComment(lineComment)
+        {}
 };
 
 template <typename T>
@@ -7540,19 +7824,40 @@ struct Array
     // Ignoring var length alignment 0
     size_t length;
     // Ignoring var data alignment 0
-    DArray< T > data;
+    _d_dynamicArray< T > data;
     // Ignoring var SMALLARRAYCAP alignment 0
     // Ignoring var smallarray alignment 0
     void* smallarray;
+    Array(size_t dim);
+    ~Array();
+    const char* toChars() const;
+    Array& push(T ptr);
+    Array& append(Array* a);
+    void reserve(size_t nentries);
+    void remove(size_t i);
+    void insert(size_t index, Array* a);
+    void insert(size_t index, T ptr);
+    void setDim(size_t newdim);
+    size_t find(T ptr) const;
+    bool contains(T ptr) const;
+    T& opIndex(size_t i);
+    T* tdata();
+    Array<T >* copy() const;
+    void shift(T ptr);
+    void zero();
+    T pop();
     typedef length opDollar;
     typedef length dim;
+    Array()
+    {
+    }
 };
 
 struct CTFloat
 {
-    ENUM_CONSTANT_NUMERIC(bool, yl2x_supported, true)
+    enum : bool { yl2x_supported = true };
 
-    ENUM_CONSTANT_NUMERIC(bool, yl2xp1_supported, true)
+    enum : bool { yl2xp1_supported = true };
 
     static void yl2x(const _d_real* const x, const _d_real* const y, _d_real* res);
     static void yl2xp1(const _d_real* const x, const _d_real* const y, _d_real* res);
@@ -7582,7 +7887,7 @@ struct CTFloat
     static bool isNaN(_d_real r);
     static bool isSNaN(_d_real r);
     static bool isInfinity(_d_real r);
-    static _d_real parse(const char* literal, bool* isOutOfRange);
+    static _d_real parse(const char* literal, bool* isOutOfRange = nullptr);
     static int32_t sprint(char* str, char fmt, _d_real x);
     static _d_real zero;
     static _d_real one;
@@ -7594,7 +7899,7 @@ struct CTFloat
     }
 };
 
-typedef Array<const char*> Strings;
+typedef Array<const char* > Strings;
 
 struct Port
 {
@@ -7613,8 +7918,6 @@ struct Port
     {
     }
 };
-
-ENUM_CONSTANT_NUMERIC(bool, isGCAvailable, true)
 
 struct Mem
 {
@@ -7639,10 +7942,6 @@ struct Mem
 };
 
 extern const Mem mem;
-
-ENUM_CONSTANT_NUMERIC(int32_t, CHUNK_SIZE, 1048512)
-
-ENUM_CONSTANT_NUMERIC(bool, OVERRIDE_MEMALLOC, true)
 
 extern "C" void* _d_allocmemory(size_t m_size);
 

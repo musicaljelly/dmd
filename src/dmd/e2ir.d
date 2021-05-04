@@ -1,7 +1,7 @@
 /**
  * Converts expressions to Intermediate Representation (IR) for the backend.
  *
- * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/e2ir.d, _e2ir.d)
@@ -68,6 +68,7 @@ import dmd.backend.global;
 import dmd.backend.obj;
 import dmd.backend.oper;
 import dmd.backend.rtlsym;
+import dmd.backend.symtab;
 import dmd.backend.ty;
 import dmd.backend.type;
 
@@ -106,13 +107,13 @@ bool ISX64REF(Declaration var)
 
     if (var.isParameter())
     {
-        if (config.exe == EX_WIN64)
+        if (global.params.targetOS == TargetOS.Windows && global.params.is64bit)
         {
             return var.type.size(Loc.initial) > REGSIZE
                 || (var.storage_class & STC.lazy_)
                 || (var.type.isTypeStruct() && !var.type.isTypeStruct().sym.isPOD());
         }
-        else if (!global.params.isWindows)
+        else if (global.params.targetOS & TargetOS.Posix)
         {
             return !(var.storage_class & STC.lazy_) && var.type.isTypeStruct() && !var.type.isTypeStruct().sym.isPOD();
         }
@@ -125,12 +126,12 @@ bool ISX64REF(Declaration var)
  */
 bool ISX64REF(IRState* irs, Expression exp)
 {
-    if (config.exe == EX_WIN64)
+    if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit)
     {
         return exp.type.size(Loc.initial) > REGSIZE
             || (exp.type.isTypeStruct() && !exp.type.isTypeStruct().sym.isPOD());
     }
-    else if (!irs.params.isWindows)
+    else if (irs.params.targetOS & TargetOS.Posix)
     {
         return exp.type.isTypeStruct() && !exp.type.isTypeStruct().sym.isPOD();
     }
@@ -258,11 +259,17 @@ private elem *callfunc(const ref Loc loc,
                 /* Copy to a temporary, and make the argument a pointer
                  * to that temporary.
                  */
-                elems[i] = addressElem(ea, arg.type, true);
+                VarDeclaration v;
+                if (VarExp ve = arg.isVarExp())
+                    v = ve.var.isVarDeclaration();
+                bool copy = !(v && v.isArgDtorVar); // copy unless the destructor is going to be run on it
+                                                    // then assume the frontend took care of the copying and pass it by ref
+
+                elems[i] = addressElem(ea, arg.type, copy);
                 continue;
             }
 
-            if (config.exe == EX_WIN64 && tybasic(ea.Ety) == TYcfloat)
+            if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit && tybasic(ea.Ety) == TYcfloat)
             {
                 /* Treat a cfloat like it was a struct { float re,im; }
                  */
@@ -552,7 +559,7 @@ if (!irs.params.is64bit) assert(tysize(TYnptr) == 4);
     }
     else if (retmethod == RET.stack)
     {
-        if (irs.params.isOSX && eresult)
+        if (irs.params.targetOS == TargetOS.OSX && eresult)
         {
             /* ABI quirk: hidden pointer is not returned in registers
              */
@@ -837,12 +844,12 @@ elem *array_toDarray(Type t, elem *e)
             {
                 case OPconst:
                 {
-                    size_t len = tysize(e.Ety);
+                    const size_t len = tysize(e.Ety);
                     elem *es = el_calloc();
                     es.Eoper = OPstring;
 
                     // freed in el_free
-                    es.EV.Vstring = cast(char*)mem_malloc2(cast(uint)len);
+                    es.EV.Vstring = cast(char*)mem_malloc2(cast(uint) len);
                     memcpy(es.EV.Vstring, &e.EV, len);
 
                     es.EV.Vstrlen = len;
@@ -1064,10 +1071,10 @@ Lagain:
                     type *t2 = evalue.ET.Ttag.Sstruct.Sarg2type;
                     if (!t1 && !t2)
                     {
-                        if (config.exe != EX_WIN64 || sz > 8)
+                        if (irs.params.targetOS & TargetOS.Posix || sz > 8)
                             r = RTLSYM_MEMSETN;
                     }
-                    else if (config.exe != EX_WIN64 &&
+                    else if (irs.params.targetOS & TargetOS.Posix &&
                              r == RTLSYM_MEMSET128ii &&
                              tyfloating(t1.Tty) &&
                              tyfloating(t2.Tty))
@@ -1093,7 +1100,7 @@ Lagain:
         edim = el_bin(OPmul, TYsize_t, edim, el_long(TYsize_t, sz));
     }
 
-    if (config.exe == EX_WIN64 && sz > REGSIZE)
+    if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit && sz > REGSIZE)
     {
         evalue = addressElem(evalue, tb);
     }
@@ -1326,7 +1333,7 @@ elem *toElem(Expression e, IRState *irs)
                 goto L1;
             }
 
-            if (s.Sclass == SCauto && s.Ssymnum == -1)
+            if (s.Sclass == SCauto && s.Ssymnum == SYMIDX.max)
             {
                 //printf("\tadding symbol %s\n", s.Sident);
                 symbol_add(s);
@@ -1641,8 +1648,8 @@ elem *toElem(Expression e, IRState *irs)
                 e = el_calloc();
                 e.Eoper = OPstring;
                 // freed in el_free
-                uint len = cast(uint)((se.numberOfCodeUnits() + 1) * se.sz);
-                e.EV.Vstring = cast(char *)mem_malloc2(cast(uint)len);
+                const len = cast(size_t)((se.numberOfCodeUnits() + 1) * se.sz);
+                e.EV.Vstring = cast(char *)mem_malloc2(cast(uint) len);
                 se.writeTo(e.EV.Vstring, true);
                 e.EV.Vstrlen = len;
                 e.Ety = TYnptr;
@@ -1930,7 +1937,7 @@ elem *toElem(Expression e, IRState *irs)
                     elem *earray = ExpressionsToStaticArray(ne.loc, ne.arguments, &sdata);
 
                     e = el_pair(TYdarray, el_long(TYsize_t, ne.arguments.dim), el_ptr(sdata));
-                    if (config.exe == EX_WIN64)
+                    if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit)
                         e = addressElem(e, Type.tsize_t.arrayOf());
                     e = el_param(e, getTypeInfo(ne.loc, ne.type, irs));
                     int rtl = t.isZeroInit(Loc.initial) ? RTLSYM_NEWARRAYMTX : RTLSYM_NEWARRAYMITX;
@@ -2153,7 +2160,7 @@ elem *toElem(Expression e, IRState *irs)
                     size_t len = strlen(id);
                     Symbol *si = toStringSymbol(id, len, 1);
                     elem *efilename = el_pair(TYdarray, el_long(TYsize_t, len), el_ptr(si));
-                    if (config.exe == EX_WIN64)
+                    if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit)
                         efilename = addressElem(efilename, Type.tstring, true);
 
                     if (ae.msg)
@@ -2165,7 +2172,7 @@ elem *toElem(Expression e, IRState *irs)
                          */
                         elem *emsg = toElemDtor(ae.msg, irs);
                         emsg = array_toDarray(ae.msg.type, emsg);
-                        if (config.exe == EX_WIN64)
+                        if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit)
                             emsg = addressElem(emsg, Type.tvoid.arrayOf(), false);
 
                         ea = el_var(getRtlsym(ud ? RTLSYM_DUNITTEST_MSG : RTLSYM_DASSERT_MSG));
@@ -2324,7 +2331,7 @@ elem *toElem(Expression e, IRState *irs)
         {
             elem *ex = toElem(e, irs);
             ex = array_toDarray(e.type, ex);
-            if (config.exe == EX_WIN64)
+            if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit)
             {
                 ex = addressElem(ex, Type.tvoid.arrayOf(), false);
             }
@@ -2374,7 +2381,7 @@ elem *toElem(Expression e, IRState *irs)
                 elem *earr = ElemsToStaticArray(ce.loc, ce.type, &elems, &sdata);
 
                 elem *ep = el_pair(TYdarray, el_long(TYsize_t, elems.dim), el_ptr(sdata));
-                if (config.exe == EX_WIN64)
+                if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit)
                     ep = addressElem(ep, Type.tvoid.arrayOf());
                 ep = el_param(ep, getTypeInfo(ce.loc, ta, irs));
                 e = el_bin(OPcall, TYdarray, el_var(getRtlsym(RTLSYM_ARRAYCATNTX)), ep);
@@ -2950,7 +2957,7 @@ elem *toElem(Expression e, IRState *irs)
                          */
                         el_free(esize);
                         elem *eti = getTypeInfo(ae.e1.loc, t1.nextOf().toBasetype(), irs);
-                        if (config.exe == EX_WIN64)
+                        if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit)
                         {
                             eto   = addressElem(eto,   Type.tvoid.arrayOf());
                             efrom = addressElem(efrom, Type.tvoid.arrayOf());
@@ -2965,7 +2972,7 @@ elem *toElem(Expression e, IRState *irs)
                         // Generate:
                         //      _d_arraycopy(eto, efrom, esize)
 
-                        if (config.exe == EX_WIN64)
+                        if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit)
                         {
                             eto   = addressElem(eto,   Type.tvoid.arrayOf());
                             efrom = addressElem(efrom, Type.tvoid.arrayOf());
@@ -3226,6 +3233,19 @@ elem *toElem(Expression e, IRState *irs)
                     return setResult2(e);
                 }
 
+                if (ae.op == TOK.assign)
+                {
+                    if (auto ve1 = ae.e1.isVectorArrayExp())
+                    {
+                        // Use an OPeq rather than an OPstreq
+                        e1 = toElem(ve1.e1, irs);
+                        elem* e2 = toElem(ae.e2, irs);
+                        e2.Ety = e1.Ety;
+                        elem* e = el_bin(OPeq, e2.Ety, e1, e2);
+                        return setResult2(e);
+                    }
+                }
+
                 /* https://issues.dlang.org/show_bug.cgi?id=13661
                  * Even if the elements in rhs are all rvalues and
                  * don't have to call postblits, this assignment should call
@@ -3258,7 +3278,7 @@ elem *toElem(Expression e, IRState *irs)
                      *      _d_arrayctor(ti, e2, e1)
                      */
                     elem *eti = getTypeInfo(ae.e1.loc, t1b.nextOf().toBasetype(), irs);
-                    if (config.exe == EX_WIN64)
+                    if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit)
                     {
                         e1 = addressElem(e1, Type.tvoid.arrayOf());
                         e2 = addressElem(e2, Type.tvoid.arrayOf());
@@ -3281,7 +3301,7 @@ elem *toElem(Expression e, IRState *irs)
                      *      _d_arrayassign_r(ti, e2, e1, etmp)
                      */
                     elem *eti = getTypeInfo(ae.e1.loc, t1b.nextOf().toBasetype(), irs);
-                    if (config.exe == EX_WIN64)
+                    if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit)
                     {
                         e1 = addressElem(e1, Type.tvoid.arrayOf());
                         e2 = addressElem(e2, Type.tvoid.arrayOf());
@@ -3361,7 +3381,7 @@ elem *toElem(Expression e, IRState *irs)
                     assert(tb1n.equals(tb2.nextOf().toBasetype()));
 
                     e1 = el_una(OPaddr, TYnptr, e1);
-                    if (config.exe == EX_WIN64)
+                    if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit)
                         e2 = addressElem(e2, tb2, true);
                     else
                         e2 = useOPstrpar(e2);
@@ -5593,7 +5613,7 @@ elem *toElem(Expression e, IRState *irs)
 
                 elem *ev = el_pair(TYdarray, el_long(TYsize_t, dim), el_ptr(svalues));
                 elem *ek = el_pair(TYdarray, el_long(TYsize_t, dim), el_ptr(skeys  ));
-                if (config.exe == EX_WIN64)
+                if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit)
                 {
                     ev = addressElem(ev, Type.tvoid.arrayOf());
                     ek = addressElem(ek, Type.tvoid.arrayOf());
@@ -5709,6 +5729,29 @@ private elem *toElemStructLit(StructLiteralExp sle, IRState *irs, TOK op, Symbol
     //printf("[%s] StructLiteralExp.toElem() %s\n", sle.loc.toChars(), sle.toChars());
     //printf("\tblit = %s, sym = %p fillHoles = %d\n", op == TOK.blit, sym, fillHoles);
 
+    Type forcetype = null;
+    if (sle.stype)
+    {
+        if (TypeEnum te = sle.stype.isTypeEnum())
+        {
+            // Reinterpret the struct literal as a complex type.
+            if (te.sym.isSpecial() &&
+                (te.sym.ident == Id.__c_complex_float ||
+                 te.sym.ident == Id.__c_complex_double ||
+                 te.sym.ident == Id.__c_complex_real))
+            {
+                forcetype = sle.stype;
+            }
+        }
+    }
+
+    static elem* Lreinterpret(Loc loc, elem* e, Type type)
+    {
+        elem* ep = el_una(OPind, totym(type), el_una(OPaddr, TYnptr, e));
+        elem_setLoc(ep, loc);
+        return ep;
+    }
+
     if (sle.useStaticInit)
     {
         /* Use the struct declaration's init symbol
@@ -5730,6 +5773,8 @@ private elem *toElemStructLit(StructLiteralExp sle, IRState *irs, TOK op, Symbol
             //e = el_combine(e, ev);
             elem_setLoc(e, sle.loc);
         }
+        if (forcetype)
+            return Lreinterpret(sle.loc, e, forcetype);
         return e;
     }
 
@@ -5912,6 +5957,8 @@ private elem *toElemStructLit(StructLiteralExp sle, IRState *irs, TOK op, Symbol
     ev.ET = Type_toCtype(sle.sd.type);
     e = el_combine(e, ev);
     elem_setLoc(e, sle.loc);
+    if (forcetype)
+        return Lreinterpret(sle.loc, e, forcetype);
     return e;
 }
 
@@ -5951,7 +5998,7 @@ private elem *appendDtors(IRState *irs, elem *er, size_t starti, size_t endi)
 
     if (edtors)
     {
-        if (irs.params.isWindows && !irs.params.is64bit) // Win32
+        if (irs.params.targetOS == TargetOS.Windows && !irs.params.is64bit) // Win32
         {
             Blockx *blx = irs.blx;
             nteh_declarvars(blx);
@@ -6059,7 +6106,7 @@ Symbol *toStringSymbol(const(char)* str, size_t len, size_t sz)
     {
         Symbol* si;
 
-        if (global.params.isWindows)
+        if (global.params.targetOS == TargetOS.Windows)
         {
             /* This should be in the back end, but mangleToBuffer() is
              * in the front end.
@@ -6067,35 +6114,48 @@ Symbol *toStringSymbol(const(char)* str, size_t len, size_t sz)
             /* The stringTab pools common strings within an object file.
              * Win32 and Win64 use COMDATs to pool common strings across object files.
              */
-            import dmd.root.outbuffer : OutBuffer;
-            import dmd.dmangle;
-
-            scope StringExp se = new StringExp(Loc.initial, str[0 .. len], len, cast(ubyte)sz, 'c');
-
             /* VC++ uses a name mangling scheme, for example, "hello" is mangled to:
              * ??_C@_05CJBACGMB@hello?$AA@
              *        ^ length
              *         ^^^^^^^^ 8 byte checksum
              * But the checksum algorithm is unknown. Just invent our own.
              */
+
+            import dmd.root.outbuffer : OutBuffer;
             OutBuffer buf;
             buf.writestring("__");
-            mangleToBuffer(se, &buf);   // recycle how strings are mangled for templates
 
-            if (buf.length >= 32 + 2)
-            {   // Replace long string with hash of that string
+            void printHash()
+            {
+                // Replace long string with hash of that string
                 import dmd.backend.md5;
                 MD5_CTX mdContext = void;
                 MD5Init(&mdContext);
-                MD5Update(&mdContext, cast(ubyte*)buf.peekChars(), cast(uint)buf.length);
+                MD5Update(&mdContext, cast(ubyte*)str, cast(uint)(len * sz));
                 MD5Final(&mdContext);
-                buf.setsize(2);
                 foreach (u; mdContext.digest)
                 {
                     ubyte u1 = u >> 4;
                     buf.writeByte((u1 < 10) ? u1 + '0' : u1 + 'A' - 10);
                     u1 = u & 0xF;
                     buf.writeByte((u1 < 10) ? u1 + '0' : u1 + 'A' - 10);
+                }
+            }
+
+            const mangleMinLen = 14; // mangling: "__a14_(14*2 chars)" = 6+14*2 = 34
+
+            if (len >= mangleMinLen) // long mangling for sure, use hash
+                printHash();
+            else
+            {
+                import dmd.dmangle;
+                scope StringExp se = new StringExp(Loc.initial, str[0 .. len], len, cast(ubyte)sz, 'c');
+                mangleToBuffer(se, &buf);   // recycle how strings are mangled for templates
+
+                if (buf.length >= 32 + 2)   // long mangling, replace with hash
+                {
+                    buf.setsize(2);
+                    printHash();
                 }
             }
 
@@ -6153,7 +6213,7 @@ private elem *filelinefunction(IRState *irs, const ref Loc loc)
     size_t len = strlen(id);
     Symbol *si = toStringSymbol(id, len, 1);
     elem *efilename = el_pair(TYdarray, el_long(TYsize_t, len), el_ptr(si));
-    if (config.exe == EX_WIN64)
+    if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit)
         efilename = addressElem(efilename, Type.tstring, true);
 
     elem *elinnum = el_long(TYint, loc.linnum);
@@ -6168,7 +6228,7 @@ private elem *filelinefunction(IRState *irs, const ref Loc loc)
     len = strlen(s);
     si = toStringSymbol(s, len, 1);
     elem *efunction = el_pair(TYdarray, el_long(TYsize_t, len), el_ptr(si));
-    if (config.exe == EX_WIN64)
+    if (irs.params.targetOS == TargetOS.Windows && irs.params.is64bit)
         efunction = addressElem(efunction, Type.tstring, true);
 
     return el_params(efunction, elinnum, efilename, null);
@@ -6196,7 +6256,16 @@ elem *buildArrayBoundsError(IRState *irs, const ref Loc loc, elem* lwr, elem* up
         return genHalt(loc);
     }
     auto eassert = el_var(getRtlsym(RTLSYM_DARRAYP));
-    auto efile = toEfilenamePtr(cast(Module)irs.blx._module);
+
+    elem* efile;
+    if (loc.filename)
+    {
+        const len = strlen(loc.filename);
+        Symbol* s = toStringSymbol(loc.filename, len, 1);
+        efile = el_ptr(s);
+    }
+    else
+        efile = toEfilenamePtr(cast(Module)irs.blx._module);
     auto eline = el_long(TYint, loc.linnum);
     if(upr is null)
     {
@@ -6359,7 +6428,7 @@ elem *callCAssert(IRState *irs, const ref Loc loc, Expression exp, Expression em
     auto eline = el_long(TYint, loc.linnum);
 
     elem *ea;
-    if (irs.params.isOSX)
+    if (irs.params.targetOS == TargetOS.OSX)
     {
         // __assert_rtn(func, file, line, msg);
         elem* efunc = getFuncName();
@@ -6378,7 +6447,7 @@ elem *callCAssert(IRState *irs, const ref Loc loc, Expression exp, Expression em
         else
         {
             // [_]_assert(msg, file, line);
-            const rtlsym = (irs.params.isWindows) ? RTLSYM_C_ASSERT : RTLSYM_C__ASSERT;
+            const rtlsym = (irs.params.targetOS == TargetOS.Windows) ? RTLSYM_C_ASSERT : RTLSYM_C__ASSERT;
             auto eassert = el_var(getRtlsym(rtlsym));
             ea = el_bin(OPcall, TYvoid, eassert, el_params(eline, efilename, elmsg, null));
         }
@@ -6428,6 +6497,9 @@ bool type_zeroCopy(type* t)
  */
 elem* elAssign(elem* e1, elem* e2, Type t, type* tx)
 {
+    //printf("e1:\n"); elem_print(e1);
+    //printf("e2:\n"); elem_print(e2);
+    //if (t) printf("t: %s\n", t.toChars());
     elem *e = el_bin(OPeq, e2.Ety, e1, e2);
     switch (tybasic(e2.Ety))
     {
@@ -6439,6 +6511,7 @@ elem* elAssign(elem* e1, elem* e2, Type t, type* tx)
             e.Eoper = OPstreq;
             if (!tx)
                 tx = Type_toCtype(t);
+            //printf("tx:\n"); type_print(tx);
             e.ET = tx;
 //            if (type_zeroCopy(tx))
 //                e.Eoper = OPcomma;

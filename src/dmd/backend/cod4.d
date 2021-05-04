@@ -5,7 +5,7 @@
  * Mostly code generation for assignment operators.
  *
  * Copyright:   Copyright (C) 1985-1998 by Symantec
- *              Copyright (C) 2000-2020 by The D Language Foundation, All Rights Reserved
+ *              Copyright (C) 2000-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/backend/cod4.d, backend/cod4.d)
@@ -139,9 +139,6 @@ void modEA(ref CodeBuilder cdb,code *c)
     }
 }
 
-static if (TARGET_WINDOS)
-{
-// This code is for CPUs that do not support the 8087
 
 /****************************
  * Gen code for op= for doubles.
@@ -149,6 +146,8 @@ static if (TARGET_WINDOS)
 
 private void opassdbl(ref CodeBuilder cdb,elem *e,regm_t *pretregs,OPER op)
 {
+    assert(config.exe & EX_windos);  // for targets that may not have an 8087
+
     static immutable uint[OPdivass - OPpostinc + 1] clibtab =
     /* OPpostinc,OPpostdec,OPeq,OPaddass,OPminass,OPmulass,OPdivass       */
     [  CLIB.dadd, CLIB.dsub, cast(uint)-1,  CLIB.dadd,CLIB.dsub,CLIB.dmul,CLIB.ddiv ];
@@ -247,6 +246,8 @@ private void opassdbl(ref CodeBuilder cdb,elem *e,regm_t *pretregs,OPER op)
 
 private void opnegassdbl(ref CodeBuilder cdb,elem *e,regm_t *pretregs)
 {
+    assert(config.exe & EX_windos);  // for targets that may not have an 8087
+
     if (config.inline8087)
     {
         cdnegass87(cdb,e,pretregs);
@@ -345,7 +346,6 @@ private void opnegassdbl(ref CodeBuilder cdb,elem *e,regm_t *pretregs)
 
     freenode(e1);
     fixresult(cdb,e,retregs,pretregs);
-}
 }
 
 
@@ -684,6 +684,12 @@ void cdeq(ref CodeBuilder cdb,elem *e,regm_t *pretregs)
             !(sz == 1 && e1.EV.Voffset == 1)
            )
         {
+            if (varregm & XMMREGS)
+            {
+                // Could be an integer vector in the XMMREGS
+                xmmeq(cdb, e, CMP, e1, e2, pretregs);
+                return;
+            }
             regvar = true;
             retregs = varregm;
             reg = varreg;       // evaluate directly in target register
@@ -864,7 +870,7 @@ void cdaddass(ref CodeBuilder cdb,elem *e,regm_t *pretregs)
 
     if (tyfloating(tyml))
     {
-        static if (TARGET_LINUX || TARGET_OSX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_DRAGONFLYBSD || TARGET_SOLARIS)
+        if (config.exe & EX_posix)
         {
             if (op == OPnegass)
                 cdnegass87(cdb,e,pretregs);
@@ -1416,7 +1422,7 @@ void cdmulass(ref CodeBuilder cdb,elem *e,regm_t *pretregs)
 
     if (tyfloating(tyml))
     {
-        static if (TARGET_LINUX || TARGET_OSX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_DRAGONFLYBSD || TARGET_SOLARIS)
+        if (config.exe & EX_posix)
         {
             opass87(cdb,e,pretregs);
         }
@@ -1698,7 +1704,7 @@ void cddivass(ref CodeBuilder cdb,elem *e,regm_t *pretregs)
 
     if (tyfloating(tyml))
     {
-        static if (TARGET_LINUX || TARGET_OSX || TARGET_FREEBSD || TARGET_OPENBSD || TARGET_DRAGONFLYBSD || TARGET_SOLARIS)
+        if (config.exe & EX_posix)
         {
             opass87(cdb,e,pretregs);
         }
@@ -2565,7 +2571,7 @@ void cdcmp(ref CodeBuilder cdb,elem *e,regm_t *pretregs)
         }
         else
         {
-            static if (TARGET_WINDOS)
+            if (config.exe & EX_windos)
             {
                 int clib;
 
@@ -3033,7 +3039,7 @@ void cdcmp(ref CodeBuilder cdb,elem *e,regm_t *pretregs)
             goto L5;
 
         case OPvar:
-            static if (TARGET_OSX)
+            if (config.exe & (EX_OSX | EX_OSX64))
             {
                 if (movOnly(e2))
                     goto L2;
@@ -3503,8 +3509,7 @@ void cdcnvt(ref CodeBuilder cdb,elem *e, regm_t *pretregs)
                     cdd_u32(cdb,e,pretregs);
                     return;
                 }
-                static if (TARGET_LINUX || TARGET_OSX || TARGET_FREEBSD || TARGET_OPENBSD ||
-                           TARGET_DRAGONFLYBSD || TARGET_SOLARIS)
+                if (config.exe & EX_posix)
                 {
                     retregs = mST0;
                 }
@@ -4098,7 +4103,7 @@ void cdasm(ref CodeBuilder cdb,elem *e,regm_t *pretregs)
 {
     // Assume only regs normally destroyed by a function are destroyed
     getregs(cdb,(ALLREGS | mES) & ~fregsaved);
-    cdb.genasm(cast(char *)e.EV.Vstring, cast(uint)e.EV.Vstrlen);
+    cdb.genasm(cast(char *)e.EV.Vstring, cast(uint) e.EV.Vstrlen);
     fixresult(cdb,e,(I16 ? mDX | mAX : mAX),pretregs);
 }
 

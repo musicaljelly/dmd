@@ -3,7 +3,7 @@
  *
  * Specification: $(LINK2 https://dlang.org/spec/class.html#alias-this, Alias This)
  *
- * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/aliasthis.d, _aliasthis.d)
@@ -43,7 +43,7 @@ extern (C++) final class AliasThis : Dsymbol
         this.ident = ident;
     }
 
-    override Dsymbol syntaxCopy(Dsymbol s)
+    override AliasThis syntaxCopy(Dsymbol s)
     {
         assert(!s);
         auto at = new AliasThis(loc, ident);
@@ -154,25 +154,29 @@ Expression resolveAliasThis(Scope* sc, Expression e, bool gag = false)
  */
 bool checkDeprecatedAliasThis(AliasThis at, const ref Loc loc, Scope* sc)
 {
-    import dmd.errors : deprecation;
+    import dmd.errors : deprecation, Classification;
     import dmd.dsymbolsem : getMessage;
 
     if (global.params.useDeprecated != DiagnosticReporting.off
         && at.isDeprecated() && !sc.isDeprecated())
     {
-            const(char)* message = null;
-            for (Dsymbol p = at; p; p = p.parent)
-            {
-                message = p.depdecl ? p.depdecl.getMessage() : null;
-                if (message)
-                    break;
-            }
+        const(char)* message = null;
+        for (Dsymbol p = at; p; p = p.parent)
+        {
+            message = p.depdecl ? p.depdecl.getMessage() : null;
             if (message)
-                deprecation(loc, "`alias %s this` is deprecated - %s",
-                            at.sym.toChars(), message);
-            else
-                deprecation(loc, "`alias %s this` is deprecated",
-                            at.sym.toChars());
+                break;
+        }
+        if (message)
+            deprecation(loc, "`alias %s this` is deprecated - %s",
+                        at.sym.toChars(), message);
+        else
+            deprecation(loc, "`alias %s this` is deprecated",
+                        at.sym.toChars());
+
+        if (auto ti = sc.parent ? sc.parent.isInstantiated() : null)
+            ti.printInstantiationTrace(Classification.deprecation);
+
         return true;
     }
     return false;

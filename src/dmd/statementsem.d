@@ -3,7 +3,7 @@
  *
  * Specification: $(LINK2 https://dlang.org/spec/statement.html, Statements)
  *
- * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/statementsem.d, _statementsem.d)
@@ -48,6 +48,7 @@ import dmd.intrange;
 import dmd.mtype;
 import dmd.nogc;
 import dmd.opover;
+import dmd.printast;
 import dmd.root.outbuffer;
 import dmd.root.string;
 import dmd.semantic2;
@@ -58,6 +59,11 @@ import dmd.tokens;
 import dmd.typesem;
 import dmd.visitor;
 import dmd.compiler;
+
+version (DMDLIB)
+{
+    version = CallbackAPI;
+}
 
 /*****************************************
  * CTFE requires FuncDeclaration::labtab for the interpretation.
@@ -245,6 +251,12 @@ private extern (C++) final class StatementSemanticVisitor : Visitor
                 (*cs.statements)[i] = s;
                 if (s)
                 {
+                    if (s.isErrorStatement())
+                    {
+                        result = s;     // propagate error up the AST
+                        ++i;
+                        continue;       // look for errors in rest of statements
+                    }
                     Statement sentry;
                     Statement sexception;
                     Statement sfinally;
@@ -1083,7 +1095,7 @@ private extern (C++) final class StatementSemanticVisitor : Visitor
         fs.aggr = fs.aggr.optimize(WANTvalue);
         if (fs.aggr.op == TOK.error)
             return setError();
-        Expression oaggr = fs.aggr;
+        Expression oaggr = fs.aggr;     // remember original for error messages
         if (fs.aggr.type && fs.aggr.type.toBasetype().ty == Tstruct &&
             (cast(TypeStruct)(fs.aggr.type.toBasetype())).sym.dtor &&
             fs.aggr.op != TOK.type && !fs.aggr.isLvalue())
@@ -1095,6 +1107,16 @@ private extern (C++) final class StatementSemanticVisitor : Visitor
             vinit.dsymbolSemantic(sc);
             fs.aggr = new VarExp(fs.aggr.loc, vinit);
         }
+
+        /* If aggregate is a vector type, add the .array to make it a static array
+         */
+        if (fs.aggr.type)
+            if (auto tv = fs.aggr.type.toBasetype().isTypeVector())
+            {
+                auto vae = new VectorArrayExp(fs.aggr.loc, fs.aggr);
+                vae.type = tv.basetype;
+                fs.aggr = vae;
+            }
 
         Dsymbol sapply = null;                  // the inferred opApply() or front() function
         if (!inferForeachAggregate(sc, fs.op == TOK.foreach_, fs.aggr, sapply))
@@ -2432,9 +2454,15 @@ else
             else
             {
                 Expression e = (*ps.args)[0];
-                if (e.op != TOK.int64 || !e.type.equals(Type.tbool))
+                sc = sc.startCTFE();
+                e = e.expressionSemantic(sc);
+                e = resolveProperties(sc, e);
+                sc = sc.endCTFE();
+                e = e.ctfeInterpret();
+                e = e.toBoolean(sc);
+                if (e.isErrorExp())
                 {
-                    ps.error("pragma(inline, true or false) expected, not `%s`", e.toChars());
+                    ps.error("pragma(`inline`, `true` or `false`) expected, not `%s`", (*ps.args)[0].toChars());
                     return setError();
                 }
 
@@ -2473,6 +2501,8 @@ else
     override void visit(StaticAssertStatement s)
     {
         s.sa.semantic2(sc);
+        if (s.sa.errors)
+            return setError();
     }
 
     override void visit(SwitchStatement ss)
@@ -2515,7 +2545,7 @@ else
                 break;
 
             auto ad = isAggregate(ss.condition.type);
-            if (ad && ad.aliasthis && ss.condition.type != att)
+            if (ad && ad.aliasthis && !(att && ss.condition.type.equivalent(att)))
             {
                 if (!att && ss.condition.type.checkAliasThisRec())
                     att = ss.condition.type;
@@ -2658,7 +2688,7 @@ else
                     (*args)[1] = new IntegerExp(ss.loc.linnum);
 
                     sl = new CallExp(ss.loc, sl, args);
-                    sl.expressionSemantic(sc);
+                    sl = sl.expressionSemantic(sc);
 
                     s = new SwitchErrorStatement(ss.loc, sl);
                 }
@@ -2745,7 +2775,7 @@ else
             sl = new DotTemplateInstanceExp(ss.loc, sl, Id.__switch, compileTimeArgs);
 
             sl = new CallExp(ss.loc, sl, arguments);
-            sl.expressionSemantic(sc);
+            sl = sl.expressionSemantic(sc);
             ss.condition = sl;
 
             auto i = 0;
@@ -3159,13 +3189,9 @@ else
                 rs.exp = inferType(rs.exp, fld.treq.nextOf().nextOf());
 
             rs.exp = rs.exp.expressionSemantic(sc);
-            // if we are returning to a ref which does not come from auto ref
-            // it's okay to return shared, because it's returing a pointer without
-            // reading the memory itself
-            if(inferRef || !tf.isref)
-            {
-                rs.exp.checkSharedAccess(sc);
-            }
+            // If we're returning by ref, allow the expression to be `shared`
+            const returnSharedRef = (tf.isref && (fd.inferRetType || tret.isShared()));
+            rs.exp.checkSharedAccess(sc, returnSharedRef);
 
             // for static alias this: https://issues.dlang.org/show_bug.cgi?id=17684
             if (rs.exp.op == TOK.type)
@@ -3263,11 +3289,19 @@ else
                  * https://dlang.org/spec/function.html#auto-ref-functions
                  */
 
-                void turnOffRef()
+                void turnOffRef(scope void delegate() supplemental)
                 {
                     tf.isref = false;    // return by value
                     tf.isreturn = false; // ignore 'return' attribute, whether explicit or inferred
                     fd.storage_class &= ~STC.return_;
+
+                    // If we previously assumed the function could be ref when
+                    // checking for `shared`, make sure we were right
+                    if (global.params.noSharedAccess && rs.exp.type.isShared())
+                    {
+                        fd.error("function returns `shared` but cannot be inferred `ref`");
+                        supplemental();
+                    }
                 }
 
                 if (rs.exp.isLvalue())
@@ -3275,12 +3309,17 @@ else
                     /* May return by ref
                      */
                     if (checkReturnEscapeRef(sc, rs.exp, true))
-                        turnOffRef();
+                        turnOffRef(() { checkReturnEscapeRef(sc, rs.exp, false); });
                     else if (!rs.exp.type.constConv(tf.next))
-                        turnOffRef();
+                        turnOffRef(
+                            () => rs.loc.errorSupplemental("cannot implicitly convert `%s` of type `%s` to `%s`",
+                                      rs.exp.toChars(), rs.exp.type.toChars(), tf.next.toChars())
+                        );
                 }
                 else
-                    turnOffRef();
+                    turnOffRef(
+                        () => rs.loc.errorSupplemental("return value `%s` is not an lvalue", rs.exp.toChars())
+                    );
 
                 /* The "refness" is determined by all of return statements.
                  * This means:
@@ -3653,12 +3692,12 @@ else
         else
         {
             /* Generate our own critical section, then rewrite as:
-             *  static shared align(D_CRITICAL_SECTION.alignof) byte[D_CRITICAL_SECTION.sizeof] __critsec;
-             *  _d_criticalenter(&__critsec[0]);
-             *  try { body } finally { _d_criticalexit(&__critsec[0]); }
+             *  static shared void* __critsec;
+             *  _d_criticalenter2(&__critsec);
+             *  try { body } finally { _d_criticalexit(__critsec); }
              */
             auto id = Identifier.generateId("__critsec");
-            auto t = Type.tint8.sarrayOf(target.ptrsize + target.critsecsize());
+            auto t = Type.tvoidptr;
             auto tmp = new VarDeclaration(ss.loc, t, id, null);
             tmp.storage_class |= STC.temp | STC.shared_ | STC.static_;
             Expression tmpExp = new VarExp(ss.loc, tmp);
@@ -3673,21 +3712,21 @@ else
             v.dsymbolSemantic(sc);
             cs.push(new ExpStatement(ss.loc, v));
 
-            auto args = new Parameters();
-            args.push(new Parameter(0, t.pointerTo(), null, null, null));
+            auto enterArgs = new Parameters();
+            enterArgs.push(new Parameter(0, t.pointerTo(), null, null, null));
 
-            FuncDeclaration fdenter = FuncDeclaration.genCfunc(args, Type.tvoid, Id.criticalenter, STC.nothrow_);
-            Expression int0 = new IntegerExp(ss.loc, dinteger_t(0), Type.tint8);
-            Expression e = new AddrExp(ss.loc, new IndexExp(ss.loc, tmpExp, int0));
+            FuncDeclaration fdenter = FuncDeclaration.genCfunc(enterArgs, Type.tvoid, Id.criticalenter, STC.nothrow_);
+            Expression e = new AddrExp(ss.loc, tmpExp);
             e = e.expressionSemantic(sc);
             e = new CallExp(ss.loc, fdenter, e);
             e.type = Type.tvoid; // do not run semantic on e
             cs.push(new ExpStatement(ss.loc, e));
 
-            FuncDeclaration fdexit = FuncDeclaration.genCfunc(args, Type.tvoid, Id.criticalexit, STC.nothrow_);
-            e = new AddrExp(ss.loc, new IndexExp(ss.loc, tmpExp, int0));
-            e = e.expressionSemantic(sc);
-            e = new CallExp(ss.loc, fdexit, e);
+            auto exitArgs = new Parameters();
+            exitArgs.push(new Parameter(0, t, null, null, null));
+
+            FuncDeclaration fdexit = FuncDeclaration.genCfunc(exitArgs, Type.tvoid, Id.criticalexit, STC.nothrow_);
+            e = new CallExp(ss.loc, fdexit, tmpExp);
             e.type = Type.tvoid; // do not run semantic on e
             Statement s = new ExpStatement(ss.loc, e);
             s = new TryFinallyStatement(ss.loc, ss._body, s);
@@ -3695,9 +3734,6 @@ else
 
             s = new CompoundStatement(ss.loc, cs);
             result = s.statementSemantic(sc);
-
-            // set the explicit __critsec alignment after semantic()
-            tmp.alignment = target.ptrsize;
         }
     }
 
