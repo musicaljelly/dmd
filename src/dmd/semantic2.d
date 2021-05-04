@@ -1,7 +1,7 @@
 /**
  * Performs the semantic2 stage, which deals with initializer expressions.
  *
- * Copyright:   Copyright (C) 1999-2020 by The D Language Foundation, All Rights Reserved
+ * Copyright:   Copyright (C) 1999-2021 by The D Language Foundation, All Rights Reserved
  * Authors:     $(LINK2 http://www.digitalmars.com, Walter Bright)
  * License:     $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
  * Source:      $(LINK2 https://github.com/dlang/dmd/blob/master/src/dmd/semantic2.d, _semantic2.d)
@@ -352,6 +352,16 @@ private extern(C++) final class Semantic2Visitor : Visitor
     {
         if (fd.semanticRun >= PASS.semantic2done)
             return;
+
+        if (fd.semanticRun < PASS.semanticdone && !fd.errors)
+        {
+            /* https://issues.dlang.org/show_bug.cgi?id=21614
+             *
+             * Template instances may import modules that have not
+             * finished semantic1.
+             */
+            fd.dsymbolSemantic(sc);
+        }
         assert(fd.semanticRun <= PASS.semantic2);
         fd.semanticRun = PASS.semantic2;
 
